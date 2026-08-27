@@ -1,124 +1,244 @@
-# Watchpost development plan
+# Watchpost development checkpoints
 
-Status: product definition. No Watchpost runtime is implemented yet.
+Status: WP00 through WP05 implemented; verification evidence is recorded below.
 
-The programme is deliberately ordered so the agent sits on trustworthy
-operational foundations rather than becoming the foundation itself. Each phase
-should end in a committed checkpoint with recorded verification evidence.
+Every monitored system, service, endpoint, application, or device is a
+**post**. This is the canonical schema, API, code, test, UI, and documentation
+term. A deployed Watchpost node is not itself a post unless explicitly enrolled.
 
-## Phase 0 — contracts and threat model
+Each checkpoint is an independently reviewable vertical slice. Complete it,
+record exact evidence, and commit it before starting the next checkpoint.
 
-- Freeze the initial vocabulary in `HANDOVER.md`.
-- Write the single-node architecture and data-flow decision record.
-- Define trust zones: browser, server, collectors, targets, providers, peers.
-- Define signal quality/freshness and clock-skew semantics.
-- Define alert and incident state machines.
-- Define the observation/recommendation/approval/execution boundary.
-- Create a representative fixture corpus and acceptance-test skeleton.
+## WP00 — vocabulary, architecture, and threat model
 
-Exit evidence: reviewed architecture notes, threat model, state-machine tests,
-and a runnable empty test harness.
+- Freeze the vocabulary and single-node data flow.
+- Define package boundaries and trust zones: browser, server, collectors,
+  posts, providers, reverse proxies, and future peers.
+- Define signal quality, freshness, clock-skew, and alert/incident state models.
+- Define observation/recommendation/approval/execution boundaries.
+- Create representative fixtures and a runnable test skeleton.
 
-## Phase 1 — single-node foundation
+Exit: reviewed decisions and threat model, architecture checks, fixture
+manifest, and green empty harness.
 
-- Go service with embedded Nift-built frontend.
-- SQLite database, ordered migrations, backup/restore documentation.
-- Local accounts, secure sessions, CSRF protection, capability checks, audit.
-- Configuration precedence and safe first-run setup.
-- Health, readiness, version, and diagnostic endpoints.
-- Linux/macOS/Windows release automation for amd64 and arm64.
+## WP01 — process, configuration, and embedded UI
 
-Exit evidence: clean install to authenticated empty dashboard, restart and
-migration recovery, security tests, race tests, and six target builds.
+- Create the Go module, `watchpost serve`, graceful shutdown, and redacted logs.
+- Embed a Nift-built frontend with an honest empty-state dashboard.
+- Define configuration precedence, validation, safe defaults, and data paths.
+- Add health, readiness, version, and bounded diagnostic endpoints.
 
-## Phase 2 — inventory and collection
+Exit: configuration tests, embedded-asset test, clean build/shutdown, and a
+no-runtime-dependency smoke.
 
-- Durable target inventory, labels, ownership, and maintenance state.
-- Collector SDK/contract with versioning and strict payload limits.
-- First-party host collector: CPU, memory, disks, load, uptime, processes.
-- HTTP/TCP/TLS checks with latency and certificate-expiry observations.
-- Pull and push ingestion with authentication, replay defence, and backpressure.
-- Signal units, quality, freshness, retention, aggregation, and cardinality
-  budgets made visible in the UI.
+## WP02 — SQLite persistence and recovery
 
-Exit evidence: deterministic simulated-target suite, disconnected/retry tests,
-bounded ingestion under load, and restart-safe history.
+- Add ordered, transactional, fail-closed migrations and schema identity.
+- Separate inventory, operational state, audit, and telemetry interfaces.
+- Define busy, corruption, backup, restore, and crash-recovery behaviour.
 
-## Phase 3 — rules, alerts, and notifications
+Exit: fresh/upgrade/downgrade/corrupt/concurrent migration tests, restart
+recovery, and verified backup/restore.
 
-- Typed deterministic rule expressions over signal windows and event state.
-- Pending, firing, acknowledged, resolved, and suppressed transitions.
-- Hysteresis, duration, missing-data policy, dependency suppression, and
-  maintenance windows.
-- Deduplication and notification routing with retry and rate limits.
-- Initial notification integrations: email and generic webhook.
-- Rule evaluation replay for reproducible debugging.
+## WP03 — first-run identity and authorization
 
-Exit evidence: virtual-clock transition suite, notification-storm tests,
-replayed evaluations matching live results, and complete audit history.
+- Implement race-safe first-admin setup, local accounts, passwords, secure
+  sessions, logout, CSRF defence, and login throttling.
+- Add server-side roles/capabilities and attributable audit.
+- Make reverse-proxy trust explicit and disabled by default.
+- Verify every HTTP and WebSocket route has an authorization decision.
 
-## Phase 4 — incidents and operational UX
+Exit: concurrent setup, session/CSRF/authz/proxy-spoof adversarial suites,
+audit completeness, and restart-safe sessions.
 
-- Incident creation from alerts and manual operator reports.
-- Timeline containing signals, events, alert transitions, notes, and actions.
-- Correlation suggestions without silently merging unrelated incidents.
-- Dashboards, topology, target detail, charts, logs, and saved views.
-- Acknowledgement, assignment, severity, status, and resolution summaries.
-- Responsive and keyboard-accessible web UI with light/dark/system themes.
+## WP04 — post inventory and topology
 
-Exit evidence: representative incident walkthroughs, accessibility checks,
-large-history rendering tests, and operator usability dogfooding.
+- Implement posts with stable IDs, names, typed post kinds, ownership, labels,
+  maintenance/lifecycle state, and bounded metadata.
+- Model dependencies between posts without assuming each post is a host.
+- Add create/read/update/archive API and UI with optimistic concurrency.
+- Seed host, HTTP endpoint, TCP service, and TLS certificate post kinds.
 
-## Phase 5 — evidence-grounded agent
+Exit: schema/API contracts, limits, cycle/concurrency/migration tests, and an
+inventory UI walkthrough.
 
-- Provider-independent model interface and per-user credentials.
-- Read-only investigation tools over bounded signals, events, topology, logs,
-  configuration, deployments, and incident history.
-- Durable conversations attached to targets and incidents.
-- Evidence citations and visible tool activity in every investigation.
-- Prompt-injection boundaries for monitored content and secret redaction.
-- Evaluation corpus covering causal investigation, uncertainty, refusal, and
-  misleading telemetry.
+## WP05 — collector protocol and ingestion
 
-Exit evidence: the agent can answer representative operational questions with
-traceable evidence and cannot cross its read authority under adversarial input.
+- Define a versioned observation envelope with post/collector identity,
+  observation and ingestion time, sequence, unit, quality, and provenance.
+- Support bounded authenticated push and internal pull collection.
+- Enforce payload, label, batch, queue, replay, clock, and rate limits.
+- Expose collector failure without manufacturing healthy post data.
 
-## Phase 6 — typed actions and approvals
+Exit: malformed/fuzz corpus, replay/clock/disconnect/overload tests,
+compatibility fixtures, and race run.
 
-- Action registry with schemas, capabilities, target scopes, and dry runs.
-- Recommendation, approval, execution, verification, and rollback states.
-- Initial conservative actions such as re-running a check or silencing a route;
-  host mutation only after the policy model is proven.
-- Multi-party approval option for high-authority actions.
-- Immutable action audit and post-action observation.
+## WP06 — host monitoring
 
-Exit evidence: no arbitrary model-authored execution path, policy fuzzing,
-approval-race tests, replay protection, and adversarial end-to-end review.
+- Ship a first remote Linux host collector while keeping the protocol portable.
+- Collect CPU, memory, load, disks, uptime, network counters, and bounded
+  process/service state with explicit permission failures.
+- Add enrollment, key rotation/revocation, freshness, and post detail UI.
+- Dogfood on the machine running the development node.
 
-## Phase 7 — fleet and federation
+Exit: deterministic fake-host suite, real Linux dogfood, disconnect/upgrade
+tests, minimum-privilege review, and restart-safe history.
 
-- Independent nodes that continue operating while disconnected.
-- Explicit enrollment, node identity, rotation, revocation, and compatibility.
-- Selective inventory/event/incident sharing with tenancy boundaries.
-- Store-and-forward delivery with ordering, deduplication, and bounded queues.
-- Fleet-wide search and views without hiding local authority.
-- Defined split-brain and recovery behaviour.
+## WP07 — network and endpoint checks
 
-Exit evidence: lossy-network simulation, incompatible-version tests, revoked
-peer tests, sustained offline operation, and reconciliation proofs.
+- Add ICMP where permitted, TCP, HTTP(S), DNS, and TLS checks as post kinds.
+- Record latency, status, expiry, validation, failure category, and provenance;
+  do not retain sensitive response bodies by default.
+- Cover IPv4/IPv6, redirects, timeouts, DNS failures, and certificate chains.
 
-## Phase 8 — hardening and first public release
+Exit: hermetic network lab, SSRF/redirect tests, dual-stack coverage, and
+scheduled-check load evidence.
 
-- Long-run ingestion, retention, memory, CPU, disk, and database campaigns.
-- Fuzz malformed collectors, rule inputs, imports, and federation messages.
-- Backup/restore and disaster-recovery drills.
-- Security review of authentication, WebSockets, agent context, secrets,
-  actions, proxy deployment, and supply chain.
-- Installers, upgrade guide, release notes, examples, and honest limitations.
-- Dogfood Watchpost on the infrastructure hosting Watchpost.
+## WP08 — history, retention, and charts
 
-Exit evidence: published guarantees backed by reproducible tests, clean release
-artifacts, upgrade/rollback rehearsal, and no unresolved release-blocking issue.
+- Persist signals/events with explicit missing, stale, unknown, and bad-quality
+  semantics; absence is never numeric zero.
+- Add retention tiers, aggregation, cardinality budgets, and dropped-data state.
+- Build post overview/detail, time-range charts, comparisons, and export.
+
+Exit: virtual-clock/aggregation/retention/disk-budget tests, restart recovery,
+and large-history rendering checks.
+
+## WP09 — deterministic rules and alerts
+
+- Implement typed rules over signal windows and event state.
+- Add pending, firing, acknowledged, resolved, and suppressed transitions.
+- Add duration, hysteresis, recovery, missing-data policy, dependency
+  suppression, maintenance windows, and versioning.
+- Replay evaluation against recorded evidence and a virtual clock.
+
+Exit: exhaustive transition tables, property tests, live/replay equivalence,
+clock/dependency tests, and restart continuity.
+
+## WP10 — notifications and routing
+
+- Add routes, deterministic policy, deduplication, retry/backoff, escalation,
+  rate limits, schedules, and durable delivery state.
+- Ship email and generic webhooks first.
+
+Exit: storm, idempotency, provider-failure, redaction, and audit tests.
+
+## WP11 — incidents and operator workflow
+
+- Add manual and alert-created incidents with severity, owner, assignment,
+  status, notes, acknowledgement, and resolution.
+- Build a durable timeline of evidence and operator decisions.
+- Suggest correlations without silently merging alert histories.
+- Add responsive, keyboard-accessible incident, alert, and fleet views.
+
+Exit: incident walkthroughs, reversible correlation, concurrent editing,
+accessibility, and large-timeline tests.
+
+## WP12 — logs and change evidence
+
+- Add bounded log ingestion/search with identity, time, truncation, retention,
+  redaction, and hostile-content treatment.
+- Add deployments, configuration changes, and annotations as events.
+- Link selected evidence into incidents without duplicating unbounded payloads.
+
+Exit: hostile/log-volume corpus, query authorization, retention/redaction,
+timestamp uncertainty, and link-integrity tests.
+
+## WP13 — device monitoring expansion
+
+- Add SNMPv3 polling/discovery with strict credential, OID, timeout, and
+  cardinality controls.
+- Support network-device posts first, UPS/PDU posts second, and environmental
+  sensor posts third.
+- Normalize a small common signal set while retaining vendor provenance.
+- Keep device support read-only; configuration and control remain out of scope.
+
+Exit: simulated SNMP lab, vendor fixtures, counter-wrap/reboot/discovery tests,
+credential redaction, and verification that no write operations exist.
+
+## WP14 — evidence-grounded agent
+
+- Add a provider-independent model interface and per-user credentials.
+- Expose read-only bounded tools over posts, signals, topology, logs, changes,
+  alerts, and incidents.
+- Store post/incident conversations with visible tools, citations, missing
+  evidence, and uncertainty.
+- Treat monitored content as untrusted prompt-injection material.
+
+Exit: investigation evaluation corpus, citation integrity, secret redaction,
+misleading-telemetry cases, and proven read-only scope.
+
+## WP15 — typed actions and approvals
+
+- Add action schemas, capabilities, post scopes, bounds, dry runs, idempotency,
+  approval policy, and immutable audit.
+- Separate recommendation, approval, execution, verification, rollback, and
+  refusal states.
+- Begin with low-authority actions such as re-running a check or silencing a
+  route; never add arbitrary model-authored shell execution.
+
+Exit: policy fuzzing, approval-race/replay/scope tests, post-action observation,
+rollback cases, and adversarial review.
+
+## WP16 — fleet and federation
+
+- Keep every node independently useful while disconnected.
+- Add enrollment, node identity, rotation, revocation, tenancy, compatibility,
+  and selective sharing of post/event/alert/incident state.
+- Add bounded store-and-forward, ordering, deduplication, conflict visibility,
+  and explicit reconciliation.
+
+Exit: lossy/partitioned network simulation, sustained offline operation,
+revoked/incompatible peer tests, and reconciliation proofs.
+
+## WP17 — releases and deployment
+
+- Add reproducible release automation, checksums, provenance, installer,
+  service definitions, upgrades/rollback, and HTTPS proxy documentation.
+- Build and smoke supported Linux, macOS, and Windows amd64/arm64 artifacts;
+  document deliberate exceptions rather than claiming compile-only support.
+
+Exit: clean-consumer artifact and installer smokes, proxy tests, preserved-data
+upgrade/rollback rehearsal, and exact artifact inventory.
+
+## WP18 — hardening and first public release
+
+- Run long-duration ingestion, evaluation, retention, notification, memory,
+  CPU, disk, and database campaigns.
+- Fuzz collectors, rules, imports, logs, WebSockets, agent boundaries, actions,
+  and federation messages.
+- Drill backup/restore/disaster recovery and perform adversarial security review.
+- Dogfood Watchpost on infrastructure hosting Watchpost.
+
+Exit: the complete gate passes, recovery is rehearsed, limitations are honest,
+and no release blocker remains open.
+
+## Recommended device order
+
+A post is an observable operational object, not a synonym for computer, so
+Watchpost can monitor non-system devices. Implement them in this order:
+
+1. **Network devices** — switches, routers, firewalls, and access points. SNMPv3
+   exposes interface state/errors, throughput, temperature, resource use, and
+   reboot evidence; these devices explain many downstream incidents.
+2. **UPS and intelligent PDUs** — battery health, load, runtime, transfer
+   events, and input/output state provide unusually valuable outage evidence.
+3. **Environmental sensors** — temperature, humidity, leak, smoke-status, and
+   door/contact sensors over SNMP, Modbus TCP gateways, or documented HTTP APIs.
+4. **NAS/storage appliances** — pool, disk, capacity, temperature, and
+   replication health can reuse SNMP and HTTP collectors.
+5. **Printers/office devices** — straightforward SNMP coverage, but lower
+   operational value, so they should follow infrastructure.
+
+Defer cameras, arbitrary consumer IoT, PLC writes, building-control commands,
+and safety systems. Protocol breadth is not worth weak authentication, unclear
+semantics, or accidental control authority.
+
+These areas should be explored in the future after the read-only monitoring,
+typed action, approval, and safety boundaries are proven. Cameras may begin with
+availability and health rather than video ingestion; consumer IoT needs a
+deliberately bounded adapter policy; PLC and building-control work requires a
+separate threat model and must never imply that Watchpost is a safety system.
 
 ## Deferred deliberately
 
@@ -126,6 +246,47 @@ artifacts, upgrade/rollback rehearsal, and no unresolved release-blocking issue.
 - A general-purpose remote shell.
 - An unbounded plugin runtime inside the server process.
 - Mandatory cloud coordination.
-- High-volume distributed tracing before the core monitoring model is proven.
+- High-volume distributed tracing before core monitoring is proven.
 - Autonomous remediation without explicit typed policy and approval.
 
+## Completed evidence
+
+### WP00
+
+- Domain vocabulary and canonical post types are represented in Go contracts.
+- `docs/architecture.md`, `docs/threat-model.md`, and
+  `docs/state-machines.md` define the initial boundaries.
+- Representative post fixtures and contract tests are runnable.
+
+### WP01
+
+- `watchpost serve` provides graceful signal-driven shutdown.
+- Configuration precedence is flags, environment, then safe defaults.
+- The embedded dashboard truthfully reports that no posts are enrolled.
+- Health, readiness, version, and bounded diagnostics are implemented.
+- Verification commands and exact results belong in the batch handoff.
+
+### WP02
+
+- SQLite uses WAL, foreign keys, a busy timeout, one migration authority,
+  transactional migration 1, and future-schema refusal.
+- Tests cover fresh creation, reopen, future history, and unusable data paths.
+
+### WP03
+
+- Race-safe first-admin setup, PBKDF2-HMAC-SHA256 password storage, hashed
+  sessions, SameSite cookies, CSRF tokens, throttling, roles, and setup audit
+  are implemented and tested.
+
+### WP04
+
+- Durable posts support canonical kinds, bounded identity/labels, optimistic
+  versions, maintenance/archive state, and cycle-safe dependencies.
+- CRUD concurrency and topology cycles have direct tests.
+
+### WP05
+
+- Collector enrollment returns a one-time secret retained only as a hash.
+- Versioned observations bind collector/post identity with clock bounds,
+  monotonic replay defence, quality, units, labels, and a 64 KiB API limit.
+- Acceptance, replay rejection, and future-clock rejection are tested.

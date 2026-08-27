@@ -1,0 +1,1 @@
+{"version":1,"posts":[{"id":"host-edge-01","kind":"host"},{"id":"web-home","kind":"http_endpoint"},{"id":"router-core","kind":"network_device"},{"id":"ups-rack-a","kind":"ups"}]}

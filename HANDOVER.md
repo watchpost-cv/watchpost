@@ -30,15 +30,20 @@ welcome; collapsing their security boundaries is not.
 ## Working vocabulary
 
 - **Watchpost**: one independently useful deployed node.
-- **Target**: a monitored host, service, endpoint, application, or device.
-- **Collector**: code that obtains observations from a target.
+- **Post**: one monitored object: a host, service, endpoint, application,
+  database, network device, power device, sensor, or other observable device.
+  `post` is the canonical product, API, schema, and UI term; do not use
+  `target` as a synonym.
+- **Post kind**: the typed capability/profile of a post, such as host, HTTP
+  endpoint, database, network device, UPS, or environmental sensor.
+- **Collector**: code that obtains observations from a post.
 - **Signal**: a timestamped measurement or state observation with provenance.
 - **Event**: a meaningful state transition or externally supplied occurrence.
 - **Rule**: a deterministic condition over signals and events.
 - **Alert**: an active rule result requiring visibility or action.
 - **Incident**: a durable operational episode that groups alerts, evidence,
   notes, actions, and resolution state.
-- **Action**: a typed, policy-controlled operation against a target.
+- **Action**: a typed, policy-controlled operation against a post.
 - **Fleet**: multiple Watchpost nodes coordinated without making an individual
   node useless when disconnected.
 
@@ -99,7 +104,7 @@ and domain types over generic maps passed through the system.
 - Keep secrets encrypted at rest where feasible and redacted from UI, logs,
   exports, agent context, and diagnostic bundles.
 - Require server-side authorisation on every API and WebSocket operation.
-- Bind privileged actions to typed schemas, target scopes, parameter limits,
+- Bind privileged actions to typed schemas, post scopes, parameter limits,
   actor identity, and an immutable audit record.
 - Preserve the distinction between observation, recommendation, approval, and
   execution in both storage and UI.
@@ -152,4 +157,3 @@ arm64 unless a target is deliberately unsupported and documented.
 The public website lives in the sibling `watchpost-ops.github.io` repository.
 Its `HANDOVER.md` governs website changes. Product claims on that site must stay
 aligned with actual milestones recorded here and in `PLAN.md`.
-
