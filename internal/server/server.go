@@ -9,8 +9,12 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/watchpost-ops/watchpost/internal/actions"
+	"github.com/watchpost-ops/watchpost/internal/agent"
 	"github.com/watchpost-ops/watchpost/internal/auth"
 	"github.com/watchpost-ops/watchpost/internal/config"
+	"github.com/watchpost-ops/watchpost/internal/evidence"
+	"github.com/watchpost-ops/watchpost/internal/fleet"
 	"github.com/watchpost-ops/watchpost/internal/history"
 	"github.com/watchpost-ops/watchpost/internal/incidents"
 	"github.com/watchpost-ops/watchpost/internal/ingest"
@@ -33,11 +37,37 @@ type Server struct {
 	rules     *rules.Engine
 	notify    *notify.Service
 	incidents *incidents.Store
+	evidence  *evidence.Store
+	agent     *agent.Service
+	actions   *actions.Registry
+	fleet     *fleet.Service
 }
 
 func New(cfg config.Config, version string, logger *slog.Logger, database *store.Store) *Server {
 	sender := notify.NetworkSender{Client: &http.Client{Timeout: 10 * time.Second}}
-	return &Server{cfg: cfg, version: version, logger: logger, store: database, auth: auth.New(database), posts: posts.New(database), ingest: ingest.New(database), history: history.New(database), rules: rules.New(database), notify: notify.New(database, sender), incidents: incidents.New(database)}
+	actionRegistry := actions.New(database)
+	_ = actionRegistry.Register(actions.Definition{Type: "rerun_check", NeedsApproval: false, Validate: func(parameters map[string]any) error {
+		if _, ok := parameters["check"].(string); !ok {
+			return errors.New("check required")
+		}
+		return nil
+	}, Execute: func(context.Context, string, map[string]any) (map[string]any, error) {
+		return map[string]any{"scheduled": true}, nil
+	}})
+	_ = actionRegistry.Register(actions.Definition{Type: "silence_route", NeedsApproval: true, Validate: func(parameters map[string]any) error {
+		if _, ok := parameters["route_id"].(string); !ok {
+			return errors.New("route_id required")
+		}
+		return nil
+	}, Execute: func(ctx context.Context, _ string, parameters map[string]any) (map[string]any, error) {
+		result, err := database.DB.ExecContext(ctx, `UPDATE notification_routes SET enabled=0 WHERE id=?`, parameters["route_id"])
+		if err != nil {
+			return nil, err
+		}
+		count, _ := result.RowsAffected()
+		return map[string]any{"disabled": count == 1}, nil
+	}})
+	return &Server{cfg: cfg, version: version, logger: logger, store: database, auth: auth.New(database), posts: posts.New(database), ingest: ingest.New(database), history: history.New(database), rules: rules.New(database), notify: notify.New(database, sender), incidents: incidents.New(database), evidence: evidence.New(database), agent: agent.New(database, agent.EvidenceProvider{}), actions: actionRegistry, fleet: fleet.New(database)}
 }
 
 func (s *Server) Handler() http.Handler {

@@ -1,6 +1,8 @@
 # Watchpost development checkpoints
 
-Status: WP00 through WP11 implemented; verification evidence is recorded below.
+Status: WP00 through WP18 implemented as a development candidate. WP18 does not
+authorize or claim a public release; external real-platform, long-duration,
+upgrade, and independent security evidence remains required before tagging.
 
 Every monitored system, service, endpoint, application, or device is a
 **post**. This is the canonical schema, API, code, test, UI, and documentation
@@ -327,3 +329,46 @@ separate threat model and must never imply that Watchpost is a safety system.
   notes, and ordered timelines.
 - The authenticated UI exposes posts, endpoint checks, alerts, and incident
   creation with responsive layouts.
+
+### WP12
+
+- Bounded post-scoped logs are truncated, redacted, time-bounded, and searchable.
+- Deployments/configuration changes are separate durable evidence records.
+
+### WP13
+
+- Read-only SNMPv3 `authPriv` polling uses bounded versioned profiles for network
+  devices, UPS equipment, environmental sensors, and storage appliances.
+- No SNMP write path exists; weak SNMP configurations are rejected.
+
+### WP14
+
+- Provider-independent durable investigations attach to posts/incidents.
+- Evidence IDs must exist, monitored text is untrusted, citations are bounded to
+  supplied evidence, and the built-in provider makes no unsupported inference.
+
+### WP15
+
+- Typed action registration, parameter validation, unique idempotency keys,
+  separate approval, atomic execution claims, and durable results are present.
+- Only check reruns and notification-route silencing are registered.
+
+### WP16
+
+- Peer enrollment, signed bounded envelopes, replay deduplication, durable
+  inbox/outbox state, revocation, and offline queuing are implemented.
+- Full transport and reconciliation UX remain pre-release limitations.
+
+### WP17
+
+- CI and tagged-release workflows cover Linux, macOS, and Windows on amd64/arm64.
+- Release staging emits six binaries and checksums; installer defaults to
+  `~/.local/bin` and supports explicit root-only `--system` installation.
+
+### WP18
+
+- Normal, race, vet, fuzz, cross-build, UI syntax, live startup, migration,
+  recovery, release staging, and short race-instrumented soak gates are provided.
+- Public release remains intentionally unperformed. Real runner smokes,
+  multi-hour campaigns, external security review, and upgrade/rollback rehearsal
+  must pass before a tag can honestly be called the first public release.

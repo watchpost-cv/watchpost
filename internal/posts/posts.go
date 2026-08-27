@@ -12,7 +12,7 @@ import (
 )
 
 var idPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
-var kinds = map[string]bool{"host": true, "http_endpoint": true, "tcp_service": true, "tls_certificate": true}
+var kinds = map[string]bool{"host": true, "http_endpoint": true, "tcp_service": true, "tls_certificate": true, "network_device": true, "ups": true, "environmental_sensor": true, "storage_appliance": true}
 
 type Post struct {
 	ID          string            `json:"id"`

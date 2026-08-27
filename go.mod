@@ -3,6 +3,7 @@ module github.com/watchpost-ops/watchpost
 go 1.25.0
 
 require (
+	github.com/gosnmp/gosnmp v1.44.0
 	golang.org/x/net v0.58.0
 	modernc.org/sqlite v1.57.0
 )

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"net/http"
@@ -8,7 +9,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/watchpost-ops/watchpost/internal/agent"
+	"github.com/watchpost-ops/watchpost/internal/auth"
 	"github.com/watchpost-ops/watchpost/internal/checks"
+	"github.com/watchpost-ops/watchpost/internal/devices"
+	"github.com/watchpost-ops/watchpost/internal/evidence"
+	"github.com/watchpost-ops/watchpost/internal/fleet"
 	"github.com/watchpost-ops/watchpost/internal/host"
 	"github.com/watchpost-ops/watchpost/internal/ingest"
 	"github.com/watchpost-ops/watchpost/internal/notify"
@@ -17,6 +23,8 @@ import (
 )
 
 const sessionCookie = "watchpost_session"
+
+type userContextKey struct{}
 
 func (s *Server) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/setup", s.handleSetup)
@@ -41,6 +49,17 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/incidents/{id}", s.require("viewer", s.handleGetIncident))
 	mux.HandleFunc("POST /api/v1/incidents/{id}/transition", s.require("operator", s.handleTransitionIncident))
 	mux.HandleFunc("POST /api/v1/incidents/{id}/notes", s.require("operator", s.handleIncidentNote))
+	mux.HandleFunc("POST /api/v1/logs", s.require("operator", s.handleLog))
+	mux.HandleFunc("GET /api/v1/posts/{id}/logs", s.require("viewer", s.handleSearchLogs))
+	mux.HandleFunc("POST /api/v1/changes", s.require("operator", s.handleChange))
+	mux.HandleFunc("POST /api/v1/conversations", s.require("viewer", s.handleConversation))
+	mux.HandleFunc("POST /api/v1/conversations/{id}/investigate", s.require("viewer", s.handleInvestigate))
+	mux.HandleFunc("POST /api/v1/actions", s.require("operator", s.handleRequestAction))
+	mux.HandleFunc("POST /api/v1/actions/{id}/approve", s.require("admin", s.handleApproveAction))
+	mux.HandleFunc("POST /api/v1/actions/{id}/execute", s.require("operator", s.handleExecuteAction))
+	mux.HandleFunc("POST /api/v1/peers", s.require("admin", s.handleEnrollPeer))
+	mux.HandleFunc("POST /api/v1/federation/{peer}", s.handleFederation)
+	mux.HandleFunc("POST /api/v1/devices/snmp/poll", s.require("operator", s.handleSNMPPoll))
 }
 
 func decode(w http.ResponseWriter, r *http.Request, value any) bool {
@@ -100,7 +119,7 @@ func (s *Server) require(role string, next http.HandlerFunc) http.HandlerFunc {
 			writeJSON(w, 403, map[string]string{"error": "csrf check failed"})
 			return
 		}
-		next(w, r)
+		next(w, r.WithContext(context.WithValue(r.Context(), userContextKey{}, session.User)))
 	}
 }
 func rank(role string) int {
@@ -399,4 +418,184 @@ func (s *Server) handleIncidentNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+func currentUser(r *http.Request) auth.User {
+	user, _ := r.Context().Value(userContextKey{}).(auth.User)
+	return user
+}
+func (s *Server) handleLog(w http.ResponseWriter, r *http.Request) {
+	var log evidence.Log
+	if !decode(w, r, &log) {
+		return
+	}
+	stored, err := s.evidence.IngestLog(r.Context(), log)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 201, stored)
+}
+func (s *Server) handleSearchLogs(w http.ResponseWriter, r *http.Request) {
+	from, err := time.Parse(time.RFC3339, r.URL.Query().Get("from"))
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": "invalid from"})
+		return
+	}
+	to, err := time.Parse(time.RFC3339, r.URL.Query().Get("to"))
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": "invalid to"})
+		return
+	}
+	items, err := s.evidence.SearchLogs(r.Context(), r.PathValue("id"), r.URL.Query().Get("q"), from, to, 500)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"logs": items})
+}
+func (s *Server) handleChange(w http.ResponseWriter, r *http.Request) {
+	var change evidence.Change
+	if !decode(w, r, &change) {
+		return
+	}
+	stored, err := s.evidence.RecordChange(r.Context(), change)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 201, stored)
+}
+func (s *Server) handleConversation(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		PostID     string `json:"post_id"`
+		IncidentID *int64 `json:"incident_id"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	id, err := s.agent.Start(r.Context(), currentUser(r).ID, in.PostID, in.IncidentID)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 201, map[string]int64{"id": id})
+}
+func (s *Server) handleInvestigate(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": "invalid conversation"})
+		return
+	}
+	var in struct {
+		Question string           `json:"question"`
+		Evidence []agent.Citation `json:"evidence"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	response, err := s.agent.Investigate(r.Context(), id, currentUser(r).ID, in.Question, in.Evidence)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, response)
+}
+func (s *Server) handleRequestAction(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Type, PostID, IdempotencyKey string
+		Parameters                   map[string]any
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	id, err := s.actions.Request(r.Context(), in.Type, in.PostID, in.Parameters, currentUser(r).ID, in.IdempotencyKey)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 201, map[string]int64{"id": id})
+}
+func (s *Server) handleApproveAction(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": "invalid action"})
+		return
+	}
+	if err = s.actions.Approve(r.Context(), id, currentUser(r).ID); err != nil {
+		writeJSON(w, 409, map[string]string{"error": err.Error()})
+		return
+	}
+	w.WriteHeader(204)
+}
+func (s *Server) handleExecuteAction(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": "invalid action"})
+		return
+	}
+	result, err := s.actions.Execute(r.Context(), id)
+	if err != nil {
+		writeJSON(w, 409, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, result)
+}
+func (s *Server) handleEnrollPeer(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		ID string `json:"id"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	secret, err := s.fleet.Enroll(r.Context(), in.ID)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 201, map[string]string{"id": in.ID, "secret": secret})
+}
+func (s *Server) handleFederation(w http.ResponseWriter, r *http.Request) {
+	secret := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	var envelope fleet.Envelope
+	if secret == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "peer authentication required"})
+		return
+	}
+	if !decode(w, r, &envelope) {
+		return
+	}
+	if err := s.fleet.Receive(r.Context(), r.PathValue("peer"), secret, envelope); err != nil {
+		writeJSON(w, 401, map[string]string{"error": err.Error()})
+		return
+	}
+	w.WriteHeader(202)
+}
+func (s *Server) handleSNMPPoll(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Config  devices.V3Config `json:"config"`
+		Profile devices.Profile  `json:"profile"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	if err := devices.ValidateProfile(in.Profile); err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	client, err := devices.NewV3(in.Config)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	if err = client.Connect(); err != nil {
+		writeJSON(w, 502, map[string]string{"error": "SNMP connection failed"})
+		return
+	}
+	defer client.Conn.Close()
+	readings, err := devices.Poll(r.Context(), client, in.Profile)
+	if err != nil {
+		writeJSON(w, 502, map[string]string{"error": "SNMP poll failed"})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"readings": readings})
 }

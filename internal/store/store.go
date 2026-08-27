@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const SchemaVersion = 2
+const SchemaVersion = 3
 
 type Store struct{ DB *sql.DB }
 
@@ -90,6 +90,28 @@ func (s *Store) migrate(ctx context.Context) error {
 			}
 		}
 		if _, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations(version,applied_at) VALUES(2,?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return err
+		}
+		version = 2
+	}
+	if version == 2 {
+		statements := []string{
+			`CREATE TABLE logs(id INTEGER PRIMARY KEY, post_id TEXT NOT NULL REFERENCES posts(id), source TEXT NOT NULL, observed_at TEXT NOT NULL, ingested_at TEXT NOT NULL, severity TEXT NOT NULL, message TEXT NOT NULL, fields_json TEXT NOT NULL DEFAULT '{}', truncated INTEGER NOT NULL DEFAULT 0)`,
+			`CREATE INDEX logs_post_time ON logs(post_id,observed_at)`,
+			`CREATE TABLE changes(id INTEGER PRIMARY KEY, post_id TEXT REFERENCES posts(id), kind TEXT NOT NULL, occurred_at TEXT NOT NULL, actor TEXT NOT NULL, summary TEXT NOT NULL, detail_json TEXT NOT NULL DEFAULT '{}')`,
+			`CREATE TABLE conversations(id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), post_id TEXT REFERENCES posts(id), incident_id INTEGER REFERENCES incidents(id), created_at TEXT NOT NULL)`,
+			`CREATE TABLE conversation_messages(id INTEGER PRIMARY KEY, conversation_id INTEGER NOT NULL REFERENCES conversations(id), at TEXT NOT NULL, role TEXT NOT NULL, body TEXT NOT NULL, evidence_json TEXT NOT NULL DEFAULT '[]')`,
+			`CREATE TABLE action_requests(id INTEGER PRIMARY KEY, type TEXT NOT NULL, post_id TEXT REFERENCES posts(id), parameters_json TEXT NOT NULL, state TEXT NOT NULL, requested_by INTEGER NOT NULL REFERENCES users(id), approved_by INTEGER REFERENCES users(id), requested_at TEXT NOT NULL, updated_at TEXT NOT NULL, idempotency_key TEXT NOT NULL UNIQUE, result_json TEXT NOT NULL DEFAULT '{}')`,
+			`CREATE TABLE peers(id TEXT PRIMARY KEY, secret_hash BLOB NOT NULL, state TEXT NOT NULL, created_at TEXT NOT NULL, revoked_at TEXT)`,
+			`CREATE TABLE federation_outbox(id INTEGER PRIMARY KEY, peer_id TEXT NOT NULL REFERENCES peers(id), event_id TEXT NOT NULL, kind TEXT NOT NULL, payload_json TEXT NOT NULL, created_at TEXT NOT NULL, delivered_at TEXT, UNIQUE(peer_id,event_id))`,
+			`CREATE TABLE federation_inbox(peer_id TEXT NOT NULL REFERENCES peers(id), event_id TEXT NOT NULL, received_at TEXT NOT NULL, payload_hash BLOB NOT NULL, PRIMARY KEY(peer_id,event_id))`,
+		}
+		for _, statement := range statements {
+			if _, err = tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("migration 3: %w", err)
+			}
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations(version,applied_at) VALUES(3,?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 			return err
 		}
 	}
