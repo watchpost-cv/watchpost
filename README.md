@@ -3,8 +3,11 @@
 Watchpost is an open-source, web-based monitoring and operations platform with
 an evidence-grounded agent designed in from the beginning.
 
-WP00 and WP01 establish the product contracts and runnable single-node service.
-No persistence, authentication, monitoring, or agent capability is claimed yet.
+WP00 through WP11 establish the contracts and runnable single-node service with
+SQLite persistence, authentication, posts, collection, endpoint checks,
+bounded history, deterministic alerts, notifications, and incidents. The build
+is still development software: no public release, production remote collector,
+agent capability, or completed hardening programme is claimed yet.
 Read [HANDOVER.md](HANDOVER.md) for the boundaries and [PLAN.md](PLAN.md) for the
 ordered implementation programme.
 

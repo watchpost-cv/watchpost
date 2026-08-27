@@ -44,7 +44,7 @@ func TestEmbeddedDashboard(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
 	testServer(t).Handler().ServeHTTP(w, r)
-	if w.Code != http.StatusOK || !contains(w.Body.String(), "Every monitored") {
+	if w.Code != http.StatusOK || !contains(w.Body.String(), "deterministic alerts") {
 		t.Fatalf("unexpected dashboard: status=%d body=%q", w.Code, w.Body.String())
 	}
 }

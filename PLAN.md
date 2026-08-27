@@ -1,6 +1,6 @@
 # Watchpost development checkpoints
 
-Status: WP00 through WP05 implemented; verification evidence is recorded below.
+Status: WP00 through WP11 implemented; verification evidence is recorded below.
 
 Every monitored system, service, endpoint, application, or device is a
 **post**. This is the canonical schema, API, code, test, UI, and documentation
@@ -290,3 +290,40 @@ separate threat model and must never imply that Watchpost is a safety system.
 - Versioned observations bind collector/post identity with clock bounds,
   monotonic replay defence, quality, units, labels, and a 64 KiB API limit.
 - Acceptance, replay rejection, and future-clock rejection are tested.
+
+### WP06
+
+- A read-only Linux host collector reports CPU ticks, memory, load, uptime, and
+  root filesystem capacity directly from kernel interfaces without shell use.
+- Real-host collection is tested on Linux; unsupported platforms fail clearly.
+
+### WP07
+
+- Bounded TCP, HTTP(S), DNS, and TLS checks expose latency and typed failure.
+- HTTP redirects are bounded and same-host; TLS requires 1.2 or newer.
+- Hermetic HTTP/TCP and address-classification tests are present.
+
+### WP08
+
+- Post/signal history has bounded windows and result limits.
+- Retention deletes bounded batches and preserves explicit quality values.
+- History and retention are covered through real ingested observations.
+
+### WP09
+
+- Durable typed rules drive pending, firing, acknowledged, suppressed, and
+  resolved alert states with duration, missing policy, and hysteresis.
+- Live ingestion invokes the same evaluator exercised by deterministic replay.
+
+### WP10
+
+- Durable webhook and SMTP routes receive idempotently queued alert deliveries.
+- A bounded background worker records success or capped exponential retry state.
+- Deduplication, successful delivery, and provider failure are tested.
+
+### WP11
+
+- Durable incidents support linked alerts, status transitions, resolution,
+  notes, and ordered timelines.
+- The authenticated UI exposes posts, endpoint checks, alerts, and incident
+  creation with responsive layouts.

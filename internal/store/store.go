@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const SchemaVersion = 1
+const SchemaVersion = 2
 
 type Store struct{ DB *sql.DB }
 
@@ -68,6 +68,28 @@ func (s *Store) migrate(ctx context.Context) error {
 			}
 		}
 		if _, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations(version,applied_at) VALUES(1,?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return err
+		}
+		version = 1
+	}
+	if version == 1 {
+		statements := []string{
+			`CREATE INDEX observations_post_signal_time ON observations(post_id,signal,observed_at)`,
+			`CREATE TABLE rules(id TEXT PRIMARY KEY, post_id TEXT NOT NULL REFERENCES posts(id), signal TEXT NOT NULL, operator TEXT NOT NULL CHECK(operator IN ('gt','gte','lt','lte')), threshold REAL NOT NULL, duration_seconds INTEGER NOT NULL DEFAULT 0, recovery_threshold REAL, missing_policy TEXT NOT NULL DEFAULT 'unknown', severity TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, version INTEGER NOT NULL DEFAULT 1)`,
+			`CREATE TABLE alerts(id INTEGER PRIMARY KEY, rule_id TEXT NOT NULL REFERENCES rules(id), post_id TEXT NOT NULL REFERENCES posts(id), state TEXT NOT NULL, severity TEXT NOT NULL, opened_at TEXT NOT NULL, updated_at TEXT NOT NULL, acknowledged_at TEXT, resolved_at TEXT, value REAL)`,
+			`CREATE INDEX alerts_active ON alerts(rule_id,post_id,state)`,
+			`CREATE TABLE notification_routes(id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('webhook','email')), destination TEXT NOT NULL, secret TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1)`,
+			`CREATE TABLE notification_deliveries(id INTEGER PRIMARY KEY, alert_id INTEGER NOT NULL REFERENCES alerts(id), route_id TEXT NOT NULL REFERENCES notification_routes(id), state TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT NOT NULL, delivered_at TEXT, last_error TEXT NOT NULL DEFAULT '', UNIQUE(alert_id,route_id))`,
+			`CREATE TABLE incidents(id INTEGER PRIMARY KEY, title TEXT NOT NULL, severity TEXT NOT NULL, status TEXT NOT NULL, owner TEXT NOT NULL DEFAULT '', summary TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, resolved_at TEXT)`,
+			`CREATE TABLE incident_alerts(incident_id INTEGER NOT NULL REFERENCES incidents(id), alert_id INTEGER NOT NULL REFERENCES alerts(id), PRIMARY KEY(incident_id,alert_id))`,
+			`CREATE TABLE incident_timeline(id INTEGER PRIMARY KEY, incident_id INTEGER NOT NULL REFERENCES incidents(id), at TEXT NOT NULL, kind TEXT NOT NULL, actor TEXT NOT NULL, body TEXT NOT NULL)`,
+		}
+		for _, statement := range statements {
+			if _, err = tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("migration 2: %w", err)
+			}
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations(version,applied_at) VALUES(2,?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 			return err
 		}
 	}

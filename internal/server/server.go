@@ -11,24 +11,33 @@ import (
 
 	"github.com/watchpost-ops/watchpost/internal/auth"
 	"github.com/watchpost-ops/watchpost/internal/config"
+	"github.com/watchpost-ops/watchpost/internal/history"
+	"github.com/watchpost-ops/watchpost/internal/incidents"
 	"github.com/watchpost-ops/watchpost/internal/ingest"
+	"github.com/watchpost-ops/watchpost/internal/notify"
 	"github.com/watchpost-ops/watchpost/internal/posts"
+	"github.com/watchpost-ops/watchpost/internal/rules"
 	"github.com/watchpost-ops/watchpost/internal/store"
 	"github.com/watchpost-ops/watchpost/web"
 )
 
 type Server struct {
-	cfg     config.Config
-	version string
-	logger  *slog.Logger
-	store   *store.Store
-	auth    *auth.Manager
-	posts   *posts.Store
-	ingest  *ingest.Service
+	cfg       config.Config
+	version   string
+	logger    *slog.Logger
+	store     *store.Store
+	auth      *auth.Manager
+	posts     *posts.Store
+	ingest    *ingest.Service
+	history   *history.Store
+	rules     *rules.Engine
+	notify    *notify.Service
+	incidents *incidents.Store
 }
 
 func New(cfg config.Config, version string, logger *slog.Logger, database *store.Store) *Server {
-	return &Server{cfg: cfg, version: version, logger: logger, store: database, auth: auth.New(database), posts: posts.New(database), ingest: ingest.New(database)}
+	sender := notify.NetworkSender{Client: &http.Client{Timeout: 10 * time.Second}}
+	return &Server{cfg: cfg, version: version, logger: logger, store: database, auth: auth.New(database), posts: posts.New(database), ingest: ingest.New(database), history: history.New(database), rules: rules.New(database), notify: notify.New(database, sender), incidents: incidents.New(database)}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -60,6 +69,7 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) Run(ctx context.Context) error {
 	httpServer := &http.Server{Addr: s.cfg.Listen, Handler: s.Handler(), ReadHeaderTimeout: 5 * time.Second}
+	go s.deliveryLoop(ctx)
 	errCh := make(chan error, 1)
 	go func() {
 		s.logger.Info("watchpost listening", "address", s.cfg.Listen, "version", s.version)
@@ -75,6 +85,21 @@ func (s *Server) Run(ctx context.Context) error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		return httpServer.Shutdown(shutdownCtx)
+	}
+}
+
+func (s *Server) deliveryLoop(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := s.notify.DeliverDue(ctx, 25); err != nil {
+				s.logger.Error("notification delivery", "error", err)
+			}
+		}
 	}
 }
 

@@ -1,13 +1,19 @@
 package server
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/watchpost-ops/watchpost/internal/checks"
+	"github.com/watchpost-ops/watchpost/internal/host"
 	"github.com/watchpost-ops/watchpost/internal/ingest"
+	"github.com/watchpost-ops/watchpost/internal/notify"
 	"github.com/watchpost-ops/watchpost/internal/posts"
+	"github.com/watchpost-ops/watchpost/internal/rules"
 )
 
 const sessionCookie = "watchpost_session"
@@ -23,6 +29,18 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/posts/{id}/dependencies", s.require("operator", s.handleAddDependency))
 	mux.HandleFunc("POST /api/v1/posts/{id}/collectors", s.require("admin", s.handleEnrollCollector))
 	mux.HandleFunc("POST /api/v1/observations", s.handleObservation)
+	mux.HandleFunc("GET /api/v1/host-snapshot", s.require("viewer", s.handleHostSnapshot))
+	mux.HandleFunc("POST /api/v1/checks", s.require("operator", s.handleCheck))
+	mux.HandleFunc("GET /api/v1/posts/{id}/history", s.require("viewer", s.handleHistory))
+	mux.HandleFunc("POST /api/v1/rules", s.require("operator", s.handleCreateRule))
+	mux.HandleFunc("GET /api/v1/alerts", s.require("viewer", s.handleListAlerts))
+	mux.HandleFunc("POST /api/v1/alerts/{id}/acknowledge", s.require("operator", s.handleAcknowledge))
+	mux.HandleFunc("POST /api/v1/notification-routes", s.require("admin", s.handleCreateRoute))
+	mux.HandleFunc("POST /api/v1/incidents", s.require("operator", s.handleCreateIncident))
+	mux.HandleFunc("GET /api/v1/incidents", s.require("viewer", s.handleListIncidents))
+	mux.HandleFunc("GET /api/v1/incidents/{id}", s.require("viewer", s.handleGetIncident))
+	mux.HandleFunc("POST /api/v1/incidents/{id}/transition", s.require("operator", s.handleTransitionIncident))
+	mux.HandleFunc("POST /api/v1/incidents/{id}/notes", s.require("operator", s.handleIncidentNote))
 }
 
 func decode(w http.ResponseWriter, r *http.Request, value any) bool {
@@ -183,5 +201,202 @@ func (s *Server) handleObservation(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
+	alerts, err := s.rules.EvaluateObservation(r.Context(), observation.PostID, observation.Signal, observation.ObservedAt, observation.Value, observation.Quality)
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": "rule evaluation failed"})
+		return
+	}
+	for _, alert := range alerts {
+		if alert.State == "firing" {
+			_ = s.notify.Queue(r.Context(), alert.ID)
+		}
+	}
 	w.WriteHeader(http.StatusAccepted)
+}
+func (s *Server) handleHostSnapshot(w http.ResponseWriter, r *http.Request) {
+	snapshot, err := host.Collect()
+	if err != nil {
+		writeJSON(w, 501, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, snapshot)
+}
+func (s *Server) handleCheck(w http.ResponseWriter, r *http.Request) {
+	var in struct{ Kind, Address, ServerName string }
+	if !decode(w, r, &in) {
+		return
+	}
+	runner := checks.New(10 * time.Second)
+	var result checks.Result
+	switch in.Kind {
+	case "icmp":
+		result = runner.ICMP(r.Context(), in.Address)
+	case "http":
+		result = runner.HTTPCheck(r.Context(), in.Address)
+	case "tcp":
+		result = runner.TCP(r.Context(), in.Address)
+	case "dns":
+		result = runner.DNS(r.Context(), in.Address)
+	case "tls":
+		result = runner.TLS(r.Context(), in.Address, in.ServerName)
+	default:
+		writeJSON(w, 400, map[string]string{"error": "unsupported check"})
+		return
+	}
+	writeJSON(w, 200, result)
+}
+func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
+	from, err := time.Parse(time.RFC3339, r.URL.Query().Get("from"))
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": "invalid from"})
+		return
+	}
+	to, err := time.Parse(time.RFC3339, r.URL.Query().Get("to"))
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": "invalid to"})
+		return
+	}
+	points, err := s.history.Series(r.Context(), r.PathValue("id"), r.URL.Query().Get("signal"), from, to, 1000)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	if r.URL.Query().Get("format") == "csv" {
+		w.Header().Set("Content-Type", "text/csv")
+		w.Header().Set("Content-Disposition", "attachment; filename=watchpost-history.csv")
+		writer := csv.NewWriter(w)
+		_ = writer.Write([]string{"observed_at", "value", "unit", "quality"})
+		for _, point := range points {
+			value := ""
+			if point.Value != nil {
+				value = strconv.FormatFloat(*point.Value, 'g', -1, 64)
+			}
+			_ = writer.Write([]string{point.ObservedAt.Format(time.RFC3339Nano), value, point.Unit, point.Quality})
+		}
+		writer.Flush()
+		return
+	}
+	writeJSON(w, 200, map[string]any{"points": points})
+}
+func (s *Server) handleCreateRule(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		ID, PostID, Signal, Operator, MissingPolicy, Severity string
+		Threshold                                             float64
+		DurationSeconds                                       int64
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	err := s.rules.Create(r.Context(), rules.Rule{ID: in.ID, PostID: in.PostID, Signal: in.Signal, Operator: in.Operator, Threshold: in.Threshold, Duration: time.Duration(in.DurationSeconds) * time.Second, MissingPolicy: in.MissingPolicy, Severity: in.Severity, Enabled: true})
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	w.WriteHeader(201)
+}
+func (s *Server) handleCreateRoute(w http.ResponseWriter, r *http.Request) {
+	var route notify.Route
+	if !decode(w, r, &route) {
+		return
+	}
+	route.Enabled = true
+	if err := s.notify.CreateRoute(r.Context(), route); err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	w.WriteHeader(201)
+}
+func (s *Server) handleListAlerts(w http.ResponseWriter, r *http.Request) {
+	alerts, err := s.rules.ListAlerts(r.Context(), 500)
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": "list alerts failed"})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"alerts": alerts})
+}
+func (s *Server) handleAcknowledge(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": "invalid alert"})
+		return
+	}
+	if err = s.rules.Acknowledge(r.Context(), id, time.Now().UTC()); err != nil {
+		writeJSON(w, 409, map[string]string{"error": err.Error()})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+func (s *Server) handleCreateIncident(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Title, Severity string
+		AlertIDs        []int64 `json:"alert_ids"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	incident, err := s.incidents.Create(r.Context(), in.Title, in.Severity, "authenticated-user", in.AlertIDs)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 201, incident)
+}
+func (s *Server) handleGetIncident(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": "invalid incident"})
+		return
+	}
+	incident, err := s.incidents.Get(r.Context(), id)
+	if err != nil {
+		writeJSON(w, 404, map[string]string{"error": "incident not found"})
+		return
+	}
+	timeline, err := s.incidents.Timeline(r.Context(), id, 1000)
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": "timeline failed"})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"incident": incident, "timeline": timeline})
+}
+func (s *Server) handleListIncidents(w http.ResponseWriter, r *http.Request) {
+	items, err := s.incidents.List(r.Context(), 500)
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": "list incidents failed"})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"incidents": items})
+}
+func (s *Server) handleTransitionIncident(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": "invalid incident"})
+		return
+	}
+	var in struct{ Status, Summary string }
+	if !decode(w, r, &in) {
+		return
+	}
+	incident, err := s.incidents.Transition(r.Context(), id, in.Status, "authenticated-user", in.Summary)
+	if err != nil {
+		writeJSON(w, 409, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, incident)
+}
+func (s *Server) handleIncidentNote(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": "invalid incident"})
+		return
+	}
+	var in struct{ Body string }
+	if !decode(w, r, &in) {
+		return
+	}
+	if err = s.incidents.AddNote(r.Context(), id, "authenticated-user", in.Body); err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
