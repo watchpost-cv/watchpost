@@ -64,5 +64,9 @@ with Caddy or nginx, and pass `--secure-cookies`. See
 checksums with `./packaging/build-release.sh vX.Y.Z`; the release-shaped local
 gate is `./packaging/release-smoke.sh`.
 
+The complete local development-candidate gate is
+`./hardening/complete-gate.sh`. Read `RELEASE_LIMITATIONS.md` before making any
+deployment or production-readiness claim.
+
 Public website source lives in the sibling `watchpost-ops.github.io`
 repository.

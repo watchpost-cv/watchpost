@@ -15,6 +15,10 @@ jobs:
       - run: go test -race ./...
       - run: go vet ./...
       - run: ./packaging/release-smoke.sh
+      - run: ./hardening/host-journey.sh
+      - run: ./hardening/recovery-drill.sh
+      - run: WATCHPOST_LONG_RUN_SECONDS=15 ./hardening/long-run.sh
+      - run: go test ./internal/ingest -run '^$' -fuzz FuzzObservationValidation -fuzztime 5s
   build:
     strategy:
       matrix:

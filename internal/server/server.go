@@ -7,6 +7,8 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"os"
+	"runtime"
 	"time"
 
 	"github.com/watchpost-ops/watchpost/internal/actions"
@@ -92,7 +94,13 @@ func (s *Server) Handler() http.Handler {
 		writeJSON(w, http.StatusOK, map[string]string{"version": s.version})
 	})
 	mux.HandleFunc("GET /api/v1/diagnostics", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"version": s.version, "schema_version": store.SchemaVersion, "persistence": true})
+		var memory runtime.MemStats
+		runtime.ReadMemStats(&memory)
+		openFDs := -1
+		if entries, readErr := os.ReadDir("/proc/self/fd"); readErr == nil {
+			openFDs = len(entries)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"version": s.version, "schema_version": store.SchemaVersion, "persistence": true, "heap_alloc_bytes": memory.HeapAlloc, "goroutines": runtime.NumGoroutine(), "open_fds": openFDs})
 	})
 	s.registerAPI(mux)
 	assets, err := fs.Sub(web.Files, "dist")

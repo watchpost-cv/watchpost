@@ -1,9 +1,10 @@
 # Watchpost engineering handover
 
-Current execution: WP01R through WP17R are complete as of 2026-08-28. The
-release/deployment recovery gate is closed; WP18R hardening remains. `hardening/host-journey.sh` is the mandatory Linux
-gate: it pairs separate server/collector processes, restarts both, and proves
-continuing history. Do not regress the guided enrollment-to-confirmation flow.
+Current execution: WP01R through WP18R are complete as of 2026-08-28. The
+recovery programme is closed as a local Linux development candidate, not a
+public production release. `hardening/complete-gate.sh` is authoritative and
+`RELEASE_LIMITATIONS.md` must accompany release decisions. Do not regress the
+guided enrollment-to-confirmation flow.
 The authoritative gap inventory is
 `docs/implementation-reconciliation.md`; do not restore the former claim that
 WP00–WP18 are implemented.

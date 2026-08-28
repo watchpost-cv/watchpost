@@ -51,3 +51,13 @@ No tag or public release is created by completing this checkpoint. Real macOS
 and Windows execution, sustained multi-hour campaigns, and external security
 review remain release-authorization evidence rather than claims made from local
 cross-compilation.
+
+## WP18R hardening gate
+
+`hardening/complete-gate.sh` composes the full normal/race/vet suite, bounded
+fuzzing, deterministic release/installer/upgrade/rollback smoke, separate
+server-and-collector restart journey, stopped-backup restore/corruption drill,
+and a race-built server-plus-collector soak with explicit heap, goroutine,
+file-descriptor, and database-size ceilings. Its duration is a local regression bound, not a
+large-fleet capacity result. See `RELEASE_LIMITATIONS.md` for the remaining
+release decision boundary.

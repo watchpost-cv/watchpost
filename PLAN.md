@@ -94,6 +94,10 @@ WP17R builds six release targets as loose binaries and OS-native archives,
 verifies their checksums and contents, installs from a local release-shaped
 endpoint, and proves a post survives upgrade and rollback. HTTPS proxy mode
 sets Secure session cookies explicitly and is documented for Caddy and nginx.
+WP18R composes normal/race/vet/fuzz validation with release, two-process host,
+stopped-backup recovery/corruption, and bounded server-plus-collector soak
+gates. Remaining platform, scheduling, UI, federation, backup, capacity, model,
+and external-review limits are published in `RELEASE_LIMITATIONS.md`.
 
 Every monitored system, service, endpoint, application, or device is a
 **post**. This is the canonical schema, API, code, test, UI, and documentation

@@ -9,3 +9,8 @@ compatible binary. Startup refuses a schema newer than the binary supports.
 Online, scheduled, encrypted, and externally segmented telemetry backups are
 not implemented. Do not claim crash-consistent live backups until Watchpost
 exposes a tested SQLite backup operation.
+
+Run `./hardening/recovery-drill.sh` from a source checkout. It creates durable
+state, cleanly stops the node, copies only the stopped database, restores into
+an empty directory, verifies the post through the API, and proves a deliberately
+corrupt database fails closed.
