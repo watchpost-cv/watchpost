@@ -53,6 +53,7 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/alerts", s.require("viewer", s.handleListAlerts))
 	mux.HandleFunc("POST /api/v1/alerts/{id}/acknowledge", s.require("operator", s.handleAcknowledge))
 	mux.HandleFunc("POST /api/v1/notification-routes", s.require("admin", s.handleCreateRoute))
+	mux.HandleFunc("GET /api/v1/notification-routes", s.require("viewer", s.handleListRoutes))
 	mux.HandleFunc("POST /api/v1/incidents", s.require("operator", s.handleCreateIncident))
 	mux.HandleFunc("GET /api/v1/incidents", s.require("viewer", s.handleListIncidents))
 	mux.HandleFunc("GET /api/v1/incidents/{id}", s.require("viewer", s.handleGetIncident))
@@ -453,6 +454,14 @@ func (s *Server) handleCreateRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(201)
+}
+func (s *Server) handleListRoutes(w http.ResponseWriter, r *http.Request) {
+	items, err := s.notify.ListRoutes(r.Context())
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": "notification status unavailable"})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"routes": items})
 }
 func (s *Server) handleListAlerts(w http.ResponseWriter, r *http.Request) {
 	alerts, err := s.rules.ListAlerts(r.Context(), 500)

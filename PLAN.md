@@ -66,6 +66,8 @@ Linux gate builds one binary, starts separate server/collector processes,
 pairs over HTTP loopback, restarts both, and proves continuing CPU history.
 WP09R makes rules inspectable and independently enableable/disableable through
 authenticated APIs while retaining deterministic transition and restart tests.
+WP10R exposes secret-free route configuration with pending, retrying, and
+delivered counts backed by the existing durable idempotent delivery queue.
 
 Every monitored system, service, endpoint, application, or device is a
 **post**. This is the canonical schema, API, code, test, UI, and documentation

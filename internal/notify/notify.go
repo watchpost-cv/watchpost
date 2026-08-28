@@ -24,6 +24,31 @@ type Message struct {
 	State    string `json:"state"`
 	Severity string `json:"severity"`
 }
+type RouteStatus struct {
+	ID                           string `json:"id"`
+	Kind                         string `json:"kind"`
+	Destination                  string `json:"destination"`
+	Enabled                      bool   `json:"enabled"`
+	Pending, Retrying, Delivered int    `json:"pending"`
+}
+
+func (s *Service) ListRoutes(ctx context.Context) ([]RouteStatus, error) {
+	rows, err := s.s.DB.QueryContext(ctx, `SELECT r.id,r.kind,r.destination,r.enabled,COALESCE(SUM(CASE WHEN d.state='pending' THEN 1 ELSE 0 END),0),COALESCE(SUM(CASE WHEN d.state='retry' THEN 1 ELSE 0 END),0),COALESCE(SUM(CASE WHEN d.state='delivered' THEN 1 ELSE 0 END),0) FROM notification_routes r LEFT JOIN notification_deliveries d ON d.route_id=r.id GROUP BY r.id,r.kind,r.destination,r.enabled ORDER BY r.id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RouteStatus{}
+	for rows.Next() {
+		var i RouteStatus
+		if err = rows.Scan(&i.ID, &i.Kind, &i.Destination, &i.Enabled, &i.Pending, &i.Retrying, &i.Delivered); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	return items, rows.Err()
+}
+
 type Sender interface {
 	Send(context.Context, Route, Message) error
 }
