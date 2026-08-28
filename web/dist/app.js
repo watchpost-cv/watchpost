@@ -2,7 +2,7 @@
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
-const state = { csrf: "", user: null, posts: [], collectors: [], agentConnections: [], rules: [], checkSchedules: [], deviceProfiles: [], deviceAdapters: [], alerts: [], incidents: [], agentRequests: [], postLimit: 50 };
+const state = { csrf: "", user: null, posts: [], collectors: [], agentConnections: [], rules: [], checkSchedules: [], deviceProfiles: [], deviceAdapters: [], devicePresets: [], alerts: [], incidents: [], agentRequests: [], postLimit: 50 };
 const routes = new Set(["overview", "survey", "posts", "edit-post", "enroll", "collectors", "checks", "history", "rules", "evidence", "investigate", "actions", "incidents", "devices", "fleet"]);
 
 async function request(path, options = {}) {
@@ -57,7 +57,7 @@ async function enterApp(session) {
 
 async function loadCore() {
   $("#summary").innerHTML = stateBox("Loading workspace", "Collecting the latest operational state.", "loading");
-  const results = await Promise.allSettled([request("/api/v1/posts"), request("/api/v1/alerts"), request("/api/v1/incidents"), request("/api/v1/collectors"), request("/api/v1/agent-pairing-requests"), request("/api/v1/agent-connections"), request("/api/v1/rules"), request("/api/v1/check-schedules"), request("/api/v1/device-profiles"), request("/api/v1/device-adapters")]);
+  const results = await Promise.allSettled([request("/api/v1/posts"), request("/api/v1/alerts"), request("/api/v1/incidents"), request("/api/v1/collectors"), request("/api/v1/agent-pairing-requests"), request("/api/v1/agent-connections"), request("/api/v1/rules"), request("/api/v1/check-schedules"), request("/api/v1/device-profiles"), request("/api/v1/device-adapters"), request("/api/v1/device-presets")]);
   const failures = results.filter(result => result.status === "rejected");
   state.posts = results[0].status === "fulfilled" ? results[0].value.posts : [];
   state.alerts = results[1].status === "fulfilled" ? results[1].value.alerts : [];
@@ -69,6 +69,7 @@ async function loadCore() {
   state.checkSchedules = results[7].status === "fulfilled" ? results[7].value.schedules : [];
   state.deviceProfiles = results[8].status === "fulfilled" ? results[8].value.profiles : [];
   state.deviceAdapters = results[9].status === "fulfilled" ? results[9].value.adapters : [];
+  state.devicePresets = results[10].status === "fulfilled" ? results[10].value.presets : [];
   updatePostSelects(); renderOverview(); renderPosts(); renderIncidents(); renderCollectorHealth(); renderAgentRequests(); renderRuleInventory(); renderCheckSchedules(); renderDeviceProfiles();
   if (failures.length) showMessage(`${failures.length} workspace section${failures.length === 1 ? "" : "s"} could not be loaded. Available data is still shown.`, "error");
 }
@@ -325,6 +326,7 @@ async function executeAction(id, output) { output.innerHTML = stateBox("Executin
 $("#incident").addEventListener("submit", async event => { event.preventDefault(); const form = event.currentTarget, value = { ...formJSON(form), alert_ids: [] }; setBusy(form, true); try { await request("/api/v1/incidents", { method: "POST", headers: { "X-Watchpost-CSRF": state.csrf }, body: JSON.stringify(value) }); form.reset(); await loadCore(); showMessage("Incident opened."); } catch (error) { showMessage(error.message, "error"); } finally { setBusy(form, false); } });
 
 addOID(); $("#add-oid").addEventListener("click", () => addOID({ name: "", oid: "", unit: "" }));
+$("#snmp [name=device_kind]").addEventListener("change",event=>{const preset=state.devicePresets.find(item=>(item.Kind||item.kind)===event.target.value);if(!preset)return;$("#oid-rows").replaceChildren();const oids=preset.OIDs||preset.oids||[];if(oids.length)oids.forEach(item=>addOID({name:item.Name||item.name,oid:item.OID||item.oid,unit:item.Unit||item.unit}));else addOID();showMessage(`${preset.Name||preset.name} profile loaded. Add vendor OIDs where required.`)});
 const snmpWizard = setupWizard("snmp", "[data-snmp-step]", "#snmp-steps", "#snmp-back", "#snmp-next", "#snmp-test", () => { const values = formJSON($("#snmp")), count = $$(".oid-row").length; $("#snmp-review").innerHTML = `<dt>Target</dt><dd>${escapeHTML(values.address)}:${escapeHTML(values.port)}</dd><dt>Security</dt><dd>SNMPv3 authPriv · SHA-256 · AES</dd><dt>Profile</dt><dd>${escapeHTML(values.profile_id)} (${escapeHTML(title(values.device_kind))})</dd><dt>OIDs</dt><dd>${count}</dd>`; });
 $("#snmp").addEventListener("submit", async event => { event.preventDefault(); const form = event.currentTarget, values = formJSON(form), output = $("#snmp-result"), OIDs = $$(".oid-row").map(row => ({ Name: $('[data-oid="name"]', row).value, OID: $('[data-oid="oid"]', row).value, Unit: $('[data-oid="unit"]', row).value })); output.hidden = false; output.innerHTML = stateBox("Testing SNMP connection", "Authenticating and polling the bounded OID profile.", "loading"); setBusy(form, true); try { const result = await request("/api/v1/devices/snmp/poll", { method: "POST", headers: { "X-Watchpost-CSRF": state.csrf }, body: JSON.stringify({ config: { Address: values.address, Port: Number(values.port), Username: values.username, AuthPassword: values.auth_password, PrivacyPassword: values.privacy_password, Timeout: 5_000_000_000 }, profile: { ID: values.profile_id, Kind: values.device_kind, OIDs } }) }); await request("/api/v1/device-profiles", { method: "POST", headers: { "X-Watchpost-CSRF": state.csrf }, body: JSON.stringify({ id: values.profile_id, post_id: values.post_id, kind: values.device_kind, address: values.address, port: Number(values.port), username: values.username, oids: OIDs }) }); await loadCore(); output.innerHTML = `<h2>Connection successful</h2><p>${result.readings.length} reading${result.readings.length === 1 ? "" : "s"} returned.</p><dl class="review-list">${result.readings.map(reading => `<dt>${escapeHTML(reading.Name)}</dt><dd>${escapeHTML(reading.Value)} ${escapeHTML(reading.Unit)} · ${escapeHTML(reading.Quality)}</dd>`).join("")}</dl>`; } catch (error) { output.innerHTML = stateBox("Connection test failed", `${error.message} Check reachability, authPriv credentials, allowed source addresses, and OIDs.`, error.message.includes("permission") ? "permission" : "error"); } finally { setBusy(form, false); } });
 

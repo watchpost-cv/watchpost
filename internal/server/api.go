@@ -93,6 +93,7 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/device-profiles", s.require("viewer", s.handleListDeviceProfiles))
 	mux.HandleFunc("DELETE /api/v1/device-profiles/{id}", s.require("operator", s.handleDeleteDeviceProfile))
 	mux.HandleFunc("GET /api/v1/device-adapters", s.require("viewer", s.handleListDeviceAdapters))
+	mux.HandleFunc("GET /api/v1/device-presets", s.require("viewer", s.handleListDevicePresets))
 }
 
 func (s *Server) handleAgentPairingRequest(w http.ResponseWriter, r *http.Request) {
@@ -956,6 +957,9 @@ func (s *Server) handleDeleteDeviceProfile(w http.ResponseWriter, r *http.Reques
 }
 func (s *Server) handleListDeviceAdapters(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"adapters": devices.Adapters()})
+}
+func (s *Server) handleListDevicePresets(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, map[string]any{"presets": devices.Presets()})
 }
 func (s *Server) handleSNMPPoll(w http.ResponseWriter, r *http.Request) {
 	var in struct {

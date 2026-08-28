@@ -17,6 +17,8 @@ type Reading struct {
 	Name, OID, Unit string
 	Value           any
 	Quality         string
+	ObservedAt      time.Time
+	FreshUntil      time.Time
 }
 type Getter interface {
 	Get([]string) (*gosnmp.SnmpPacket, error)
@@ -54,9 +56,24 @@ func Poll(ctx context.Context, getter Getter, profile Profile) ([]Reading, error
 		if variable.Type == gosnmp.NoSuchObject || variable.Type == gosnmp.NoSuchInstance {
 			quality = "missing"
 		}
-		readings = append(readings, Reading{Name: item.Name, OID: item.OID, Unit: item.Unit, Value: variable.Value, Quality: quality})
+		now := time.Now().UTC()
+		readings = append(readings, Reading{Name: item.Name, OID: item.OID, Unit: item.Unit, Value: variable.Value, Quality: quality, ObservedAt: now, FreshUntil: now.Add(5 * time.Minute)})
 	}
 	return readings, nil
+}
+
+type Preset struct {
+	Kind, Name, Description string
+	OIDs                    []OID
+}
+
+func Presets() []Preset {
+	return []Preset{
+		{Kind: "network_device", Name: "Network availability", Description: "Uptime and interface inventory", OIDs: []OID{{Name: "uptime", OID: ".1.3.6.1.2.1.1.3.0", Unit: "ticks"}, {Name: "interfaces", OID: ".1.3.6.1.2.1.2.1.0", Unit: "count"}}},
+		{Kind: "ups", Name: "UPS or PDU", Description: "Battery charge, input voltage and load", OIDs: []OID{{Name: "battery_charge", OID: ".1.3.6.1.2.1.33.1.2.4.0", Unit: "percent"}, {Name: "input_voltage", OID: ".1.3.6.1.2.1.33.1.3.3.1.3.1", Unit: "volts"}, {Name: "output_load", OID: ".1.3.6.1.2.1.33.1.4.4.1.5.1", Unit: "percent"}}},
+		{Kind: "environmental_sensor", Name: "Environment", Description: "Vendor-neutral placeholder for temperature and humidity OIDs", OIDs: []OID{}},
+		{Kind: "storage_appliance", Name: "Storage appliance", Description: "Uptime plus vendor-specific capacity and health OIDs", OIDs: []OID{{Name: "uptime", OID: ".1.3.6.1.2.1.1.3.0", Unit: "ticks"}}},
+	}
 }
 
 type V3Config struct {

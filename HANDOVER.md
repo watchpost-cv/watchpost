@@ -54,6 +54,9 @@ facts and are configured beneath a post. They do not require an agent.
 WP-A14 makes SNMPv3 a declared read-only adapter. Durable profiles contain
 address, username, device kind and at most 64 OIDs; authentication/privacy
 passwords remain transient. Successful tests save the method beneath its post.
+WP-A15 supplies bounded network, UPS/PDU, environment and storage presets.
+Vendor-neutral OIDs are prefilled where standards exist; vendor-specific
+environment/storage OIDs remain explicit. Readings carry quality and freshness.
 The authoritative gap inventory is
 `docs/implementation-reconciliation.md`; do not restore the former claim that
 WP00–WP18 are implemented.
