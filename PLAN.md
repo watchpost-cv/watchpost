@@ -18,6 +18,11 @@ packaging, scale and recovery evidence.
 The detailed sibling plan is authoritative. WP-A07 is complete: authenticated
 connection APIs and post inventory now expose agents as monitoring details
 beneath their post, including explicit health, without creating duplicate posts.
+WP-A08 through WP-A12 are complete: agent-side collector profiles and durable
+delivery feed a dense survey whose safe, warning, critical, unknown and
+maintenance states are derived from enabled post rules, active alerts,
+freshness and connection health. Starter rules are visible and independently
+pauseable; absent policy is labelled unknown rather than presented as healthy.
 
 Status: original WP00–WP18 implementation claims were reconciled on 2026-08-28.
 The codebase contains useful foundations and a proven Linux host loop. The

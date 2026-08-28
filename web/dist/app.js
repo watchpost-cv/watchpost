@@ -2,7 +2,7 @@
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
-const state = { csrf: "", user: null, posts: [], collectors: [], agentConnections: [], alerts: [], incidents: [], agentRequests: [], postLimit: 50 };
+const state = { csrf: "", user: null, posts: [], collectors: [], agentConnections: [], rules: [], alerts: [], incidents: [], agentRequests: [], postLimit: 50 };
 const routes = new Set(["overview", "survey", "posts", "edit-post", "enroll", "collectors", "checks", "history", "rules", "evidence", "investigate", "actions", "incidents", "devices", "fleet"]);
 
 async function request(path, options = {}) {
@@ -57,7 +57,7 @@ async function enterApp(session) {
 
 async function loadCore() {
   $("#summary").innerHTML = stateBox("Loading workspace", "Collecting the latest operational state.", "loading");
-  const results = await Promise.allSettled([request("/api/v1/posts"), request("/api/v1/alerts"), request("/api/v1/incidents"), request("/api/v1/collectors"), request("/api/v1/agent-pairing-requests"), request("/api/v1/agent-connections")]);
+  const results = await Promise.allSettled([request("/api/v1/posts"), request("/api/v1/alerts"), request("/api/v1/incidents"), request("/api/v1/collectors"), request("/api/v1/agent-pairing-requests"), request("/api/v1/agent-connections"), request("/api/v1/rules")]);
   const failures = results.filter(result => result.status === "rejected");
   state.posts = results[0].status === "fulfilled" ? results[0].value.posts : [];
   state.alerts = results[1].status === "fulfilled" ? results[1].value.alerts : [];
@@ -65,7 +65,8 @@ async function loadCore() {
   state.collectors = results[3].status === "fulfilled" ? results[3].value.collectors : [];
   state.agentRequests = results[4].status === "fulfilled" ? results[4].value : [];
   state.agentConnections = results[5].status === "fulfilled" ? results[5].value.connections : [];
-  updatePostSelects(); renderOverview(); renderPosts(); renderIncidents(); renderCollectorHealth(); renderAgentRequests();
+  state.rules = results[6].status === "fulfilled" ? results[6].value.rules : [];
+  updatePostSelects(); renderOverview(); renderPosts(); renderIncidents(); renderCollectorHealth(); renderAgentRequests(); renderRuleInventory();
   if (failures.length) showMessage(`${failures.length} workspace section${failures.length === 1 ? "" : "s"} could not be loaded. Available data is still shown.`, "error");
 }
 
@@ -90,6 +91,7 @@ function route() {
   document.title = "Watchpost";
   $("#page").focus({ preventScroll: true });
   if (current === "survey") renderSurvey();
+  if (current === "rules") renderRuleInventory();
   if (current === "edit-post") renderPostEditor(new URLSearchParams(location.hash.split("?")[1] || "").get("id"));
   if (current === "collectors" && !$('#collector [name="server_url"]').value) $('#collector [name="server_url"]').value = location.origin;
 }
@@ -115,8 +117,24 @@ function sparkline(points) {
   return `<svg class="sparkline" viewBox="0 0 120 38" role="img" aria-label="Recent values from ${Math.round(values[0])} to ${Math.round(values.at(-1))} percent"><path d="${path}"/></svg><strong>${Math.round(values.at(-1) * 10) / 10}%</strong>`;
 }
 
-function resourceHealth(value){if(value===null||Number.isNaN(value))return "unknown";if(value>=90)return "critical";if(value>=75)return "warning";return "safe"}
-function healthBar(points,label){const values=points.filter(point=>point.value!==null).map(point=>Number(point.value)),value=values.length?values.at(-1):null,health=resourceHealth(value),width=value===null?0:Math.max(0,Math.min(100,value));return `<div class="health-reading"><div class="health-meter ${health}" role="meter" aria-label="${escapeHTML(label)}" aria-valuemin="0" aria-valuemax="100" ${value===null?"":`aria-valuenow="${width}"`}><i style="width:${width}%"></i></div><strong>${value===null?"—":`${Math.round(value*10)/10}%`}</strong></div>`}
+function compareRule(value,operator,threshold){return({gt:value>threshold,gte:value>=threshold,lt:value<threshold,lte:value<=threshold})[operator]||false}
+function policyHealth(post,signal,points,connection){
+  const point=[...points].reverse().find(item=>item.value!==null),value=point?Number(point.value):null,rules=state.rules.filter(rule=>(rule.PostID||rule.post_id)===post.id&&(rule.Signal||rule.signal)===signal&&(rule.Enabled??rule.enabled));
+  if(post.maintenance)return{level:"maintenance",value,reason:"Post is in maintenance"};
+  if(!point)return{level:"unknown",value:null,reason:"No samples received"};
+  if(point.quality&&point.quality!=="good")return{level:"unknown",value,reason:`Sample quality is ${point.quality}`};
+  if(Date.now()-Date.parse(point.observed_at)>180000)return{level:"unknown",value,reason:"Latest sample is stale"};
+  if(connection&&!(["healthy","partial"].includes(connection.status)))return{level:"unknown",value,reason:`Agent is ${title(connection.status).toLowerCase()}`};
+  const activeAlerts=state.alerts.filter(alert=>alert.post_id===post.id&&["pending","firing","acknowledged"].includes(alert.state));
+  const alert=activeAlerts.find(item=>rules.some(rule=>(rule.ID||rule.id)===item.rule_id));
+  if(alert)return{level:alert.severity==="critical"?"critical":"warning",value,reason:`${title(alert.severity)} alert is ${alert.state}`};
+  const breached=rules.find(rule=>compareRule(value,rule.Operator||rule.operator,Number(rule.Threshold??rule.threshold)));
+  if(breached)return{level:(breached.Severity||breached.severity)==="critical"?"critical":"warning",value,reason:`Beyond ${ruleCondition(breached)}`};
+  if(rules.length)return{level:"safe",value,reason:`Within ${rules.map(ruleCondition).join(" and ")}`};
+  return{level:"unknown",value,reason:"No policy configured"};
+}
+function ruleCondition(rule){const words={gt:">",gte:"≥",lt:"<",lte:"≤"};return`${words[rule.Operator||rule.operator]||rule.Operator||rule.operator} ${Number(rule.Threshold??rule.threshold)}%`}
+function healthBar(post,signal,points,label,connection){const health=policyHealth(post,signal,points,connection),width=health.value===null?0:Math.max(0,Math.min(100,health.value));return `<div class="health-reading"><div class="health-meter ${health.level}" role="meter" aria-label="${escapeHTML(`${label}: ${health.reason}`)}" aria-valuemin="0" aria-valuemax="100" ${health.value===null?"":`aria-valuenow="${width}"`} title="${escapeHTML(health.reason)}"><i style="width:${width}%"></i></div><strong>${health.value===null?"—":`${Math.round(health.value*10)/10}%`}</strong></div><small class="policy-reason ${health.level}">${escapeHTML(health.reason)}</small>`}
 function ensureSurveyControls(){if($("#survey-controls"))return;const heading=$('[data-view="survey"] .page-heading');const controls=document.createElement("div");controls.id="survey-controls";controls.className="survey-controls";controls.innerHTML='<label><span>Find posts</span><input id="survey-filter" type="search" placeholder="Name or ID"></label><label><span>Order</span><select id="survey-order"><option value="severity">Attention first</option><option value="name">Name</option><option value="cpu">Highest CPU</option><option value="memory">Highest memory</option><option value="disk">Highest disk</option></select></label>';heading.after(controls);$("#survey-filter").addEventListener("input",renderSurvey);$("#survey-order").addEventListener("change",renderSurvey)}
 
 async function renderSurvey() {
@@ -128,9 +146,9 @@ async function renderSurvey() {
     const result = await request("/api/v1/survey"), grouped = new Map();
     result.series.forEach(series => { if (!grouped.has(series.post_id)) grouped.set(series.post_id, {}); grouped.get(series.post_id)[series.signal] = series.points; });
     const latest=(signals,name)=>{const points=signals[name]||[];return points.length&&points.at(-1).value!==null?Number(points.at(-1).value):-1},query=($("#survey-filter")?.value||"").toLowerCase(),order=$("#survey-order")?.value||"severity";
-    const items=state.posts.filter(post=>`${post.name} ${post.id}`.toLowerCase().includes(query)).map(post=>{const signals=grouped.get(post.id)||{},connection=state.agentConnections.find(item=>item.post_id===post.id&&item.status!=="revoked"),values={cpu:latest(signals,"cpu.percent"),memory:latest(signals,"memory.percent"),disk:latest(signals,"disk.percent")},worst=Math.max(values.cpu,values.memory,values.disk);return{post,signals,connection,values,worst}});
-    if(order==="name")items.sort((a,b)=>a.post.name.localeCompare(b.post.name));else if(order in (items[0]?.values||{}))items.sort((a,b)=>b.values[order]-a.values[order]);else items.sort((a,b)=>((!["healthy","partial"].includes(b.connection?.status))*100+Math.max(0,b.worst))-((!["healthy","partial"].includes(a.connection?.status))*100+Math.max(0,a.worst)));
-    grid.innerHTML=items.length?items.map(({post,signals,connection})=>`<article class="survey-card"><div class="survey-heading"><div><h2>${escapeHTML(post.name)}</h2><p><code>${escapeHTML(post.id)}</code> · ${escapeHTML(title(post.kind))}</p></div><span class="health-state ${escapeHTML(connection?.status||"unknown")}"><i></i>${escapeHTML(title(connection?.status||"unknown"))}</span></div><div class="resource-grid">${[["CPU","cpu.percent"],["Memory","memory.percent"],["Disk","disk.percent"]].map(([label,signal])=>`<div class="resource"><div class="resource-label"><span>${label}</span>${sparkline(signals[signal]||[])}</div>${healthBar(signals[signal]||[],label)}</div>`).join("")}</div></article>`).join(""):stateBox("No matching posts","Try a different post name or ID.");
+    const items=state.posts.filter(post=>`${post.name} ${post.id}`.toLowerCase().includes(query)).map(post=>{const signals=grouped.get(post.id)||{},connection=state.agentConnections.find(item=>item.post_id===post.id&&item.status!=="revoked"),values={cpu:latest(signals,"cpu.percent"),memory:latest(signals,"memory.percent"),disk:latest(signals,"disk.percent")},policy=["cpu.percent","memory.percent","disk.percent"].map(signal=>policyHealth(post,signal,signals[signal]||[],connection)),rank=Math.max(...policy.map(item=>({maintenance:0,safe:1,unknown:2,warning:3,critical:4})[item.level]));return{post,signals,connection,values,rank}});
+    if(order==="name")items.sort((a,b)=>a.post.name.localeCompare(b.post.name));else if(order in (items[0]?.values||{}))items.sort((a,b)=>b.values[order]-a.values[order]);else items.sort((a,b)=>b.rank-a.rank||a.post.name.localeCompare(b.post.name));
+    grid.innerHTML=items.length?items.map(({post,signals,connection})=>`<article class="survey-card"><div class="survey-heading"><div><h2>${escapeHTML(post.name)}</h2><p><code>${escapeHTML(post.id)}</code> · ${escapeHTML(title(post.kind))}</p></div><span class="health-state ${escapeHTML(connection?.status||"unknown")}"><i></i>${escapeHTML(title(connection?.status||"unknown"))}</span></div><div class="resource-grid">${[["CPU","cpu.percent"],["Memory","memory.percent"],["Disk","disk.percent"]].map(([label,signal])=>`<div class="resource"><div class="resource-label"><span>${label}</span>${sparkline(signals[signal]||[])}</div>${healthBar(post,signal,signals[signal]||[],label,connection)}</div>`).join("")}</div><a class="policy-link" href="#/rules?post=${encodeURIComponent(post.id)}">Review ${state.rules.filter(rule=>(rule.PostID||rule.post_id)===post.id).length} rules</a></article>`).join(""):stateBox("No matching posts","Try a different post name or ID.");
     status.textContent = `Last hour · ${items.length} of ${state.posts.length} posts · refreshed ${new Date().toLocaleTimeString()}`;
   } catch (error) { grid.innerHTML = stateBox("Survey unavailable", error.message, error.message.includes("permission") ? "permission" : "error"); }
 }
@@ -166,6 +184,23 @@ function renderPostEditor(id) {
   form.elements.archived.checked = post.archived;
   $("#delete-post-id").textContent = post.id;
   $("#delete-post").elements.confirm_id.value = "";
+}
+
+function renderRuleInventory() {
+  const view = $('[data-view="rules"]');
+  if (!view) return;
+  let inventory = $("#rule-inventory");
+  if (!inventory) {
+    inventory = document.createElement("section"); inventory.id = "rule-inventory"; inventory.className = "panel rule-inventory";
+    view.insertBefore(inventory, $("#rule"));
+    $("#rules-title").textContent = "Rules";
+    $("#rules-title").nextElementSibling.textContent = "Review starter policies, then add or pause explicit thresholds.";
+  }
+  const selected = new URLSearchParams(location.hash.split("?")[1] || "").get("post");
+  const rules = selected ? state.rules.filter(rule => (rule.PostID || rule.post_id) === selected) : state.rules;
+  inventory.innerHTML = `<div class="panel-heading"><div><h2>${selected ? `Policy for ${escapeHTML(selected)}` : "Configured policy"}</h2><p>Health bars use these thresholds, active alerts, freshness, maintenance, and agent state.</p></div>${selected ? '<a href="#/rules">All rules</a>' : ""}</div>${rules.length ? rules.map(rule => { const enabled = rule.Enabled ?? rule.enabled, duration = Number((rule.Duration ?? rule.duration) || 0) / 1e9; return `<article class="rule-row"><div><h3>${escapeHTML(rule.ID || rule.id)}</h3><p>${escapeHTML(rule.Signal || rule.signal)} ${escapeHTML(ruleCondition(rule))}${duration ? ` for ${duration}s` : " immediately"} · ${escapeHTML(title(rule.Severity || rule.severity))}</p></div><button type="button" class="quiet-button" data-rule-toggle="${escapeHTML(rule.ID || rule.id)}" data-enabled="${enabled}">${enabled ? "Pause" : "Enable"}</button></article>`; }).join("") : stateBox("No rules configured", "Add a rule below, or enroll a host with starter rules enabled.")}`;
+  $$('[data-rule-toggle]', inventory).forEach(button => button.onclick = async () => { try { await request(`/api/v1/rules/${encodeURIComponent(button.dataset.ruleToggle)}/enabled`, { method: "POST", headers: { "X-Watchpost-CSRF": state.csrf }, body: JSON.stringify({ enabled: button.dataset.enabled !== "true" }) }); await loadCore(); showMessage(`Rule ${button.dataset.enabled === "true" ? "paused" : "enabled"}.`); } catch (error) { showMessage(error.message, "error"); } });
+  if (selected && state.posts.some(post => post.id === selected)) $('#rule [name="PostID"]').value = selected;
 }
 
 function renderIncidents() {
@@ -264,7 +299,7 @@ $("#check").addEventListener("submit", async event => { event.preventDefault(); 
 
 $("#history").addEventListener("submit", async event => { event.preventDefault(); const values = formJSON(event.currentTarget), to = new Date(), from = new Date(to.getTime() - 3600000), signals = values.signals.split(",").map(value => value.trim()).filter(Boolean).slice(0, 4), series = []; try { for (const signal of signals) { const params = new URLSearchParams({ signal, from: from.toISOString(), to: to.toISOString() }); series.push({ signal, points: (await request(`/api/v1/posts/${encodeURIComponent(values.post)}/history?${params}`)).points }); } const all = series.flatMap(item => item.points).filter(point => point.value !== null), svg = $("#chart"); svg.replaceChildren(); if (!all.length) { $("#history-empty").innerHTML = `<h2>No numeric history</h2><p>This post has no matching numeric samples in the last hour. Recent data may be stale or collection may not have started.</p>`; $("#history-empty").hidden = false; svg.hidden = true; return; } const numbers = all.map(point => point.value), min = Math.min(...numbers), max = Math.max(...numbers), span = max - min || 1, colors = ["#9fcb78", "#dbb66f", "#dd8078", "#b7bdb7"]; series.forEach((entry, index) => { const numeric = entry.points.filter(point => point.value !== null), line = document.createElementNS("http://www.w3.org/2000/svg", "polyline"); line.setAttribute("fill", "none"); line.setAttribute("stroke", colors[index]); line.setAttribute("stroke-width", "3"); line.setAttribute("points", numeric.map((point, i) => `${20 + 760 * i / Math.max(1, numeric.length - 1)},${230 - 200 * (point.value - min) / span}`).join(" ")); svg.append(line); }); $("#history-empty").hidden = true; svg.hidden = false; const params = new URLSearchParams({ signal: signals[0], from: from.toISOString(), to: to.toISOString(), format: "csv" }); $("#export").href = `/api/v1/posts/${encodeURIComponent(values.post)}/history?${params}`; $("#export").hidden = false; } catch (error) { showMessage(error.message, "error"); } });
 
-$("#rule").addEventListener("submit", async event => { event.preventDefault(); const form = event.currentTarget, raw = formJSON(form), value = { ...raw, Threshold: Number(raw.Threshold), DurationSeconds: Number(raw.DurationSeconds) }, output = $("#rule-result"); output.hidden = false; output.innerHTML = stateBox("Creating rule", "Saving the deterministic threshold.", "loading"); setBusy(form, true); try { await request("/api/v1/rules", { method: "POST", headers: { "X-Watchpost-CSRF": state.csrf }, body: JSON.stringify(value) }); output.innerHTML = `<h2>Rule created</h2><p><code>${escapeHTML(value.ID)}</code> evaluates every good-quality <code>${escapeHTML(value.Signal)}</code> observation for ${escapeHTML(value.PostID)} and fires after ${escapeHTML(value.DurationSeconds)} seconds beyond ${escapeHTML(value.Threshold)}%.</p>`; form.elements.ID.value = ""; } catch (error) { output.innerHTML = stateBox("Rule was not created", error.message, error.message.includes("permission") ? "permission" : "error"); } finally { setBusy(form, false); } });
+$("#rule").addEventListener("submit", async event => { event.preventDefault(); const form = event.currentTarget, raw = formJSON(form), value = { ...raw, Threshold: Number(raw.Threshold), DurationSeconds: Number(raw.DurationSeconds) }, output = $("#rule-result"); output.hidden = false; output.innerHTML = stateBox("Creating rule", "Saving the deterministic threshold.", "loading"); setBusy(form, true); try { await request("/api/v1/rules", { method: "POST", headers: { "X-Watchpost-CSRF": state.csrf }, body: JSON.stringify(value) }); output.innerHTML = `<h2>Rule created</h2><p><code>${escapeHTML(value.ID)}</code> evaluates every good-quality <code>${escapeHTML(value.Signal)}</code> observation for ${escapeHTML(value.PostID)} and fires after ${escapeHTML(value.DurationSeconds)} seconds beyond ${escapeHTML(value.Threshold)}%.</p>`; form.elements.ID.value = ""; await loadCore(); } catch (error) { output.innerHTML = stateBox("Rule was not created", error.message, error.message.includes("permission") ? "permission" : "error"); } finally { setBusy(form, false); } });
 
 $("#log").addEventListener("submit", async event => { event.preventDefault(); const form = event.currentTarget, value = { ...formJSON(form), observed_at: new Date().toISOString(), fields: {} }; setBusy(form, true); try { const stored = await request("/api/v1/logs", { method: "POST", headers: { "X-Watchpost-CSRF": state.csrf }, body: JSON.stringify(value) }); showMessage(`Log evidence ${stored.id} stored.`); await searchEvidence(value.post_id, "", String(stored.id)); form.elements.message.value = ""; } catch (error) { showMessage(error.message, "error"); } finally { setBusy(form, false); } });
 $("#log-search").addEventListener("submit", async event => { event.preventDefault(); const value = formJSON(event.currentTarget); await searchEvidence(value.post, value.query); });

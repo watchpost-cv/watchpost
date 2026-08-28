@@ -44,6 +44,10 @@ operations because Watchpost cannot silently mutate software on another host.
 WP-A11 replaces graph-only survey cards with dense visual health bars, compact
 trends and accessible values. Safe is green, warning amber, critical red and
 unknown/stale grey or explicitly labelled; attention-first is the default order.
+WP-A12 makes those states policy-aware. Enabled per-post rules, active alert
+severity, maintenance, observation quality/freshness and agent health determine
+the bar state and its visible explanation. A missing rule is unknown—not safe.
+The Rules view lists starter policy and supports explicit pause/enable actions.
 The authoritative gap inventory is
 `docs/implementation-reconciliation.md`; do not restore the former claim that
 WP00–WP18 are implemented.

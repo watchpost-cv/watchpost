@@ -77,9 +77,15 @@ func TestDashboardUXContracts(t *testing.T) {
 		}
 	}
 	extra := read("/app-extra.css")
-	for _, required := range []string{"health-meter.safe", "health-meter.warning", "health-meter.critical", "grid-template-columns: repeat(2"} {
+	for _, required := range []string{"health-meter.safe", "health-meter.warning", "health-meter.critical", "policy-reason", "rule-inventory", "grid-template-columns: repeat(2"} {
 		if !strings.Contains(extra, required) {
 			t.Errorf("dense survey stylesheet missing %s", required)
+		}
+	}
+	js := read("/app.js")
+	for _, required := range []string{"policyHealth", "No policy configured", "/api/v1/rules", "data-rule-toggle"} {
+		if !strings.Contains(js, required) {
+			t.Errorf("policy-aware survey missing %s", required)
 		}
 	}
 }

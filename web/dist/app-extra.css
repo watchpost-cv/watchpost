@@ -40,6 +40,17 @@ textarea:focus,
 .sparkline { width: 100%; height: 38px; }
 .sparkline path { fill: none; stroke: var(--text); stroke-width: 2; vector-effect: non-scaling-stroke; }
 .sparkline-empty { height: 38px; display: flex; align-items: center; color: var(--muted); font-size: 12px; }
+.health-meter.maintenance i{background:#747975}
+.policy-reason{display:block;margin-top:1px;color:var(--muted);font-size:11px}
+.policy-reason.warning{color:#d2aa58}
+.policy-reason.critical{color:#d36f66}
+.policy-link{display:inline-block;margin-top:11px;font-size:12px}
+.rule-inventory{margin-bottom:16px}
+.panel-heading,.rule-row{display:flex;align-items:center;justify-content:space-between;gap:16px}
+.panel-heading h2,.rule-row h3{margin:0}
+.panel-heading p,.rule-row p{margin:4px 0 0}
+.rule-row{padding:13px 0;border-top:1px solid var(--line)}
+.rule-row:first-of-type{margin-top:14px}
 .secret-block { overflow: auto; padding: 14px; background: var(--input); border: 1px solid var(--line); border-radius: 6px; color: var(--text); }
 
 @media (max-width: 620px) {
