@@ -29,7 +29,7 @@ supporting evidence; it is not completion by itself.
   default dashboards and starter rules, proven with separate server and
   collector processes across restart.
 
-Progress: WP01R through WP06R complete. WP02R added a versioned, bounded, atomic
+Progress: WP01R through WP07R complete. WP02R added a versioned, bounded, atomic
 batch contract, contiguous acknowledgement semantics, compatibility/clock/
 quality validation, integration tests, and documented retry/freshness rules.
 WP03R added the supplied-binary Linux sampler for CPU, memory, root disk, load,
@@ -41,6 +41,9 @@ systemd units, foreground run, status, bounded log viewing, and uninstall.
 WP06R added atomic restart-safe queue state, contiguous sequences, an 8 MiB/256
 batch bound, visible dropped-sample accounting, ordered acknowledgement-driven
 deletion, network timeouts, and jittered exponential retry capped at five minutes.
+WP07R added persisted receipt/observation/collector-clock/rejection/partial
+facts and explicit never-connected, healthy, stale, offline, skewed, rejected,
+partial, and revoked states in the API and SPA.
 
 Every monitored system, service, endpoint, application, or device is a
 **post**. This is the canonical schema, API, code, test, UI, and documentation

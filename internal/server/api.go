@@ -34,6 +34,7 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/logout", s.require("viewer", s.handleLogout))
 	mux.HandleFunc("POST /api/v1/posts", s.require("admin", s.handleCreatePost))
 	mux.HandleFunc("GET /api/v1/posts", s.require("viewer", s.handleListPosts))
+	mux.HandleFunc("GET /api/v1/collectors", s.require("viewer", s.handleListCollectors))
 	mux.HandleFunc("GET /api/v1/posts/{id}", s.require("viewer", s.handleGetPost))
 	mux.HandleFunc("PUT /api/v1/posts/{id}", s.require("operator", s.handleUpdatePost))
 	mux.HandleFunc("POST /api/v1/posts/{id}/dependencies", s.require("operator", s.handleAddDependency))
@@ -184,6 +185,15 @@ func (s *Server) handleListPosts(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{"posts": items})
 }
+
+func (s *Server) handleListCollectors(w http.ResponseWriter, r *http.Request) {
+	items, err := s.health.List(r.Context())
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": "collector health unavailable"})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"collectors": items, "freshness_seconds": 120, "offline_seconds": 600})
+}
 func (s *Server) handleUpdatePost(w http.ResponseWriter, r *http.Request) {
 	var post posts.Post
 	if !decode(w, r, &post) {
@@ -300,7 +310,8 @@ func (s *Server) handleCollectorBatch(w http.ResponseWriter, r *http.Request) {
 	for index, sample := range batch.Samples {
 		items[index] = ingest.Observation{Version: 1, PostID: batch.PostID, CollectorID: batch.CollectorID, ObservedAt: sample.ObservedAt, Sequence: sample.Sequence, Signal: sample.Signal, Value: sample.Value, Unit: sample.Unit, Quality: sample.Quality, Labels: sample.Labels}
 	}
-	if err := s.ingest.AcceptBatch(r.Context(), secret, items); err != nil {
+	if err := s.ingest.AcceptBatch(r.Context(), secret, items, batch.SentAt); err != nil {
+		s.ingest.RecordRejection(r.Context(), batch.CollectorID, err)
 		writeJSON(w, 409, map[string]string{"error": err.Error()})
 		return
 	}

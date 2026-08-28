@@ -2,7 +2,7 @@
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
-const state = { csrf: "", user: null, posts: [], alerts: [], incidents: [], postLimit: 50 };
+const state = { csrf: "", user: null, posts: [], collectors: [], alerts: [], incidents: [], postLimit: 50 };
 const routes = new Set(["overview", "survey", "posts", "enroll", "collectors", "checks", "history", "rules", "evidence", "investigate", "actions", "incidents", "devices", "fleet"]);
 
 async function request(path, options = {}) {
@@ -57,12 +57,13 @@ async function enterApp(session) {
 
 async function loadCore() {
   $("#summary").innerHTML = stateBox("Loading workspace", "Collecting the latest operational state.", "loading");
-  const results = await Promise.allSettled([request("/api/v1/posts"), request("/api/v1/alerts"), request("/api/v1/incidents")]);
+  const results = await Promise.allSettled([request("/api/v1/posts"), request("/api/v1/alerts"), request("/api/v1/incidents"), request("/api/v1/collectors")]);
   const failures = results.filter(result => result.status === "rejected");
   state.posts = results[0].status === "fulfilled" ? results[0].value.posts : [];
   state.alerts = results[1].status === "fulfilled" ? results[1].value.alerts : [];
   state.incidents = results[2].status === "fulfilled" ? results[2].value.incidents : [];
-  updatePostSelects(); renderOverview(); renderPosts(); renderIncidents();
+  state.collectors = results[3].status === "fulfilled" ? results[3].value.collectors : [];
+  updatePostSelects(); renderOverview(); renderPosts(); renderIncidents(); renderCollectorHealth();
   if (failures.length) showMessage(`${failures.length} workspace section${failures.length === 1 ? "" : "s"} could not be loaded. Available data is still shown.`, "error");
 }
 
@@ -85,7 +86,7 @@ function updatePostSelects() {
 function renderOverview() {
   const firing = state.alerts.filter(alert => alert.state === "firing").length;
   const open = state.incidents.filter(incident => (incident.Status || incident.status) !== "resolved").length;
-  $("#summary").innerHTML = [[state.posts.length, "Posts"], [firing, "Firing alerts"], [open, "Open incidents"], [state.posts.filter(post => post.maintenance).length, "In maintenance"]].map(([value, label]) => `<div class="summary-card"><strong>${value}</strong><span>${label}</span></div>`).join("");
+  $("#summary").innerHTML = [[state.posts.length, "Posts"], [firing, "Firing alerts"], [open, "Open incidents"], [state.collectors.filter(item => ["offline", "stale", "rejected"].includes(item.status)).length, "Collector issues"]].map(([value, label]) => `<div class="summary-card"><strong>${value}</strong><span>${label}</span></div>`).join("");
   $("#overview-posts").innerHTML = state.posts.length ? state.posts.slice(0, 5).map(postRow).join("") : stateBox("No posts yet", "Enroll the first system, service, or device to begin monitoring.");
   const evidence = [...state.alerts.slice(0, 3).map(alert => `<div class="evidence-row"><div><h3>${escapeHTML(title(alert.severity))} alert</h3><p>${escapeHTML(alert.post_id)} · ${escapeHTML(alert.state)}</p></div><span class="badge ${alert.severity === "critical" ? "danger" : "warning"}">${escapeHTML(alert.state)}</span></div>`), ...state.incidents.slice(0, 3).map(incident => `<div class="incident-row"><div><h3>${escapeHTML(incident.Title || incident.title)}</h3><p>${escapeHTML(incident.Severity || incident.severity)}</p></div><span class="badge">${escapeHTML(incident.Status || incident.status)}</span></div>`)];
   $("#overview-evidence").innerHTML = evidence.length ? evidence.join("") : stateBox("Nothing active", "Alerts and incidents will appear here when evidence requires attention.");
@@ -105,7 +106,7 @@ async function renderSurvey() {
   try {
     const result = await request("/api/v1/survey"), grouped = new Map();
     result.series.forEach(series => { if (!grouped.has(series.post_id)) grouped.set(series.post_id, {}); grouped.get(series.post_id)[series.signal] = series.points; });
-    grid.innerHTML = state.posts.map(post => { const signals = grouped.get(post.id) || {}; return `<article class="survey-card"><div class="survey-heading"><div><h2>${escapeHTML(post.name)}</h2><p><code>${escapeHTML(post.id)}</code></p></div><span class="badge">${escapeHTML(title(post.kind))}</span></div><div class="resource-grid">${[["CPU", "cpu.percent"], ["Memory", "memory.percent"], ["Disk", "disk.percent"]].map(([label, signal]) => `<div class="resource"><span>${label}</span>${sparkline(signals[signal] || [])}</div>`).join("")}</div></article>`; }).join("");
+    grid.innerHTML = state.posts.map(post => { const signals = grouped.get(post.id) || {}, collector = state.collectors.find(item => item.post_id === post.id); return `<article class="survey-card"><div class="survey-heading"><div><h2>${escapeHTML(post.name)}</h2><p><code>${escapeHTML(post.id)}</code></p></div><span class="badge ${collector && ["offline", "rejected"].includes(collector.status) ? "danger" : ""}">${escapeHTML(collector ? title(collector.status) : title(post.kind))}</span></div><div class="resource-grid">${[["CPU", "cpu.percent"], ["Memory", "memory.percent"], ["Disk", "disk.percent"]].map(([label, signal]) => `<div class="resource"><span>${label}</span>${sparkline(signals[signal] || [])}</div>`).join("")}</div></article>`; }).join("");
     status.textContent = `Last hour · ${state.posts.length} post${state.posts.length === 1 ? "" : "s"} · refreshed ${new Date().toLocaleTimeString()}`;
   } catch (error) { grid.innerHTML = stateBox("Survey unavailable", error.message, error.message.includes("permission") ? "permission" : "error"); }
 }
@@ -131,6 +132,10 @@ async function updatePost(post, changes) {
 
 function renderIncidents() {
   $("#incidents").innerHTML = state.incidents.length ? state.incidents.map(incident => `<article class="incident-row"><div><h3>${escapeHTML(incident.Title || incident.title)}</h3><p>${escapeHTML(incident.Severity || incident.severity)} · ${escapeHTML(incident.Status || incident.status)}</p></div></article>`).join("") : stateBox("No incidents", "Open an incident when related evidence needs durable coordination.");
+}
+
+function renderCollectorHealth() {
+  $("#collector-health").innerHTML = state.collectors.length ? state.collectors.map(item => `<article class="post-row"><div><h3>${escapeHTML(item.collector_id)}</h3><p>${escapeHTML(item.post_id)} · ${item.last_seen_at ? `last received ${escapeHTML(new Date(item.last_seen_at).toLocaleString())}` : "no observations received"}</p>${item.last_error ? `<p>${escapeHTML(item.last_error)}</p>` : ""}</div><span class="badge ${["offline", "rejected"].includes(item.status) ? "danger" : item.status === "healthy" ? "" : "warning"}">${escapeHTML(title(item.status))}</span></article>`).join("") : stateBox("No collectors paired", "Pair a collector to begin receiving host telemetry.");
 }
 
 function setupWizard(prefix, stepSelector, stepsSelector, backSelector, nextSelector, submitSelector, beforeFinal) {

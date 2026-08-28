@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const SchemaVersion = 4
+const SchemaVersion = 5
 
 type Store struct{ DB *sql.DB }
 
@@ -121,6 +121,26 @@ func (s *Store) migrate(ctx context.Context) error {
 			return fmt.Errorf("migration 4: %w", err)
 		}
 		if _, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations(version,applied_at) VALUES(4,?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return err
+		}
+		version = 4
+	}
+	if version == 4 {
+		statements := []string{
+			`ALTER TABLE collector_keys ADD COLUMN last_seen_at TEXT`,
+			`ALTER TABLE collector_keys ADD COLUMN last_observed_at TEXT`,
+			`ALTER TABLE collector_keys ADD COLUMN last_sent_at TEXT`,
+			`ALTER TABLE collector_keys ADD COLUMN last_error TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE collector_keys ADD COLUMN last_rejected_at TEXT`,
+			`ALTER TABLE collector_keys ADD COLUMN rejected_count INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE collector_keys ADD COLUMN partial INTEGER NOT NULL DEFAULT 0`,
+		}
+		for _, statement := range statements {
+			if _, err = tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("migration 5: %w", err)
+			}
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations(version,applied_at) VALUES(5,?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 			return err
 		}
 	}

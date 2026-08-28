@@ -26,7 +26,7 @@ type Observation struct {
 	Labels      map[string]string `json:"labels"`
 }
 
-func (s *Service) AcceptBatch(ctx context.Context, secret string, observations []Observation) error {
+func (s *Service) AcceptBatch(ctx context.Context, secret string, observations []Observation, sentAt time.Time) error {
 	if len(observations) < 1 || len(observations) > 128 {
 		return errors.New("invalid observation batch")
 	}
@@ -53,11 +53,30 @@ func (s *Service) AcceptBatch(ctx context.Context, secret string, observations [
 			return err
 		}
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE collector_keys SET last_sequence=? WHERE id=?`, observations[len(observations)-1].Sequence, first.CollectorID)
+	latest := observations[0].ObservedAt
+	partial := false
+	for _, observation := range observations {
+		if observation.ObservedAt.After(latest) {
+			latest = observation.ObservedAt
+		}
+		if observation.Quality != "good" || observation.Signal == "collector.dropped_samples" {
+			partial = true
+		}
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE collector_keys SET last_sequence=?,last_seen_at=?,last_observed_at=?,last_sent_at=?,last_error='',partial=? WHERE id=?`, observations[len(observations)-1].Sequence, now.Format(time.RFC3339Nano), latest.UTC().Format(time.RFC3339Nano), sentAt.UTC().Format(time.RFC3339Nano), partial, first.CollectorID)
 	if err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+func (s *Service) RecordRejection(ctx context.Context, collectorID string, cause error) {
+	message := cause.Error()
+	if len(message) > 240 {
+		message = message[:240]
+	}
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	_, _ = s.s.DB.ExecContext(ctx, `UPDATE collector_keys SET last_error=?,last_rejected_at=?,rejected_count=rejected_count+1 WHERE id=?`, message, now, collectorID)
 }
 
 type Service struct {

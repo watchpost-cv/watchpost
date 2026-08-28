@@ -53,11 +53,11 @@ func TestAcceptBatchIsAtomicAndContiguous(t *testing.T) {
 	now := time.Now().UTC()
 	value := 50.0
 	items := []Observation{{Version: 1, PostID: "host-a", CollectorID: "collector-a", ObservedAt: now, Sequence: 1, Signal: "cpu.percent", Value: &value, Unit: "percent", Quality: "good", Labels: map[string]string{}}, {Version: 1, PostID: "host-a", CollectorID: "collector-a", ObservedAt: now, Sequence: 2, Signal: "memory.percent", Value: &value, Unit: "percent", Quality: "good", Labels: map[string]string{}}}
-	if err = service.AcceptBatch(ctx, secret, items); err != nil {
+	if err = service.AcceptBatch(ctx, secret, items, now); err != nil {
 		t.Fatal(err)
 	}
 	items[0].Sequence, items[1].Sequence = 3, 5
-	if service.AcceptBatch(ctx, secret, items) == nil {
+	if service.AcceptBatch(ctx, secret, items, now) == nil {
 		t.Fatal("accepted sequence gap")
 	}
 	var count int
