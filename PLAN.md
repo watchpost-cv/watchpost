@@ -78,6 +78,9 @@ passwords remain transient connection-test inputs and are never returned.
 WP14R automatically assembles at most 20 recent logs, changes, and alerts when
 the operator supplies no evidence, and verifies every citation belongs to the
 conversation post before the provider sees it.
+WP15R exposes bounded action request records including typed parameters, actor,
+independent approver, lifecycle timestamps, execution state, and verification
+result; no generic command or shell action is registered.
 
 Every monitored system, service, endpoint, application, or device is a
 **post**. This is the canonical schema, API, code, test, UI, and documentation

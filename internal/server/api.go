@@ -67,6 +67,7 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/conversations", s.require("viewer", s.handleConversation))
 	mux.HandleFunc("POST /api/v1/conversations/{id}/investigate", s.require("viewer", s.handleInvestigate))
 	mux.HandleFunc("POST /api/v1/actions", s.require("operator", s.handleRequestAction))
+	mux.HandleFunc("GET /api/v1/actions", s.require("viewer", s.handleListActions))
 	mux.HandleFunc("POST /api/v1/actions/{id}/approve", s.require("admin", s.handleApproveAction))
 	mux.HandleFunc("POST /api/v1/actions/{id}/execute", s.require("operator", s.handleExecuteAction))
 	mux.HandleFunc("POST /api/v1/peers", s.require("admin", s.handleEnrollPeer))
@@ -703,6 +704,14 @@ func (s *Server) handleRequestAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 201, map[string]int64{"id": id})
+}
+func (s *Server) handleListActions(w http.ResponseWriter, r *http.Request) {
+	items, err := s.actions.List(r.Context(), 500)
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": "actions unavailable"})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"actions": items})
 }
 func (s *Server) handleApproveAction(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
