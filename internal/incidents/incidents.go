@@ -89,6 +89,32 @@ func (s *Store) AddNote(ctx context.Context, id int64, actor, body string) error
 	_, err := s.s.DB.ExecContext(ctx, `INSERT INTO incident_timeline(incident_id,at,kind,actor,body) VALUES(?,?,'note',?,?)`, id, s.now().UTC().Format(time.RFC3339Nano), actor, body)
 	return err
 }
+func (s *Store) Assign(ctx context.Context, id int64, owner, actor string) (Incident, error) {
+	if owner == "" || len(owner) > 254 {
+		return Incident{}, errors.New("invalid owner")
+	}
+	now := s.now().UTC()
+	tx, err := s.s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return Incident{}, err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE incidents SET owner=?,updated_at=? WHERE id=?`, owner, now.Format(time.RFC3339Nano), id)
+	if err != nil {
+		return Incident{}, err
+	}
+	n, _ := result.RowsAffected()
+	if n != 1 {
+		return Incident{}, errors.New("incident not found")
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO incident_timeline(incident_id,at,kind,actor,body) VALUES(?,?,'assignment',?,?)`, id, now.Format(time.RFC3339Nano), actor, owner); err != nil {
+		return Incident{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return Incident{}, err
+	}
+	return s.Get(ctx, id)
+}
 func (s *Store) Get(ctx context.Context, id int64) (Incident, error) {
 	var i Incident
 	var created, updated string

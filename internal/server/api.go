@@ -59,6 +59,7 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/incidents/{id}", s.require("viewer", s.handleGetIncident))
 	mux.HandleFunc("POST /api/v1/incidents/{id}/transition", s.require("operator", s.handleTransitionIncident))
 	mux.HandleFunc("POST /api/v1/incidents/{id}/notes", s.require("operator", s.handleIncidentNote))
+	mux.HandleFunc("POST /api/v1/incidents/{id}/assign", s.require("operator", s.handleAssignIncident))
 	mux.HandleFunc("POST /api/v1/logs", s.require("operator", s.handleLog))
 	mux.HandleFunc("GET /api/v1/posts/{id}/logs", s.require("viewer", s.handleSearchLogs))
 	mux.HandleFunc("POST /api/v1/changes", s.require("operator", s.handleChange))
@@ -491,7 +492,7 @@ func (s *Server) handleCreateIncident(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
-	incident, err := s.incidents.Create(r.Context(), in.Title, in.Severity, "authenticated-user", in.AlertIDs)
+	incident, err := s.incidents.Create(r.Context(), in.Title, in.Severity, currentUser(r).Email, in.AlertIDs)
 	if err != nil {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
@@ -534,7 +535,7 @@ func (s *Server) handleTransitionIncident(w http.ResponseWriter, r *http.Request
 	if !decode(w, r, &in) {
 		return
 	}
-	incident, err := s.incidents.Transition(r.Context(), id, in.Status, "authenticated-user", in.Summary)
+	incident, err := s.incidents.Transition(r.Context(), id, in.Status, currentUser(r).Email, in.Summary)
 	if err != nil {
 		writeJSON(w, 409, map[string]string{"error": err.Error()})
 		return
@@ -551,11 +552,30 @@ func (s *Server) handleIncidentNote(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
-	if err = s.incidents.AddNote(r.Context(), id, "authenticated-user", in.Body); err != nil {
+	if err = s.incidents.AddNote(r.Context(), id, currentUser(r).Email, in.Body); err != nil {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+func (s *Server) handleAssignIncident(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": "invalid incident"})
+		return
+	}
+	var in struct {
+		Owner string `json:"owner"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	item, err := s.incidents.Assign(r.Context(), id, in.Owner, currentUser(r).Email)
+	if err != nil {
+		writeJSON(w, 409, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, item)
 }
 func currentUser(r *http.Request) auth.User {
 	user, _ := r.Context().Value(userContextKey{}).(auth.User)

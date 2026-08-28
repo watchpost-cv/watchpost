@@ -68,6 +68,8 @@ WP09R makes rules inspectable and independently enableable/disableable through
 authenticated APIs while retaining deterministic transition and restart tests.
 WP10R exposes secret-free route configuration with pending, retrying, and
 delivered counts backed by the existing durable idempotent delivery queue.
+WP11R adds attributable incident assignment and replaces placeholder actors in
+creation, transition, and note events with the authenticated user's identity.
 
 Every monitored system, service, endpoint, application, or device is a
 **post**. This is the canonical schema, API, code, test, UI, and documentation
