@@ -35,6 +35,10 @@ now carries quality, observation time and a finite freshness horizon.
 WP-A16 is complete: the agent supports atomic upgrades and credential rotation
 through web/CLI parity. Move requires explicit unpair and new approval; archive,
 delete, revoke, reset and uninstall retain distinct authority/data semantics.
+WP-A17 is complete as a development packaging gate: the Linux agent produces
+amd64/arm64 archives and checksums, has a checksum-verifying user/system
+installer and tag workflow, while a 500-post/20,000-observation survey test
+proves the server-side response bound. This is not a production scale claim.
 
 Status: original WP00–WP18 implementation claims were reconciled on 2026-08-28.
 The codebase contains useful foundations and a proven Linux host loop. The

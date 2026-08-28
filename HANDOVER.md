@@ -60,6 +60,9 @@ environment/storage OIDs remain explicit. Readings carry quality and freshness.
 WP-A16 closes lifecycle ambiguity: upgrade preserves identity/state; rotation
 atomically invalidates the old credential; moving requires unpair and approval.
 Archive, permanent deletion, revoke, reset and uninstall remain separate.
+WP-A17 packages the currently supported Linux agent for amd64/arm64 with
+checksums, installer and tag workflow. The survey is regression-tested with
+500 posts and 20,000 observations; browser dogfood remains a release limit.
 The authoritative gap inventory is
 `docs/implementation-reconciliation.md`; do not restore the former claim that
 WP00–WP18 are implemented.
