@@ -38,6 +38,8 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/posts/{id}", s.require("operator", s.handleUpdatePost))
 	mux.HandleFunc("POST /api/v1/posts/{id}/dependencies", s.require("operator", s.handleAddDependency))
 	mux.HandleFunc("POST /api/v1/posts/{id}/collectors", s.require("admin", s.handleEnrollCollector))
+	mux.HandleFunc("POST /api/v1/posts/{id}/pairing-tokens", s.require("admin", s.handleCreatePairingToken))
+	mux.HandleFunc("POST /api/collector/v1/pair", s.handlePairCollector)
 	mux.HandleFunc("POST /api/v1/observations", s.handleObservation)
 	mux.HandleFunc("POST /api/collector/v1/observations", s.handleCollectorBatch)
 	mux.HandleFunc("GET /api/v1/host-snapshot", s.require("viewer", s.handleHostSnapshot))
@@ -226,6 +228,31 @@ func (s *Server) handleEnrollCollector(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 201, map[string]string{"id": in.ID, "secret": secret})
+}
+
+func (s *Server) handleCreatePairingToken(w http.ResponseWriter, r *http.Request) {
+	token, err := s.pairing.Create(r.Context(), r.PathValue("id"), 10*time.Minute)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 201, token)
+}
+
+func (s *Server) handlePairCollector(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Token       string `json:"token"`
+		CollectorID string `json:"collector_id"`
+	}
+	if !decode(w, r, &input) {
+		return
+	}
+	enrollment, err := s.pairing.Consume(r.Context(), input.Token, input.CollectorID)
+	if err != nil {
+		writeJSON(w, 409, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 201, enrollment)
 }
 func (s *Server) handleObservation(w http.ResponseWriter, r *http.Request) {
 	var observation ingest.Observation

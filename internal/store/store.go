@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const SchemaVersion = 3
+const SchemaVersion = 4
 
 type Store struct{ DB *sql.DB }
 
@@ -112,6 +112,15 @@ func (s *Store) migrate(ctx context.Context) error {
 			}
 		}
 		if _, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations(version,applied_at) VALUES(3,?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return err
+		}
+		version = 3
+	}
+	if version == 3 {
+		if _, err = tx.ExecContext(ctx, `CREATE TABLE collector_pairing_tokens(token_hash BLOB PRIMARY KEY, post_id TEXT NOT NULL REFERENCES posts(id), expires_at TEXT NOT NULL, used_at TEXT)`); err != nil {
+			return fmt.Errorf("migration 4: %w", err)
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations(version,applied_at) VALUES(4,?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 			return err
 		}
 	}

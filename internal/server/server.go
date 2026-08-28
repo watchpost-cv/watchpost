@@ -19,6 +19,7 @@ import (
 	"github.com/watchpost-ops/watchpost/internal/incidents"
 	"github.com/watchpost-ops/watchpost/internal/ingest"
 	"github.com/watchpost-ops/watchpost/internal/notify"
+	"github.com/watchpost-ops/watchpost/internal/pairing"
 	"github.com/watchpost-ops/watchpost/internal/posts"
 	"github.com/watchpost-ops/watchpost/internal/rules"
 	"github.com/watchpost-ops/watchpost/internal/store"
@@ -41,6 +42,7 @@ type Server struct {
 	agent     *agent.Service
 	actions   *actions.Registry
 	fleet     *fleet.Service
+	pairing   *pairing.Service
 }
 
 func New(cfg config.Config, version string, logger *slog.Logger, database *store.Store) *Server {
@@ -67,7 +69,7 @@ func New(cfg config.Config, version string, logger *slog.Logger, database *store
 		count, _ := result.RowsAffected()
 		return map[string]any{"disabled": count == 1}, nil
 	}})
-	return &Server{cfg: cfg, version: version, logger: logger, store: database, auth: auth.New(database), posts: posts.New(database), ingest: ingest.New(database), history: history.New(database), rules: rules.New(database), notify: notify.New(database, sender), incidents: incidents.New(database), evidence: evidence.New(database), agent: agent.New(database, agent.EvidenceProvider{}), actions: actionRegistry, fleet: fleet.New(database)}
+	return &Server{cfg: cfg, version: version, logger: logger, store: database, auth: auth.New(database), posts: posts.New(database), ingest: ingest.New(database), history: history.New(database), rules: rules.New(database), notify: notify.New(database, sender), incidents: incidents.New(database), evidence: evidence.New(database), agent: agent.New(database, agent.EvidenceProvider{}), actions: actionRegistry, fleet: fleet.New(database), pairing: pairing.New(database)}
 }
 
 func (s *Server) Handler() http.Handler {

@@ -1,8 +1,8 @@
 # Watchpost engineering handover
 
-Current execution: WP01R through WP03R are complete as of 2026-08-28. WP04R is
-next. `watchpost collector sample` now exercises the real Linux sampler;
-pairing and delivery are not complete until WP04R/WP06R.
+Current execution: WP01R through WP04R are complete as of 2026-08-28. WP05R is
+next. Pair with `watchpost collector pair --server URL --token TOKEN`; remote
+pairing requires HTTPS and writes a `0600` post-scoped configuration.
 The authoritative gap inventory is
 `docs/implementation-reconciliation.md`; do not restore the former claim that
 WP00–WP18 are implemented.
