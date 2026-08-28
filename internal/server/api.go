@@ -63,6 +63,7 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/logs", s.require("operator", s.handleLog))
 	mux.HandleFunc("GET /api/v1/posts/{id}/logs", s.require("viewer", s.handleSearchLogs))
 	mux.HandleFunc("POST /api/v1/changes", s.require("operator", s.handleChange))
+	mux.HandleFunc("GET /api/v1/evidence/{kind}/{id}", s.require("viewer", s.handleGetEvidence))
 	mux.HandleFunc("POST /api/v1/conversations", s.require("viewer", s.handleConversation))
 	mux.HandleFunc("POST /api/v1/conversations/{id}/investigate", s.require("viewer", s.handleInvestigate))
 	mux.HandleFunc("POST /api/v1/actions", s.require("operator", s.handleRequestAction))
@@ -622,6 +623,34 @@ func (s *Server) handleChange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 201, stored)
+}
+func (s *Server) handleGetEvidence(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": "invalid evidence"})
+		return
+	}
+	switch r.PathValue("kind") {
+	case "log":
+		item, e := s.evidence.GetLog(r.Context(), id)
+		err = e
+		if e == nil {
+			writeJSON(w, 200, map[string]any{"kind": "log", "evidence": item})
+			return
+		}
+	case "change":
+		item, e := s.evidence.GetChange(r.Context(), id)
+		err = e
+		if e == nil {
+			writeJSON(w, 200, map[string]any{"kind": "change", "evidence": item})
+			return
+		}
+	default:
+		writeJSON(w, 400, map[string]string{"error": "unsupported evidence kind"})
+		return
+	}
+	_ = err
+	writeJSON(w, 404, map[string]string{"error": "evidence not found"})
 }
 func (s *Server) handleConversation(w http.ResponseWriter, r *http.Request) {
 	var in struct {

@@ -70,6 +70,8 @@ WP10R exposes secret-free route configuration with pending, retrying, and
 delivered counts backed by the existing durable idempotent delivery queue.
 WP11R adds attributable incident assignment and replaces placeholder actors in
 creation, transition, and note events with the authenticated user's identity.
+WP12R adds an authorised exact-evidence resolver for bounded log and change
+citations, returning the complete stored record and its post context.
 
 Every monitored system, service, endpoint, application, or device is a
 **post**. This is the canonical schema, API, code, test, UI, and documentation

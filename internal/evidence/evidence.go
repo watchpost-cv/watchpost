@@ -78,6 +78,28 @@ func (s *Store) SearchLogs(ctx context.Context, post, query string, from, to tim
 	}
 	return items, rows.Err()
 }
+func (s *Store) GetLog(ctx context.Context, id int64) (Log, error) {
+	var l Log
+	var at, fields string
+	err := s.s.DB.QueryRowContext(ctx, `SELECT id,post_id,source,observed_at,severity,message,fields_json,truncated FROM logs WHERE id=?`, id).Scan(&l.ID, &l.PostID, &l.Source, &at, &l.Severity, &l.Message, &fields, &l.Truncated)
+	if err != nil {
+		return Log{}, err
+	}
+	l.ObservedAt, _ = time.Parse(time.RFC3339Nano, at)
+	_ = json.Unmarshal([]byte(fields), &l.Fields)
+	return l, nil
+}
+func (s *Store) GetChange(ctx context.Context, id int64) (Change, error) {
+	var c Change
+	var at, detail string
+	err := s.s.DB.QueryRowContext(ctx, `SELECT id,COALESCE(post_id,''),kind,occurred_at,actor,summary,detail_json FROM changes WHERE id=?`, id).Scan(&c.ID, &c.PostID, &c.Kind, &at, &c.Actor, &c.Summary, &detail)
+	if err != nil {
+		return Change{}, err
+	}
+	c.OccurredAt, _ = time.Parse(time.RFC3339Nano, at)
+	_ = json.Unmarshal([]byte(detail), &c.Detail)
+	return c, nil
+}
 func (s *Store) RecordChange(ctx context.Context, c Change) (Change, error) {
 	if c.Kind == "" || c.Summary == "" || len(c.Summary) > 1000 {
 		return Change{}, errors.New("invalid change")
