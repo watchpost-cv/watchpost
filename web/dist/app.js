@@ -2,7 +2,7 @@
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
-const state = { csrf: "", user: null, posts: [], collectors: [], alerts: [], incidents: [], postLimit: 50 };
+const state = { csrf: "", user: null, posts: [], collectors: [], alerts: [], incidents: [], agentRequests: [], postLimit: 50 };
 const routes = new Set(["overview", "survey", "posts", "edit-post", "enroll", "collectors", "checks", "history", "rules", "evidence", "investigate", "actions", "incidents", "devices", "fleet"]);
 
 async function request(path, options = {}) {
@@ -57,15 +57,28 @@ async function enterApp(session) {
 
 async function loadCore() {
   $("#summary").innerHTML = stateBox("Loading workspace", "Collecting the latest operational state.", "loading");
-  const results = await Promise.allSettled([request("/api/v1/posts"), request("/api/v1/alerts"), request("/api/v1/incidents"), request("/api/v1/collectors")]);
+  const results = await Promise.allSettled([request("/api/v1/posts"), request("/api/v1/alerts"), request("/api/v1/incidents"), request("/api/v1/collectors"), request("/api/v1/agent-pairing-requests")]);
   const failures = results.filter(result => result.status === "rejected");
   state.posts = results[0].status === "fulfilled" ? results[0].value.posts : [];
   state.alerts = results[1].status === "fulfilled" ? results[1].value.alerts : [];
   state.incidents = results[2].status === "fulfilled" ? results[2].value.incidents : [];
   state.collectors = results[3].status === "fulfilled" ? results[3].value.collectors : [];
-  updatePostSelects(); renderOverview(); renderPosts(); renderIncidents(); renderCollectorHealth();
+  state.agentRequests = results[4].status === "fulfilled" ? results[4].value : [];
+  updatePostSelects(); renderOverview(); renderPosts(); renderIncidents(); renderCollectorHealth(); renderAgentRequests();
   if (failures.length) showMessage(`${failures.length} workspace section${failures.length === 1 ? "" : "s"} could not be loaded. Available data is still shown.`, "error");
 }
+
+function renderAgentRequests() {
+  const enrollment = $('[data-view="enroll"]'); let panel = $("#agent-requests");
+  if (!panel) { panel = document.createElement("section"); panel.id = "agent-requests"; panel.className = "panel"; enrollment.insertBefore(panel, $("#post-steps")); }
+  const pending = state.agentRequests.filter(item => item.state === "pending"); panel.hidden = !pending.length;
+  panel.innerHTML = pending.length ? `<p class="eyebrow">Agents requesting approval</p><h2>Match the phrase before connecting</h2><p>These installed agents have no monitoring authority yet. Verify the phrase shown on the machine, then create or select the post it represents.</p>${pending.map(item => `<article class="evidence-row"><div><h3>${escapeHTML(item.hostname)}</h3><p>${escapeHTML(item.platform)} · expires ${escapeHTML(new Date(item.expires_at).toLocaleTimeString())}</p><code>${escapeHTML(item.phrase)}</code></div><div class="actions"><select aria-label="Existing post" data-agent-post="${escapeHTML(item.id)}"><option value="">Choose post</option>${state.posts.map(post => `<option value="${escapeHTML(post.id)}">${escapeHTML(post.name)}</option>`).join("")}</select><button type="button" data-agent-approve="${escapeHTML(item.id)}">Approve</button><button type="button" class="quiet-button" data-agent-create="${escapeHTML(item.id)}" data-hostname="${escapeHTML(item.hostname)}">Create host post</button></div></article>`).join("")}` : "";
+  $$('[data-agent-approve]',panel).forEach(button=>button.onclick=()=>approveAgent(button.dataset.agentApprove,$(`[data-agent-post="${CSS.escape(button.dataset.agentApprove)}"]`).value));
+  $$('[data-agent-create]',panel).forEach(button=>button.onclick=()=>createAndApproveAgent(button.dataset.agentCreate,button.dataset.hostname));
+}
+
+async function approveAgent(id,postID){if(!postID){showMessage("Choose a post first.","error");return}try{await request(`/api/v1/agent-pairing-requests/${encodeURIComponent(id)}/approve`,{method:"POST",headers:{"X-Watchpost-CSRF":state.csrf},body:JSON.stringify({post_id:postID})});showMessage("Agent approved. It can now collect its one-time credential.");await loadCore()}catch(error){showMessage(error.message,"error")}}
+async function createAndApproveAgent(id,hostname){let postID=String(hostname||"host").toLowerCase().replace(/[^a-z0-9-]+/g,"-").replace(/^-+|-+$/g,"").slice(0,63)||"host";if(state.posts.some(post=>post.id===postID))postID=`${postID.slice(0,54)}-${Date.now().toString().slice(-7)}`;try{await request("/api/v1/posts",{method:"POST",headers:{"X-Watchpost-CSRF":state.csrf},body:JSON.stringify({id:postID,name:hostname||postID,address:hostname||"",kind:"host",labels:{}})});await request(`/api/v1/agent-pairing-requests/${encodeURIComponent(id)}/approve`,{method:"POST",headers:{"X-Watchpost-CSRF":state.csrf},body:JSON.stringify({post_id:postID})});showMessage(`${hostname} connected as ${postID}.`);await loadCore()}catch(error){showMessage(error.message,"error")}}
 
 function route() {
   const routeName = location.hash.replace(/^#\/?/, "").split("?")[0] || "overview";
@@ -148,7 +161,7 @@ function renderIncidents() {
 }
 
 function renderCollectorHealth() {
-  $("#collector-health").innerHTML = state.collectors.length ? state.collectors.map(item => `<article class="post-row"><div><h3>${escapeHTML(item.collector_id)}</h3><p>${escapeHTML(item.post_id)} · ${item.last_seen_at ? `last received ${escapeHTML(new Date(item.last_seen_at).toLocaleString())}` : "no observations received"}</p>${item.last_error ? `<p>${escapeHTML(item.last_error)}</p>` : ""}</div><span class="badge ${["offline", "rejected"].includes(item.status) ? "danger" : item.status === "healthy" ? "" : "warning"}">${escapeHTML(title(item.status))}</span></article>`).join("") : stateBox("No collectors paired", "Pair a collector to begin receiving host telemetry.");
+  $("#collector-health").innerHTML = state.collectors.length ? state.collectors.map(item => `<article class="post-row"><div><h3>Collector ${escapeHTML(item.collector_id)}</h3><p>Post <code>${escapeHTML(item.post_id)}</code> · ${item.last_seen_at ? `last received ${escapeHTML(new Date(item.last_seen_at).toLocaleString())}` : "no observations received"}</p>${item.last_error ? `<p>${escapeHTML(item.last_error)}</p>` : ""}</div><span class="badge ${["offline", "rejected"].includes(item.status) ? "danger" : item.status === "healthy" ? "" : "warning"}">${escapeHTML(title(item.status))}</span></article>`).join("") : stateBox("No collectors paired", "Pair a collector to begin receiving host telemetry.");
 }
 
 function setupWizard(prefix, stepSelector, stepsSelector, backSelector, nextSelector, submitSelector, beforeFinal) {
@@ -194,7 +207,46 @@ $("#delete-post").addEventListener("submit", async event => { event.preventDefau
 const postWizard = setupWizard("post", "[data-step]", "#post-steps", "#post-back", "#post-next", "#post-submit", () => { const values = formJSON($("#create")); $("#post-review").innerHTML = `<dt>ID</dt><dd><code>${escapeHTML(values.id)}</code></dd><dt>Name</dt><dd>${escapeHTML(values.name)}</dd><dt>Address</dt><dd>${escapeHTML(values.address || "Not specified")}</dd><dt>Kind</dt><dd>${escapeHTML(title(values.kind))}</dd><dt>Starter rules</dt><dd>${values.starter_rules ? "CPU 90%, memory 90%, disk 85%" : "None"}</dd>`; });
 $("#create").addEventListener("submit", async event => { event.preventDefault(); const form = event.currentTarget, values = formJSON(form), starterRules = values.starter_rules === "on", post = { id: values.id, name: values.name, address: values.address, kind: values.kind, labels: {} }; setBusy(form, true); try { await request("/api/v1/posts", { method: "POST", headers: { "X-Watchpost-CSRF": state.csrf }, body: JSON.stringify(post) }); if (starterRules && post.kind === "host") { const definitions = [["cpu", "cpu.percent", 90, 300], ["memory", "memory.percent", 90, 300], ["disk", "disk.percent", 85, 0]]; for (const [name, Signal, Threshold, DurationSeconds] of definitions) await request("/api/v1/rules", { method: "POST", headers: { "X-Watchpost-CSRF": state.csrf }, body: JSON.stringify({ ID: `${post.id}-${name}-high`, PostID: post.id, Signal, Operator: "gt", Threshold, DurationSeconds, MissingPolicy: "unknown", Severity: "warning" }) }); } form.reset(); postWizard.reset(); await loadCore(); location.hash = post.kind === "host" ? "#/collectors" : "#/posts"; if (post.kind === "host") { $('#collector [name="post"]').value = post.id; $('#collector [name="server_url"]').value ||= location.origin; showMessage(`${post.name} enrolled. Install its collector next.`); } else showMessage(`${post.name} enrolled.`); } catch (error) { showMessage(error.message, "error"); } finally { setBusy(form, false); } });
 
-$("#collector").addEventListener("submit", async event => { event.preventDefault(); const form = event.currentTarget, values = formJSON(form), output = $("#collector-result"); output.hidden = false; output.innerHTML = stateBox("Creating pairing token", "Preparing a short-lived one-use command.", "loading"); setBusy(form, true); try { const result = await request(`/api/v1/posts/${encodeURIComponent(values.post)}/pairing-tokens`, { method: "POST", headers: { "X-Watchpost-CSRF": state.csrf }, body: JSON.stringify({}) }); const server = values.server_url.replace(/\/$/, ""), command = `./watchpost collector pair --server ${server} --token ${result.token}\n./watchpost collector install`; output.innerHTML = `<h2>Pair within 10 minutes</h2><ol><li>Copy the compiled <code>watchpost</code> binary to the monitored Linux machine (for this machine, use the binary you already started).</li><li>Run the commands below as the account that should own the collector service.</li><li>Keep this page open until the first sample is confirmed.</li></ol><pre class="secret-block"><code>${escapeHTML(command)}</code></pre><button id="copy-collector" class="quiet-button" type="button">Copy commands</button><p class="callout">The collector makes outbound HTTPS requests to <code>${escapeHTML(server)}</code>. The post address is inventory; no inbound agent port is opened.</p><p id="pairing-wait" class="callout">Waiting for collector delivery…</p>`; $("#copy-collector").onclick = async () => { await navigator.clipboard.writeText(command); showMessage("Pairing commands copied."); }; clearInterval(state.pairingPoll); const started = Date.now(); state.pairingPoll = setInterval(async () => { if (Date.now() - started > 10 * 60 * 1000) { clearInterval(state.pairingPoll); $("#pairing-wait").textContent = "Pairing window expired. Generate a new command if the collector did not connect."; return; } try { const health = await request("/api/v1/collectors"), collector = health.collectors.find(item => item.post_id === values.post && item.status !== "never_connected"); state.collectors = health.collectors; renderCollectorHealth(); if (collector) { clearInterval(state.pairingPoll); output.innerHTML = `<h2>Collector connected</h2><p>The first telemetry batch was accepted for <code>${escapeHTML(values.post)}</code>. Health: <strong>${escapeHTML(title(collector.status))}</strong>.</p><div class="row-actions"><a class="button" href="#/survey">View resource survey</a><a class="button secondary" href="#/rules">Review rules</a></div>`; } } catch {} }, 3000); } catch (error) { output.innerHTML = stateBox("Pairing token failed", error.message, error.message.includes("permission") ? "permission" : "error"); } finally { setBusy(form, false); } });
+$("#collector").addEventListener("submit", async event => {
+  event.preventDefault();
+  const form = event.currentTarget, values = formJSON(form), output = $("#collector-result");
+  output.hidden = false;
+  output.innerHTML = stateBox("Creating pairing token", "Preparing a short-lived one-use command.", "loading");
+  setBusy(form, true);
+  try {
+    const result = await request(`/api/v1/posts/${encodeURIComponent(values.post)}/pairing-tokens`, { method: "POST", headers: { "X-Watchpost-CSRF": state.csrf }, body: JSON.stringify({}) });
+    const server = values.server_url.replace(/\/$/, ""), command = `./watchpost collector pair --server ${server} --token ${result.token}\n./watchpost collector install`;
+    output.innerHTML = `<h2>Pair within 10 minutes</h2><ol><li>Copy the compiled <code>watchpost</code> binary to the monitored Linux machine (for this machine, use the binary you already started).</li><li>Run the commands below as the account that should own the collector service.</li><li>Keep this page open until the first sample is confirmed.</li></ol><pre class="secret-block"><code>${escapeHTML(command)}</code></pre><button id="copy-collector" class="quiet-button" type="button">Copy commands</button><p class="callout">The collector makes outbound HTTPS requests to <code>${escapeHTML(server)}</code>. The post address is inventory; no inbound agent port is opened.</p><div id="pairing-status" class="pairing-status callout">Waiting for the first accepted telemetry batch…</div>`;
+    $("#copy-collector").onclick = async () => { await navigator.clipboard.writeText(command); showMessage("Pairing commands copied."); };
+    clearInterval(state.pairingPoll);
+    const started = Date.now(), connectedStatuses = new Set(["healthy", "stale", "skewed", "partial"]);
+    state.pairingPoll = setInterval(async () => {
+      const status = $("#pairing-status");
+      if (!status) { clearInterval(state.pairingPoll); return; }
+      if (Date.now() - started > 10 * 60 * 1000) {
+        clearInterval(state.pairingPoll);
+        status.innerHTML = `<strong>Pairing window ended.</strong> The commands remain above for reference, but an unused token has now expired. Generate fresh commands before pairing again.`;
+        return;
+      }
+      try {
+        const health = await request("/api/v1/collectors"), collector = health.collectors.find(item => item.post_id === values.post);
+        state.collectors = health.collectors;
+        renderCollectorHealth();
+        if (!collector) return;
+        if (collector.status === "rejected") {
+          status.innerHTML = `<strong>Collector rejected.</strong> The running service is using credentials Watchpost did not accept. With the new installer, run <code>./watchpost collector install</code> again to atomically replace and restart it; generate a fresh token only if pairing itself did not succeed.`;
+          return;
+        }
+        if (connectedStatuses.has(collector.status) && collector.last_seen_at && Date.parse(collector.last_seen_at) >= started - 5000) {
+          clearInterval(state.pairingPoll);
+          status.innerHTML = `<strong>Collector connected.</strong> The first telemetry batch was accepted for <code>${escapeHTML(values.post)}</code>. Health: ${escapeHTML(title(collector.status))}. <span class="inline-actions"><a href="#/survey">View resource survey</a> · <a href="#/rules">Review rules</a></span>`;
+        }
+      } catch {}
+    }, 3000);
+  } catch (error) {
+    output.innerHTML = stateBox("Pairing token failed", error.message, error.message.includes("permission") ? "permission" : "error");
+  } finally { setBusy(form, false); }
+});
 
 $("#check").addEventListener("submit", async event => { event.preventDefault(); const form = event.currentTarget, output = $("#check-result"); setBusy(form, true); output.hidden = false; output.innerHTML = stateBox("Running check", "Waiting for the target to respond.", "loading"); try { const result = await request("/api/v1/checks", { method: "POST", headers: { "X-Watchpost-CSRF": state.csrf }, body: JSON.stringify(formJSON(form)) }); output.innerHTML = `<h2>${result.ok ? "Check healthy" : "Check failed"}</h2><dl class="review-list"><dt>Result</dt><dd>${result.ok ? "Target responded successfully" : escapeHTML(result.failure || "Unknown failure")}</dd><dt>Latency</dt><dd>${escapeHTML(result.latency || "Not available")}</dd></dl>`; output.classList.toggle("permission-state", !result.ok); } catch (error) { output.innerHTML = stateBox("Check unavailable", error.message, error.message.includes("permission") ? "permission" : "error"); } finally { setBusy(form, false); } });
 

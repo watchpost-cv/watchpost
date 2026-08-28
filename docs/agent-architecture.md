@@ -53,6 +53,11 @@ Watchpost and never exposed to either browser. Approval and credential
 collection are separate transitions, so merely knowing a hostname or phrase
 cannot claim a post.
 
+The first implemented telemetry profile is deliberately small: Linux CPU,
+memory, root-filesystem utilisation and uptime, sampled immediately after
+approval and then once per minute. This proves identity, approval, durable
+sequence and visual survey integration before adding broader collectors.
+
 ## Network and authority boundary
 
 The agent UI binds to loopback by default. State-changing browser requests use

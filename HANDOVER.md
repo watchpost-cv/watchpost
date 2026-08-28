@@ -24,6 +24,11 @@ agent creates a ten-minute request and private request secret, both products
 show the same three-word phrase, and a Watchpost administrator approves an
 existing post before a one-time post-scoped credential is delivered. The old
 collector token flow remains transitional compatibility only.
+WP-A06 adds the first complete product path: pending agent requests appear at
+post enrollment, an administrator can select an existing post or create a host
+post from the request, and approval allows the agent to deliver its immediate
+CPU, memory, filesystem and uptime sample. Agent connections remain monitoring
+details beneath posts rather than duplicate inventory rows.
 The authoritative gap inventory is
 `docs/implementation-reconciliation.md`; do not restore the former claim that
 WP00–WP18 are implemented.
