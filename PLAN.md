@@ -44,6 +44,11 @@ supporting evidence; it is not completion by itself.
   execution, and verification state without arbitrary commands.
 - **WP16R — operable fleet trust:** list, pair, revoke, and inspect peers and
   bounded store-and-forward state while each node remains useful alone.
+- **WP17R — release evidence:** build deterministic archives and loose binaries,
+  verify checksums and installer downloads, rehearse preserved-state
+  upgrade/rollback, and document secure Caddy/nginx deployment.
+- **WP18R — hardening evidence:** run bounded resource campaigns, hostile-input
+  and recovery gates, publish limitations, and close the development candidate.
 
 Progress: WP01R through WP16R complete as recovery slices. These do not replace
 the broader original WP09–WP16 release gates retained below. WP02R added a versioned, bounded, atomic
@@ -85,6 +90,10 @@ result; no generic command or shell action is registered.
 WP16R exposes active/revoked peer trust, creation/revocation time, pending and
 delivered outbox work, received event counts, and an explicit admin revocation
 operation. Nodes remain locally useful and federation payloads remain bounded.
+WP17R builds six release targets as loose binaries and OS-native archives,
+verifies their checksums and contents, installs from a local release-shaped
+endpoint, and proves a post survives upgrade and rollback. HTTPS proxy mode
+sets Secure session cookies explicitly and is documented for Caddy and nginx.
 
 Every monitored system, service, endpoint, application, or device is a
 **post**. This is the canonical schema, API, code, test, UI, and documentation

@@ -58,5 +58,11 @@ subcommand is no longer required.
 The default listener is `127.0.0.1:8080`. Command-line options override
 `WATCHPOST_LISTEN` and `WATCHPOST_DATA_DIR`; defaults apply below both.
 
+For an internet-facing deployment, keep that loopback binding, terminate HTTPS
+with Caddy or nginx, and pass `--secure-cookies`. See
+[`docs/reverse-proxy.md`](docs/reverse-proxy.md). Build release archives and
+checksums with `./packaging/build-release.sh vX.Y.Z`; the release-shaped local
+gate is `./packaging/release-smoke.sh`.
+
 Public website source lives in the sibling `watchpost-ops.github.io`
 repository.

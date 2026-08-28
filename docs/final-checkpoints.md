@@ -40,9 +40,14 @@ Fleet envelopes are HMAC-signed, authenticated, time- and size-bounded,
 deduplicated, revocable, and durably queued. This proves protocol boundaries;
 it is not yet a complete network reconciliation product.
 
-CI and tagged-release workflows build six OS/architecture combinations with
-checksums. The installer supports per-user and explicit `--system` destinations.
-No tag or public release is created by completing this checkpoint. Real-runner
-artifact smokes, installer download tests, sustained multi-hour campaigns,
-external security review, and upgrade rehearsal remain release authorization
-gates rather than claims made from local cross-compilation.
+CI and tagged-release workflows build six OS/architecture combinations as
+loose binaries and OS-native archives with checksums. `release-smoke.sh`
+verifies archive contents, checksum integrity, per-user installation from a
+release-shaped HTTP endpoint, and preserved state across upgrade and rollback.
+Caddy and nginx deployment examples bind Watchpost to loopback and enable
+Secure cookies explicitly behind TLS termination.
+
+No tag or public release is created by completing this checkpoint. Real macOS
+and Windows execution, sustained multi-hour campaigns, and external security
+review remain release-authorization evidence rather than claims made from local
+cross-compilation.

@@ -25,3 +25,16 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		}
 	}
 }
+
+func TestSecureCookiesFromEnvironmentAndOverride(t *testing.T) {
+	t.Setenv("WATCHPOST_SECURE_COOKIES", "true")
+	cfg, err := Load(Overrides{})
+	if err != nil || !cfg.SecureCookies {
+		t.Fatalf("cfg=%#v err=%v", cfg, err)
+	}
+	t.Setenv("WATCHPOST_SECURE_COOKIES", "")
+	cfg, err = Load(Overrides{SecureCookies: true})
+	if err != nil || !cfg.SecureCookies {
+		t.Fatalf("cfg=%#v err=%v", cfg, err)
+	}
+}

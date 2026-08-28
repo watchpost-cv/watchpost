@@ -10,13 +10,15 @@ import (
 const DefaultListen = "127.0.0.1:8080"
 
 type Config struct {
-	Listen  string
-	DataDir string
+	Listen        string
+	DataDir       string
+	SecureCookies bool
 }
 
 type Overrides struct {
-	Listen  string
-	DataDir string
+	Listen        string
+	DataDir       string
+	SecureCookies bool
 }
 
 func Load(overrides Overrides) (Config, error) {
@@ -32,11 +34,17 @@ func Load(overrides Overrides) (Config, error) {
 	if value := os.Getenv("WATCHPOST_DATA_DIR"); value != "" {
 		cfg.DataDir = value
 	}
+	if value := os.Getenv("WATCHPOST_SECURE_COOKIES"); value == "1" || value == "true" {
+		cfg.SecureCookies = true
+	}
 	if overrides.Listen != "" {
 		cfg.Listen = overrides.Listen
 	}
 	if overrides.DataDir != "" {
 		cfg.DataDir = overrides.DataDir
+	}
+	if overrides.SecureCookies {
+		cfg.SecureCookies = true
 	}
 	if err := validate(cfg); err != nil {
 		return Config{}, err

@@ -128,7 +128,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 401, map[string]string{"error": "invalid credentials"})
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: session.Token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil, MaxAge: 86400})
+	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: session.Token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil || s.cfg.SecureCookies, MaxAge: 86400})
 	writeJSON(w, 200, map[string]any{"user": session.User, "csrf_token": session.CSRF})
 }
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {

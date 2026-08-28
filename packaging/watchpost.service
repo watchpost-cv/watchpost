@@ -5,7 +5,7 @@ After=network-online.target
 [Service]
 User=watchpost
 Group=watchpost
-ExecStart=/usr/local/bin/watchpost --listen 127.0.0.1:8080 --data-dir /var/lib/watchpost
+ExecStart=/usr/local/bin/watchpost --listen 127.0.0.1:8080 --data-dir /var/lib/watchpost --secure-cookies
 Restart=on-failure
 NoNewPrivileges=true
 PrivateTmp=true

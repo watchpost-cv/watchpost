@@ -60,6 +60,18 @@ func TestSetupLoginCSRFAndPostAPI(t *testing.T) {
 	}
 }
 
+func TestSecureCookieBehindHTTPSProxy(t *testing.T) {
+	s := testServer(t)
+	s.cfg.SecureCookies = true
+	handler := s.Handler()
+	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"email": "admin@example.com", "password": "1234567"}, nil, "")
+	login := apiRequest(t, handler, "POST", "/api/v1/login", map[string]string{"email": "admin@example.com", "password": "1234567"}, nil, "")
+	cookies := login.Result().Cookies()
+	if len(cookies) != 1 || !cookies[0].Secure {
+		t.Fatalf("cookies=%#v", cookies)
+	}
+}
+
 func TestDensePostInventory(t *testing.T) {
 	s := testServer(t)
 	for i := 0; i < 125; i++ {

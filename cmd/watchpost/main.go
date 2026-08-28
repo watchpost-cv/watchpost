@@ -36,6 +36,10 @@ func run(args []string) error {
 	if len(args) > 0 && args[0] == "collector" {
 		return runCollector(args[1:])
 	}
+	if len(args) == 1 && (args[0] == "--version" || args[0] == "version") {
+		fmt.Fprintln(os.Stdout, version)
+		return nil
+	}
 	// Serving is Watchpost's primary operation, matching Warden, Cortex, and
 	// Trestle: a built binary starts with ./watchpost. Keep `serve` as a
 	// backwards-compatible alias for scripts written during early development.
@@ -45,13 +49,14 @@ func run(args []string) error {
 	fs := flag.NewFlagSet("watchpost", flag.ContinueOnError)
 	listen := fs.String("listen", "", "listen address (overrides WATCHPOST_LISTEN)")
 	dataDir := fs.String("data-dir", "", "data directory (overrides WATCHPOST_DATA_DIR)")
+	secureCookies := fs.Bool("secure-cookies", false, "mark session cookies Secure behind an HTTPS reverse proxy")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
 		return fmt.Errorf("usage: watchpost [options]")
 	}
-	cfg, err := config.Load(config.Overrides{Listen: *listen, DataDir: *dataDir})
+	cfg, err := config.Load(config.Overrides{Listen: *listen, DataDir: *dataDir, SecureCookies: *secureCookies})
 	if err != nil {
 		return err
 	}
