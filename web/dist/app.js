@@ -3,7 +3,7 @@
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const state = { csrf: "", user: null, posts: [], alerts: [], incidents: [], postLimit: 50 };
-const routes = new Set(["overview", "posts", "enroll", "checks", "history", "evidence", "investigate", "actions", "incidents", "devices", "fleet"]);
+const routes = new Set(["overview", "survey", "posts", "enroll", "collectors", "checks", "history", "rules", "evidence", "investigate", "actions", "incidents", "devices", "fleet"]);
 
 async function request(path, options = {}) {
   const config = { ...options, headers: { ...(options.body ? { "Content-Type": "application/json" } : {}), ...(options.headers || {}) } };
@@ -72,7 +72,9 @@ function route() {
   $$(".view").forEach(view => { view.hidden = view.dataset.view !== current; });
   $$("[data-route]").forEach(link => { const active = link.dataset.route === current; link.classList.toggle("active", active); if (active) link.setAttribute("aria-current", "page"); else link.removeAttribute("aria-current"); });
   $("#primary-nav").classList.remove("open"); $("#nav-toggle").setAttribute("aria-expanded", "false");
-  const heading = $(`.view[data-view="${current}"] h1`); if (heading) { document.title = `${heading.textContent} · Watchpost`; $("#page").focus({ preventScroll: true }); }
+  document.title = "Watchpost";
+  $("#page").focus({ preventScroll: true });
+  if (current === "survey") renderSurvey();
 }
 
 function updatePostSelects() {
@@ -87,6 +89,25 @@ function renderOverview() {
   $("#overview-posts").innerHTML = state.posts.length ? state.posts.slice(0, 5).map(postRow).join("") : stateBox("No posts yet", "Enroll the first system, service, or device to begin monitoring.");
   const evidence = [...state.alerts.slice(0, 3).map(alert => `<div class="evidence-row"><div><h3>${escapeHTML(title(alert.severity))} alert</h3><p>${escapeHTML(alert.post_id)} · ${escapeHTML(alert.state)}</p></div><span class="badge ${alert.severity === "critical" ? "danger" : "warning"}">${escapeHTML(alert.state)}</span></div>`), ...state.incidents.slice(0, 3).map(incident => `<div class="incident-row"><div><h3>${escapeHTML(incident.Title || incident.title)}</h3><p>${escapeHTML(incident.Severity || incident.severity)}</p></div><span class="badge">${escapeHTML(incident.Status || incident.status)}</span></div>`)];
   $("#overview-evidence").innerHTML = evidence.length ? evidence.join("") : stateBox("Nothing active", "Alerts and incidents will appear here when evidence requires attention.");
+}
+
+function sparkline(points) {
+  const values = points.filter(point => point.value !== null).map(point => Number(point.value));
+  if (!values.length) return `<div class="sparkline-empty">No samples</div>`;
+  const path = values.map((value, index) => `${index ? "L" : "M"} ${index * 120 / Math.max(1, values.length - 1)} ${34 - Math.max(0, Math.min(100, value)) * .3}`).join(" ");
+  return `<svg class="sparkline" viewBox="0 0 120 38" role="img" aria-label="Recent values from ${Math.round(values[0])} to ${Math.round(values.at(-1))} percent"><path d="${path}"/></svg><strong>${Math.round(values.at(-1) * 10) / 10}%</strong>`;
+}
+
+async function renderSurvey() {
+  const grid = $("#survey-grid"), status = $("#survey-status");
+  if (!state.posts.length) { grid.innerHTML = stateBox("No posts enrolled", "Enroll a host and connect a collector to begin the resource survey."); status.textContent = ""; return; }
+  grid.innerHTML = stateBox("Loading resource survey", "Reading one hour of bounded resource history.", "loading");
+  try {
+    const result = await request("/api/v1/survey"), grouped = new Map();
+    result.series.forEach(series => { if (!grouped.has(series.post_id)) grouped.set(series.post_id, {}); grouped.get(series.post_id)[series.signal] = series.points; });
+    grid.innerHTML = state.posts.map(post => { const signals = grouped.get(post.id) || {}; return `<article class="survey-card"><div class="survey-heading"><div><h2>${escapeHTML(post.name)}</h2><p><code>${escapeHTML(post.id)}</code></p></div><span class="badge">${escapeHTML(title(post.kind))}</span></div><div class="resource-grid">${[["CPU", "cpu.percent"], ["Memory", "memory.percent"], ["Disk", "disk.percent"]].map(([label, signal]) => `<div class="resource"><span>${label}</span>${sparkline(signals[signal] || [])}</div>`).join("")}</div></article>`; }).join("");
+    status.textContent = `Last hour · ${state.posts.length} post${state.posts.length === 1 ? "" : "s"} · refreshed ${new Date().toLocaleTimeString()}`;
+  } catch (error) { grid.innerHTML = stateBox("Survey unavailable", error.message, error.message.includes("permission") ? "permission" : "error"); }
 }
 
 function postRow(post) {
@@ -143,6 +164,7 @@ $("#login").addEventListener("submit", async event => { event.preventDefault(); 
 $("#logout").addEventListener("click", async () => { try { await request("/api/v1/logout", { method: "POST", headers: { "X-Watchpost-CSRF": state.csrf } }); } finally { state.csrf = ""; state.user = null; showAuth("login"); } });
 $("#nav-toggle").addEventListener("click", event => { const open = $("#primary-nav").classList.toggle("open"); event.currentTarget.setAttribute("aria-expanded", String(open)); });
 window.addEventListener("hashchange", route);
+$("#refresh-survey").addEventListener("click", renderSurvey);
 
 $("#post-filter").addEventListener("input", () => { state.postLimit = 50; renderPosts(); });
 $("#more-posts").addEventListener("click", () => { state.postLimit += 50; renderPosts(); });
@@ -151,9 +173,13 @@ $("#posts").addEventListener("click", async event => { const button = event.targ
 const postWizard = setupWizard("post", "[data-step]", "#post-steps", "#post-back", "#post-next", "#post-submit", () => { const values = formJSON($("#create")); $("#post-review").innerHTML = `<dt>ID</dt><dd><code>${escapeHTML(values.id)}</code></dd><dt>Name</dt><dd>${escapeHTML(values.name)}</dd><dt>Kind</dt><dd>${escapeHTML(title(values.kind))}</dd>`; });
 $("#create").addEventListener("submit", async event => { event.preventDefault(); const form = event.currentTarget, post = { ...formJSON(form), labels: {} }; setBusy(form, true); try { await request("/api/v1/posts", { method: "POST", headers: { "X-Watchpost-CSRF": state.csrf }, body: JSON.stringify(post) }); form.reset(); postWizard.reset(); await loadCore(); location.hash = "#/posts"; showMessage(`${post.name} enrolled.`); } catch (error) { showMessage(error.message, "error"); } finally { setBusy(form, false); } });
 
+$("#collector").addEventListener("submit", async event => { event.preventDefault(); const form = event.currentTarget, values = formJSON(form), output = $("#collector-result"); output.hidden = false; output.innerHTML = stateBox("Enrolling collector", "Creating a one-time credential.", "loading"); setBusy(form, true); try { const result = await request(`/api/v1/posts/${encodeURIComponent(values.post)}/collectors`, { method: "POST", headers: { "X-Watchpost-CSRF": state.csrf }, body: JSON.stringify({ id: values.id }) }); const example = `WATCHPOST_URL=http://watchpost-host:8080\nPOST_ID=${values.post}\nCOLLECTOR_ID=${result.id}\nCOLLECTOR_SECRET=${result.secret}`; output.innerHTML = `<h2>Collector enrolled</h2><p>Copy these values now. The secret is shown once. Configure a host collector to submit <code>cpu.percent</code>, <code>memory.percent</code>, and <code>disk.percent</code>.</p><pre class="secret-block"><code>${escapeHTML(example)}</code></pre><button id="copy-collector" class="quiet-button" type="button">Copy configuration</button><p class="callout">Keep the secret on the monitored machine. A collector may submit observations only for this post.</p>`; $("#copy-collector").onclick = async () => { await navigator.clipboard.writeText(example); showMessage("Collector configuration copied."); }; form.reset(); } catch (error) { output.innerHTML = stateBox("Collector enrollment failed", error.message, error.message.includes("permission") ? "permission" : "error"); } finally { setBusy(form, false); } });
+
 $("#check").addEventListener("submit", async event => { event.preventDefault(); const form = event.currentTarget, output = $("#check-result"); setBusy(form, true); output.hidden = false; output.innerHTML = stateBox("Running check", "Waiting for the target to respond.", "loading"); try { const result = await request("/api/v1/checks", { method: "POST", headers: { "X-Watchpost-CSRF": state.csrf }, body: JSON.stringify(formJSON(form)) }); output.innerHTML = `<h2>${result.ok ? "Check healthy" : "Check failed"}</h2><dl class="review-list"><dt>Result</dt><dd>${result.ok ? "Target responded successfully" : escapeHTML(result.failure || "Unknown failure")}</dd><dt>Latency</dt><dd>${escapeHTML(result.latency || "Not available")}</dd></dl>`; output.classList.toggle("permission-state", !result.ok); } catch (error) { output.innerHTML = stateBox("Check unavailable", error.message, error.message.includes("permission") ? "permission" : "error"); } finally { setBusy(form, false); } });
 
 $("#history").addEventListener("submit", async event => { event.preventDefault(); const values = formJSON(event.currentTarget), to = new Date(), from = new Date(to.getTime() - 3600000), signals = values.signals.split(",").map(value => value.trim()).filter(Boolean).slice(0, 4), series = []; try { for (const signal of signals) { const params = new URLSearchParams({ signal, from: from.toISOString(), to: to.toISOString() }); series.push({ signal, points: (await request(`/api/v1/posts/${encodeURIComponent(values.post)}/history?${params}`)).points }); } const all = series.flatMap(item => item.points).filter(point => point.value !== null), svg = $("#chart"); svg.replaceChildren(); if (!all.length) { $("#history-empty").innerHTML = `<h2>No numeric history</h2><p>This post has no matching numeric samples in the last hour. Recent data may be stale or collection may not have started.</p>`; $("#history-empty").hidden = false; svg.hidden = true; return; } const numbers = all.map(point => point.value), min = Math.min(...numbers), max = Math.max(...numbers), span = max - min || 1, colors = ["#9fcb78", "#dbb66f", "#dd8078", "#b7bdb7"]; series.forEach((entry, index) => { const numeric = entry.points.filter(point => point.value !== null), line = document.createElementNS("http://www.w3.org/2000/svg", "polyline"); line.setAttribute("fill", "none"); line.setAttribute("stroke", colors[index]); line.setAttribute("stroke-width", "3"); line.setAttribute("points", numeric.map((point, i) => `${20 + 760 * i / Math.max(1, numeric.length - 1)},${230 - 200 * (point.value - min) / span}`).join(" ")); svg.append(line); }); $("#history-empty").hidden = true; svg.hidden = false; const params = new URLSearchParams({ signal: signals[0], from: from.toISOString(), to: to.toISOString(), format: "csv" }); $("#export").href = `/api/v1/posts/${encodeURIComponent(values.post)}/history?${params}`; $("#export").hidden = false; } catch (error) { showMessage(error.message, "error"); } });
+
+$("#rule").addEventListener("submit", async event => { event.preventDefault(); const form = event.currentTarget, raw = formJSON(form), value = { ...raw, Threshold: Number(raw.Threshold), DurationSeconds: Number(raw.DurationSeconds) }, output = $("#rule-result"); output.hidden = false; output.innerHTML = stateBox("Creating rule", "Saving the deterministic threshold.", "loading"); setBusy(form, true); try { await request("/api/v1/rules", { method: "POST", headers: { "X-Watchpost-CSRF": state.csrf }, body: JSON.stringify(value) }); output.innerHTML = `<h2>Rule created</h2><p><code>${escapeHTML(value.ID)}</code> evaluates every good-quality <code>${escapeHTML(value.Signal)}</code> observation for ${escapeHTML(value.PostID)} and fires after ${escapeHTML(value.DurationSeconds)} seconds beyond ${escapeHTML(value.Threshold)}%.</p>`; form.elements.ID.value = ""; } catch (error) { output.innerHTML = stateBox("Rule was not created", error.message, error.message.includes("permission") ? "permission" : "error"); } finally { setBusy(form, false); } });
 
 $("#log").addEventListener("submit", async event => { event.preventDefault(); const form = event.currentTarget, value = { ...formJSON(form), observed_at: new Date().toISOString(), fields: {} }; setBusy(form, true); try { const stored = await request("/api/v1/logs", { method: "POST", headers: { "X-Watchpost-CSRF": state.csrf }, body: JSON.stringify(value) }); showMessage(`Log evidence ${stored.id} stored.`); await searchEvidence(value.post_id, "", String(stored.id)); form.elements.message.value = ""; } catch (error) { showMessage(error.message, "error"); } finally { setBusy(form, false); } });
 $("#log-search").addEventListener("submit", async event => { event.preventDefault(); const value = formJSON(event.currentTarget); await searchEvidence(value.post, value.query); });

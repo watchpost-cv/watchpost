@@ -41,6 +41,7 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/host-snapshot", s.require("viewer", s.handleHostSnapshot))
 	mux.HandleFunc("POST /api/v1/checks", s.require("operator", s.handleCheck))
 	mux.HandleFunc("GET /api/v1/posts/{id}/history", s.require("viewer", s.handleHistory))
+	mux.HandleFunc("GET /api/v1/survey", s.require("viewer", s.handleSurvey))
 	mux.HandleFunc("POST /api/v1/rules", s.require("operator", s.handleCreateRule))
 	mux.HandleFunc("GET /api/v1/alerts", s.require("viewer", s.handleListAlerts))
 	mux.HandleFunc("POST /api/v1/alerts/{id}/acknowledge", s.require("operator", s.handleAcknowledge))
@@ -314,6 +315,15 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"points": points})
+}
+
+func (s *Server) handleSurvey(w http.ResponseWriter, r *http.Request) {
+	series, err := s.history.Survey(r.Context(), time.Now().UTC().Add(-time.Hour), 30)
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": "resource survey unavailable"})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"series": series, "from": time.Now().UTC().Add(-time.Hour)})
 }
 func (s *Server) handleCreateRule(w http.ResponseWriter, r *http.Request) {
 	var in struct {
