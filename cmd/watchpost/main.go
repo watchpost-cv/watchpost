@@ -7,12 +7,15 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
 	"github.com/watchpost-ops/watchpost/internal/collectorclient"
+	"github.com/watchpost-ops/watchpost/internal/collectorcontract"
 	"github.com/watchpost-ops/watchpost/internal/collectorservice"
 	"github.com/watchpost-ops/watchpost/internal/config"
 	"github.com/watchpost-ops/watchpost/internal/hostcollector"
@@ -134,6 +137,7 @@ func runCollector(args []string) error {
 func runCollectorLoop(args []string) error {
 	fs := flag.NewFlagSet("watchpost collector run", flag.ContinueOnError)
 	configPath := fs.String("config", defaultCollectorConfig(), "collector configuration path")
+	statePath := fs.String("state", "", "durable queue state path")
 	interval := fs.Duration("interval", time.Minute, "sampling interval")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -141,23 +145,72 @@ func runCollectorLoop(args []string) error {
 	if fs.NArg() != 0 || *interval < time.Second {
 		return errors.New("invalid collector run options")
 	}
-	if _, err := collectorclient.Load(*configPath); err != nil {
+	config, err := collectorclient.Load(*configPath)
+	if err != nil {
 		return fmt.Errorf("load collector config: %w", err)
+	}
+	if *statePath == "" {
+		*statePath = filepath.Join(filepath.Dir(*configPath), "collector-queue.json")
+	}
+	queue, err := collectorclient.OpenQueue(*statePath, 256, 8<<20)
+	if err != nil {
+		return fmt.Errorf("open collector queue: %w", err)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	ticker := time.NewTicker(*interval)
 	defer ticker.Stop()
-	for {
-		samples, err := hostcollector.New().Sample(ctx, 250*time.Millisecond)
-		if err != nil {
-			return err
+	sampler := hostcollector.New()
+	sender := collectorclient.Sender{}
+	var retryTimer *time.Timer
+	var retry <-chan time.Time
+	backoff := time.Second
+	schedule := func(delay time.Duration) {
+		if retryTimer != nil {
+			retryTimer.Stop()
 		}
-		fmt.Fprintf(os.Stdout, "sampled %d host signals (delivery begins at WP06R)\n", len(samples))
+		retryTimer = time.NewTimer(delay)
+		retry = retryTimer.C
+	}
+	sample := func() error {
+		samples, sampleErr := sampler.Sample(ctx, 250*time.Millisecond)
+		if sampleErr != nil {
+			return sampleErr
+		}
+		if queue.DroppedSamples() > 0 {
+			dropped := float64(queue.DroppedSamples())
+			samples = append(samples, collectorcontract.Sample{ObservedAt: time.Now().UTC(), Signal: "collector.dropped_samples", Value: &dropped, Unit: "samples", Quality: "bad", Labels: map[string]string{}})
+		}
+		if enqueueErr := queue.Enqueue(config, samples, time.Now().UTC()); enqueueErr != nil {
+			fmt.Fprintln(os.Stderr, "watchpost collector:", enqueueErr)
+		}
+		if retryTimer == nil && queue.Pending() > 0 {
+			schedule(0)
+		}
+		return nil
+	}
+	if err = sample(); err != nil {
+		return err
+	}
+	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
+			if err = sample(); err != nil {
+				return err
+			}
+		case <-retry:
+			retryTimer = nil
+			retry = nil
+			if err = collectorclient.Drain(ctx, sender, config, queue); err != nil {
+				jitter := time.Duration(rand.Int64N(max(int64(backoff/2), 1)))
+				fmt.Fprintf(os.Stderr, "watchpost collector: delivery failed: %v; retrying\n", err)
+				schedule(backoff + jitter)
+				backoff = min(backoff*2, 5*time.Minute)
+			} else {
+				backoff = time.Second
+			}
 		}
 	}
 }

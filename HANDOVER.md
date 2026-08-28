@@ -1,9 +1,8 @@
 # Watchpost engineering handover
 
-Current execution: WP01R through WP05R are complete as of 2026-08-28. WP06R is
-next. Collector install/status/logs/uninstall support per-user systemd and an
-explicit root-only `--system` mode. The run loop samples but WP06R must connect
-durable delivery before unattended monitoring is claimed.
+Current execution: WP01R through WP06R are complete as of 2026-08-28. WP07R is
+next. The collector now persists before sending, replays only until an atomic
+acknowledgement, and backs off while continuing to sample into a bounded queue.
 The authoritative gap inventory is
 `docs/implementation-reconciliation.md`; do not restore the former claim that
 WP00–WP18 are implemented.
