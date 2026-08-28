@@ -12,6 +12,7 @@ import (
 	"github.com/watchpost-ops/watchpost/internal/agent"
 	"github.com/watchpost-ops/watchpost/internal/auth"
 	"github.com/watchpost-ops/watchpost/internal/checks"
+	"github.com/watchpost-ops/watchpost/internal/collectorcontract"
 	"github.com/watchpost-ops/watchpost/internal/devices"
 	"github.com/watchpost-ops/watchpost/internal/evidence"
 	"github.com/watchpost-ops/watchpost/internal/fleet"
@@ -38,6 +39,7 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/posts/{id}/dependencies", s.require("operator", s.handleAddDependency))
 	mux.HandleFunc("POST /api/v1/posts/{id}/collectors", s.require("admin", s.handleEnrollCollector))
 	mux.HandleFunc("POST /api/v1/observations", s.handleObservation)
+	mux.HandleFunc("POST /api/collector/v1/observations", s.handleCollectorBatch)
 	mux.HandleFunc("GET /api/v1/host-snapshot", s.require("viewer", s.handleHostSnapshot))
 	mux.HandleFunc("POST /api/v1/checks", s.require("operator", s.handleCheck))
 	mux.HandleFunc("GET /api/v1/posts/{id}/history", s.require("viewer", s.handleHistory))
@@ -250,6 +252,44 @@ func (s *Server) handleObservation(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.WriteHeader(http.StatusAccepted)
+}
+
+func (s *Server) handleCollectorBatch(w http.ResponseWriter, r *http.Request) {
+	var batch collectorcontract.Batch
+	if !decode(w, r, &batch) {
+		return
+	}
+	now := time.Now().UTC()
+	if err := batch.Validate(now); err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	secret := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if secret == "" {
+		writeJSON(w, 401, map[string]string{"error": "collector authentication required"})
+		return
+	}
+	items := make([]ingest.Observation, len(batch.Samples))
+	for index, sample := range batch.Samples {
+		items[index] = ingest.Observation{Version: 1, PostID: batch.PostID, CollectorID: batch.CollectorID, ObservedAt: sample.ObservedAt, Sequence: sample.Sequence, Signal: sample.Signal, Value: sample.Value, Unit: sample.Unit, Quality: sample.Quality, Labels: sample.Labels}
+	}
+	if err := s.ingest.AcceptBatch(r.Context(), secret, items); err != nil {
+		writeJSON(w, 409, map[string]string{"error": err.Error()})
+		return
+	}
+	for _, item := range items {
+		alerts, err := s.rules.EvaluateObservation(r.Context(), item.PostID, item.Signal, item.ObservedAt, item.Value, item.Quality)
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": "rule evaluation failed"})
+			return
+		}
+		for _, alert := range alerts {
+			if alert.State == "firing" {
+				_ = s.notify.Queue(r.Context(), alert.ID)
+			}
+		}
+	}
+	writeJSON(w, 202, collectorcontract.Acknowledgement{Version: 1, BatchID: batch.BatchID, AcceptedThrough: items[len(items)-1].Sequence, ServerTime: now})
 }
 func (s *Server) handleHostSnapshot(w http.ResponseWriter, r *http.Request) {
 	snapshot, err := host.Collect()

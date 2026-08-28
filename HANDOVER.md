@@ -1,7 +1,8 @@
 # Watchpost engineering handover
 
-Current execution: WP01R completed the honest implementation reconciliation on
-2026-08-28. WP02R is next. The authoritative gap inventory is
+Current execution: WP01R and WP02R are complete as of 2026-08-28. WP03R is
+next. Collector protocol v1 is documented in `docs/monitoring-contracts.md`.
+The authoritative gap inventory is
 `docs/implementation-reconciliation.md`; do not restore the former claim that
 WP00–WP18 are implemented.
 

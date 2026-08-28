@@ -1,4 +1,21 @@
-# Monitoring contracts (WP06–WP08)
+# Monitoring contracts (WP02R)
+
+Collectors submit an authenticated batch to
+`POST /api/collector/v1/observations`. A batch binds one collector to one post,
+contains 1–128 samples, uses contiguous monotonically increasing sequence
+numbers, and receives an acknowledgement containing `accepted_through` and the
+server clock. The whole batch is accepted atomically or rejected.
+
+Compatibility is explicit: version 1 is accepted and unknown versions fail.
+Samples retain observation time, signal, nullable numeric value, unit, quality,
+and bounded labels. Accepted qualities are `good`, `uncertain`, `bad`,
+`missing`, and `stale`. Clock bounds are 24 hours past and five minutes future.
+Collectors should sample while disconnected, retain a bounded local queue,
+retry temporary failures with jittered exponential backoff, and remove data
+only after an acknowledgement covers its sequence.
+
+The contract does not define absence as zero. Default freshness is two minutes;
+WP07R will materialize collector health from acknowledged delivery.
 
 The first host collector is Linux-only and read-only. It reads `/proc` and
 filesystem statistics without shell execution or elevated privileges. A failed

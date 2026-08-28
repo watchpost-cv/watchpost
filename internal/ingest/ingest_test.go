@@ -40,6 +40,32 @@ func TestAuthenticatedIngestRejectsReplayAndClock(t *testing.T) {
 	}
 }
 
+func TestAcceptBatchIsAtomicAndContiguous(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	_, _ = posts.New(db).Create(ctx, posts.Post{ID: "host-a", Name: "Host", Kind: "host"})
+	service := New(db)
+	secret, _ := service.Enroll(ctx, "collector-a", "host-a")
+	now := time.Now().UTC()
+	value := 50.0
+	items := []Observation{{Version: 1, PostID: "host-a", CollectorID: "collector-a", ObservedAt: now, Sequence: 1, Signal: "cpu.percent", Value: &value, Unit: "percent", Quality: "good", Labels: map[string]string{}}, {Version: 1, PostID: "host-a", CollectorID: "collector-a", ObservedAt: now, Sequence: 2, Signal: "memory.percent", Value: &value, Unit: "percent", Quality: "good", Labels: map[string]string{}}}
+	if err = service.AcceptBatch(ctx, secret, items); err != nil {
+		t.Fatal(err)
+	}
+	items[0].Sequence, items[1].Sequence = 3, 5
+	if service.AcceptBatch(ctx, secret, items) == nil {
+		t.Fatal("accepted sequence gap")
+	}
+	var count int
+	if err = db.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM observations`).Scan(&count); err != nil || count != 2 {
+		t.Fatalf("count=%d err=%v", count, err)
+	}
+}
+
 func FuzzObservationValidation(f *testing.F) {
 	f.Add("signal", "good", int64(1))
 	f.Add("", "bad-quality", int64(-1))

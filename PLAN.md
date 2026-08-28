@@ -29,6 +29,10 @@ supporting evidence; it is not completion by itself.
   default dashboards and starter rules, proven with separate server and
   collector processes across restart.
 
+Progress: WP01R and WP02R complete. WP02R added a versioned, bounded, atomic
+batch contract, contiguous acknowledgement semantics, compatibility/clock/
+quality validation, integration tests, and documented retry/freshness rules.
+
 Every monitored system, service, endpoint, application, or device is a
 **post**. This is the canonical schema, API, code, test, UI, and documentation
 term. A deployed Watchpost node is not itself a post unless explicitly enrolled.
