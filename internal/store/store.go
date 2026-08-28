@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const SchemaVersion = 7
+const SchemaVersion = 8
 
 type Store struct{ DB *sql.DB }
 
@@ -165,6 +165,22 @@ func (s *Store) migrate(ctx context.Context) error {
 			return fmt.Errorf("migration 7: %w", err)
 		}
 		if _, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations(version,applied_at) VALUES(7,?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return err
+		}
+		version = 7
+	}
+	if version == 7 {
+		statements := []string{
+			`CREATE TABLE agent_pairing_requests(id TEXT PRIMARY KEY,request_secret_hash BLOB NOT NULL,installation_id TEXT NOT NULL,hostname TEXT NOT NULL,platform TEXT NOT NULL,agent_version TEXT NOT NULL,phrase TEXT NOT NULL,state TEXT NOT NULL CHECK(state IN ('pending','approved','rejected','consumed')),post_id TEXT REFERENCES posts(id) ON DELETE CASCADE,expires_at TEXT NOT NULL,created_at TEXT NOT NULL,approved_at TEXT)`,
+			`CREATE INDEX agent_pairing_pending ON agent_pairing_requests(state,expires_at,created_at)`,
+			`CREATE TABLE agent_connections(installation_id TEXT PRIMARY KEY,post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,hostname TEXT NOT NULL,platform TEXT NOT NULL,agent_version TEXT NOT NULL,created_at TEXT NOT NULL,last_seen_at TEXT,revoked_at TEXT)`,
+		}
+		for _, statement := range statements {
+			if _, err = tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("migration 8: %w", err)
+			}
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations(version,applied_at) VALUES(8,?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 			return err
 		}
 	}

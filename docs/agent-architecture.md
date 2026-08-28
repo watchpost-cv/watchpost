@@ -47,6 +47,12 @@ Pairing is request and approval:
 Requests expire, are rate limited and cannot be replayed. Hostnames and IP
 addresses are descriptive metadata, never credential identity.
 
+The v2 contract is now implemented by `/api/agent/v2/pairing-requests` and the
+authenticated Watchpost approval endpoints. The request secret is hashed at
+Watchpost and never exposed to either browser. Approval and credential
+collection are separate transitions, so merely knowing a hostname or phrase
+cannot claim a post.
+
 ## Network and authority boundary
 
 The agent UI binds to loopback by default. State-changing browser requests use

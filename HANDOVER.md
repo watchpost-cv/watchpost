@@ -19,6 +19,11 @@ Installation precedes request/approval pairing. Watchpost owns the post and
 approval; agent connections are monitoring details beneath posts; collectors
 are implementations rather than top-level inventory. See
 `docs/agent-architecture.md`.
+WP-A05 implements the new cross-repository pairing contract: an installed
+agent creates a ten-minute request and private request secret, both products
+show the same three-word phrase, and a Watchpost administrator approves an
+existing post before a one-time post-scoped credential is delivered. The old
+collector token flow remains transitional compatibility only.
 The authoritative gap inventory is
 `docs/implementation-reconciliation.md`; do not restore the former claim that
 WP00–WP18 are implemented.

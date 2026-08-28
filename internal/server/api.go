@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/watchpost-ops/watchpost/internal/agent"
+	"github.com/watchpost-ops/watchpost/internal/agentpairing"
 	"github.com/watchpost-ops/watchpost/internal/auth"
 	"github.com/watchpost-ops/watchpost/internal/checks"
 	"github.com/watchpost-ops/watchpost/internal/collectorcontract"
@@ -44,6 +45,11 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/posts/{id}/collectors", s.require("admin", s.handleEnrollCollector))
 	mux.HandleFunc("POST /api/v1/posts/{id}/pairing-tokens", s.require("admin", s.handleCreatePairingToken))
 	mux.HandleFunc("POST /api/collector/v1/pair", s.handlePairCollector)
+	mux.HandleFunc("POST /api/agent/v2/pairing-requests", s.handleAgentPairingRequest)
+	mux.HandleFunc("GET /api/agent/v2/pairing-requests/{id}", s.handleAgentPairingPoll)
+	mux.HandleFunc("GET /api/v1/agent-pairing-requests", s.require("viewer", s.handleListAgentPairingRequests))
+	mux.HandleFunc("POST /api/v1/agent-pairing-requests/{id}/approve", s.require("admin", s.handleApproveAgentPairingRequest))
+	mux.HandleFunc("POST /api/v1/agent-pairing-requests/{id}/reject", s.require("admin", s.handleRejectAgentPairingRequest))
 	mux.HandleFunc("POST /api/v1/observations", s.handleObservation)
 	mux.HandleFunc("POST /api/collector/v1/observations", s.handleCollectorBatch)
 	mux.HandleFunc("GET /api/v1/host-snapshot", s.require("viewer", s.handleHostSnapshot))
@@ -81,6 +87,23 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/device-profiles", s.require("operator", s.handleSaveDeviceProfile))
 	mux.HandleFunc("GET /api/v1/device-profiles", s.require("viewer", s.handleListDeviceProfiles))
 }
+
+func (s *Server) handleAgentPairingRequest(w http.ResponseWriter, r *http.Request) {
+	var input struct { InstallationID string `json:"installation_id"`; RequestSecret string `json:"request_secret"`; Hostname string `json:"hostname"`; Platform string `json:"platform"`; AgentVersion string `json:"agent_version"` }
+	if !decode(w,r,&input){return}
+	request,err:=s.agentPairing.Create(r.Context(),input.InstallationID,input.RequestSecret,input.Hostname,input.Platform,input.AgentVersion)
+	if err!=nil{writeJSON(w,400,map[string]string{"error":err.Error()});return}
+	writeJSON(w,201,request)
+}
+
+func (s *Server) handleAgentPairingPoll(w http.ResponseWriter, r *http.Request) {
+	secret:=agentpairing.Bearer(r.Header.Get("Authorization")); if secret==""{writeJSON(w,401,map[string]string{"error":"pairing authentication required"});return}
+	result,err:=s.agentPairing.Poll(r.Context(),r.PathValue("id"),secret);if err!=nil{writeJSON(w,409,map[string]string{"error":err.Error()});return};writeJSON(w,200,result)
+}
+
+func (s *Server) handleListAgentPairingRequests(w http.ResponseWriter,r *http.Request){result,err:=s.agentPairing.List(r.Context());if err!=nil{writeJSON(w,500,map[string]string{"error":"pairing requests unavailable"});return};writeJSON(w,200,result)}
+func (s *Server) handleApproveAgentPairingRequest(w http.ResponseWriter,r *http.Request){var input struct{PostID string `json:"post_id"`};if !decode(w,r,&input){return};if err:=s.agentPairing.Decide(r.Context(),r.PathValue("id"),input.PostID,true);err!=nil{writeJSON(w,409,map[string]string{"error":err.Error()});return};w.WriteHeader(http.StatusNoContent)}
+func (s *Server) handleRejectAgentPairingRequest(w http.ResponseWriter,r *http.Request){if err:=s.agentPairing.Decide(r.Context(),r.PathValue("id"),"",false);err!=nil{writeJSON(w,409,map[string]string{"error":err.Error()});return};w.WriteHeader(http.StatusNoContent)}
 
 func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 	setupRequired, err := s.auth.SetupRequired(r.Context())
