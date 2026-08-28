@@ -11,6 +11,14 @@ collector is outbound-only. Post editing is optimistic-concurrency protected;
 permanent deletion is administrator-only, requires the exact post ID, is
 audited, and removes post-scoped evidence and credentials. Preserve the clear
 archive-versus-delete distinction.
+
+WP-A01 supersedes the bundled collector as the long-term host architecture.
+The sibling `watchpost-agent` repository owns a separately installed program,
+an embedded loopback-first website and an equivalent CLI for headless servers.
+Installation precedes request/approval pairing. Watchpost owns the post and
+approval; agent connections are monitoring details beneath posts; collectors
+are implementations rather than top-level inventory. See
+`docs/agent-architecture.md`.
 The authoritative gap inventory is
 `docs/implementation-reconciliation.md`; do not restore the former claim that
 WP00–WP18 are implemented.

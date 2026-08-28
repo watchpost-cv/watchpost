@@ -1,5 +1,20 @@
 # Watchpost development checkpoints
 
+## Agent architecture programme (WP-A01–WP-A18)
+
+WP-A01 accepted a separate `watchpost-agent` program with its own embedded
+loopback-first website and an equivalent CLI for headless servers and
+automation. The two surfaces share one application service. The agent is
+installed before request/approval pairing. Posts remain the user-facing
+inventory; agent connections are monitoring details and collectors are
+implementations. See `docs/agent-architecture.md` and the sibling agent plan.
+
+WP-A02–WP-A06 establish the standalone application, installation lifecycle,
+local security, pairing protocol v2 and complete web/CLI telemetry journeys.
+WP-A07–WP-A18 then move agent state beneath posts, add configurable local
+collectors, dense policy-aware visualisation, non-host methods, lifecycle,
+packaging, scale and recovery evidence.
+
 Status: original WP00–WP18 implementation claims were reconciled on 2026-08-28.
 The codebase contains useful foundations and a proven Linux host loop. The
 active recovery programme now continues through WP16R below. Original
