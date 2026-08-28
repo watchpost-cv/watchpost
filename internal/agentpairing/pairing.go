@@ -107,7 +107,7 @@ func (s *Service) List(ctx context.Context) ([]Request, error) {
 }
 
 func (s *Service) Connections(ctx context.Context, postID string) ([]Connection, error) {
-	query := `SELECT a.installation_id,a.post_id,a.hostname,a.platform,a.agent_version,a.created_at,c.last_seen_at,c.last_error,c.revoked_at FROM agent_connections a JOIN collector_keys c ON c.id=a.installation_id WHERE a.revoked_at IS NULL`
+	query := `SELECT a.installation_id,a.post_id,a.hostname,a.platform,a.agent_version,a.created_at,c.last_seen_at,c.last_sent_at,c.last_rejected_at,c.last_error,c.partial,c.revoked_at FROM agent_connections a JOIN collector_keys c ON c.id=a.installation_id WHERE 1=1`
 	arguments := []any{}
 	if postID != "" {
 		query += ` AND a.post_id=?`
@@ -124,31 +124,65 @@ func (s *Service) Connections(ctx context.Context, postID string) ([]Connection,
 	for rows.Next() {
 		var value Connection
 		var created string
-		var seen, lastError, revoked sql.NullString
-		if err = rows.Scan(&value.InstallationID, &value.PostID, &value.Hostname, &value.Platform, &value.AgentVersion, &created, &seen, &lastError, &revoked); err != nil {
+		var seen, sent, rejected, lastError, revoked sql.NullString
+		var partial bool
+		if err = rows.Scan(&value.InstallationID, &value.PostID, &value.Hostname, &value.Platform, &value.AgentVersion, &created, &seen, &sent, &rejected, &lastError, &partial, &revoked); err != nil {
 			return nil, err
 		}
 		value.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 		value.Status = "never_connected"
 		if revoked.Valid {
 			value.Status = "revoked"
-		} else if lastError.Valid && lastError.String != "" {
+		} else if rejected.Valid && (!seen.Valid || rejected.String > seen.String) {
 			value.Status = "rejected"
 		} else if seen.Valid {
 			parsed, _ := time.Parse(time.RFC3339Nano, seen.String)
 			value.LastSeenAt = &parsed
 			since := now.Sub(parsed)
-			if since <= 2*time.Minute {
-				value.Status = "healthy"
-			} else if since <= 5*time.Minute {
-				value.Status = "stale"
-			} else {
+			if since > 10*time.Minute {
 				value.Status = "offline"
+			} else if since > 2*time.Minute {
+				value.Status = "stale"
+			} else if sent.Valid {
+				sentAt, _ := time.Parse(time.RFC3339Nano, sent.String)
+				difference := now.Sub(sentAt)
+				if difference > 5*time.Minute || difference < (-5*time.Minute) {
+					value.Status = "skewed"
+				} else if partial {
+					value.Status = "partial"
+				} else {
+					value.Status = "healthy"
+				}
+			} else if partial {
+				value.Status = "partial"
+			} else {
+				value.Status = "healthy"
 			}
 		}
 		result = append(result, value)
 	}
 	return result, rows.Err()
+}
+
+func (s *Service) Revoke(ctx context.Context, installationID string) error {
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	tx, err := s.s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE agent_connections SET revoked_at=? WHERE installation_id=? AND revoked_at IS NULL`, now, installationID)
+	if err != nil {
+		return err
+	}
+	count, _ := result.RowsAffected()
+	if count != 1 {
+		return errors.New("agent connection unavailable")
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE collector_keys SET revoked_at=? WHERE id=?`, now, installationID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Service) Decide(ctx context.Context, id, postID string, approve bool) error {

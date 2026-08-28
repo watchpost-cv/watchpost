@@ -50,6 +50,7 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/agent-pairing-requests", s.require("viewer", s.handleListAgentPairingRequests))
 	mux.HandleFunc("GET /api/v1/agent-connections", s.require("viewer", s.handleListAgentConnections))
 	mux.HandleFunc("GET /api/v1/posts/{id}/agent-connections", s.require("viewer", s.handleListPostAgentConnections))
+	mux.HandleFunc("POST /api/v1/agent-connections/{id}/revoke", s.require("admin", s.handleRevokeAgentConnection))
 	mux.HandleFunc("POST /api/v1/agent-pairing-requests/{id}/approve", s.require("admin", s.handleApproveAgentPairingRequest))
 	mux.HandleFunc("POST /api/v1/agent-pairing-requests/{id}/reject", s.require("admin", s.handleRejectAgentPairingRequest))
 	mux.HandleFunc("POST /api/v1/observations", s.handleObservation)
@@ -146,6 +147,13 @@ func (s *Server) handleListPostAgentConnections(w http.ResponseWriter, r *http.R
 		return
 	}
 	writeJSON(w, 200, map[string]any{"connections": result})
+}
+func (s *Server) handleRevokeAgentConnection(w http.ResponseWriter, r *http.Request) {
+	if err := s.agentPairing.Revoke(r.Context(), r.PathValue("id")); err != nil {
+		writeJSON(w, 409, map[string]string{"error": err.Error()})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 func (s *Server) handleApproveAgentPairingRequest(w http.ResponseWriter, r *http.Request) {
 	var input struct {

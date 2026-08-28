@@ -38,6 +38,9 @@ filesystem paths and collection interval.
 WP-A09 adds the standalone agent's restart-safe 256-batch/8-MiB ordered queue,
 bounded retry state and explicit skipped-collection accounting. Watchpost's
 contiguous ingestion contract remains the authority during replay.
+WP-A10 makes agent revocation an administrator operation and exposes the full
+connection health vocabulary beneath posts. Local unpair/reset remain agent
+operations because Watchpost cannot silently mutate software on another host.
 The authoritative gap inventory is
 `docs/implementation-reconciliation.md`; do not restore the former claim that
 WP00–WP18 are implemented.
