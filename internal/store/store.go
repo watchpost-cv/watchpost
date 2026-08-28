@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const SchemaVersion = 8
+const SchemaVersion = 9
 
 type Store struct{ DB *sql.DB }
 
@@ -181,6 +181,23 @@ func (s *Store) migrate(ctx context.Context) error {
 			}
 		}
 		if _, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations(version,applied_at) VALUES(8,?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return err
+		}
+		version = 8
+	}
+	if version == 8 {
+		statements := []string{
+			`CREATE TABLE check_schedules(id TEXT PRIMARY KEY,post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,kind TEXT NOT NULL,address TEXT NOT NULL,server_name TEXT NOT NULL DEFAULT '',interval_seconds INTEGER NOT NULL,enabled INTEGER NOT NULL DEFAULT 1,next_run_at TEXT NOT NULL,created_at TEXT NOT NULL)`,
+			`CREATE TABLE check_results(id INTEGER PRIMARY KEY,schedule_id TEXT NOT NULL REFERENCES check_schedules(id) ON DELETE CASCADE,checked_at TEXT NOT NULL,ok INTEGER NOT NULL,latency_ms REAL NOT NULL,status INTEGER NOT NULL DEFAULT 0,expires_at TEXT,failure TEXT NOT NULL DEFAULT '')`,
+			`CREATE INDEX check_schedules_due ON check_schedules(enabled,next_run_at)`,
+			`CREATE INDEX check_results_schedule_time ON check_results(schedule_id,checked_at)`,
+		}
+		for _, statement := range statements {
+			if _, err = tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("migration 9: %w", err)
+			}
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations(version,applied_at) VALUES(9,?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 			return err
 		}
 	}

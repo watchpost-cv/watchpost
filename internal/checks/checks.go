@@ -43,6 +43,22 @@ func New(timeout time.Duration) *Runner {
 		return nil
 	}}}
 }
+func (r *Runner) Run(ctx context.Context, kind, address, serverName string) Result {
+	switch kind {
+	case "http":
+		return r.HTTPCheck(ctx, address)
+	case "tcp":
+		return r.TCP(ctx, address)
+	case "tls":
+		return r.TLS(ctx, address, serverName)
+	case "dns":
+		return r.DNS(ctx, address)
+	case "icmp":
+		return r.ICMP(ctx, address)
+	default:
+		return Result{Kind: kind, Address: address, Failure: "unsupported check"}
+	}
+}
 func (r *Runner) TCP(ctx context.Context, address string) Result {
 	start := time.Now()
 	conn, err := r.Dialer.DialContext(ctx, "tcp", address)

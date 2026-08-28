@@ -15,6 +15,7 @@ import (
 	"github.com/watchpost-ops/watchpost/internal/agent"
 	"github.com/watchpost-ops/watchpost/internal/agentpairing"
 	"github.com/watchpost-ops/watchpost/internal/auth"
+	"github.com/watchpost-ops/watchpost/internal/checks"
 	"github.com/watchpost-ops/watchpost/internal/collectorhealth"
 	"github.com/watchpost-ops/watchpost/internal/config"
 	"github.com/watchpost-ops/watchpost/internal/devices"
@@ -51,6 +52,7 @@ type Server struct {
 	pairing      *pairing.Service
 	health       *collectorhealth.Store
 	devices      *devices.ProfileStore
+	checks       *checks.ScheduleStore
 }
 
 func New(cfg config.Config, version string, logger *slog.Logger, database *store.Store) *Server {
@@ -77,7 +79,7 @@ func New(cfg config.Config, version string, logger *slog.Logger, database *store
 		count, _ := result.RowsAffected()
 		return map[string]any{"disabled": count == 1}, nil
 	}})
-	return &Server{cfg: cfg, version: version, logger: logger, store: database, auth: auth.New(database), posts: posts.New(database), ingest: ingest.New(database), history: history.New(database), rules: rules.New(database), notify: notify.New(database, sender), incidents: incidents.New(database), evidence: evidence.New(database), agent: agent.New(database, agent.EvidenceProvider{}), agentPairing: agentpairing.New(database), actions: actionRegistry, fleet: fleet.New(database), pairing: pairing.New(database), health: collectorhealth.New(database), devices: devices.NewProfileStore(database)}
+	return &Server{cfg: cfg, version: version, logger: logger, store: database, auth: auth.New(database), posts: posts.New(database), ingest: ingest.New(database), history: history.New(database), rules: rules.New(database), notify: notify.New(database, sender), incidents: incidents.New(database), evidence: evidence.New(database), agent: agent.New(database, agent.EvidenceProvider{}), agentPairing: agentpairing.New(database), actions: actionRegistry, fleet: fleet.New(database), pairing: pairing.New(database), health: collectorhealth.New(database), devices: devices.NewProfileStore(database), checks: checks.NewScheduleStore(database)}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -116,6 +118,7 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) Run(ctx context.Context) error {
 	httpServer := &http.Server{Addr: s.cfg.Listen, Handler: s.Handler(), ReadHeaderTimeout: 5 * time.Second}
 	go s.deliveryLoop(ctx)
+	go s.checkLoop(ctx)
 	errCh := make(chan error, 1)
 	go func() {
 		s.logger.Info("watchpost listening", "address", s.cfg.Listen, "version", s.version)
@@ -131,6 +134,22 @@ func (s *Server) Run(ctx context.Context) error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		return httpServer.Shutdown(shutdownCtx)
+	}
+}
+
+func (s *Server) checkLoop(ctx context.Context) {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	runner := checks.New(10 * time.Second)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			if _, err := s.checks.RunDue(ctx, runner, now); err != nil {
+				s.logger.Warn("scheduled checks failed", "error", err)
+			}
+		}
 	}
 }
 

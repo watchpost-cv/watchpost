@@ -2,7 +2,7 @@
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
-const state = { csrf: "", user: null, posts: [], collectors: [], agentConnections: [], rules: [], alerts: [], incidents: [], agentRequests: [], postLimit: 50 };
+const state = { csrf: "", user: null, posts: [], collectors: [], agentConnections: [], rules: [], checkSchedules: [], alerts: [], incidents: [], agentRequests: [], postLimit: 50 };
 const routes = new Set(["overview", "survey", "posts", "edit-post", "enroll", "collectors", "checks", "history", "rules", "evidence", "investigate", "actions", "incidents", "devices", "fleet"]);
 
 async function request(path, options = {}) {
@@ -57,7 +57,7 @@ async function enterApp(session) {
 
 async function loadCore() {
   $("#summary").innerHTML = stateBox("Loading workspace", "Collecting the latest operational state.", "loading");
-  const results = await Promise.allSettled([request("/api/v1/posts"), request("/api/v1/alerts"), request("/api/v1/incidents"), request("/api/v1/collectors"), request("/api/v1/agent-pairing-requests"), request("/api/v1/agent-connections"), request("/api/v1/rules")]);
+  const results = await Promise.allSettled([request("/api/v1/posts"), request("/api/v1/alerts"), request("/api/v1/incidents"), request("/api/v1/collectors"), request("/api/v1/agent-pairing-requests"), request("/api/v1/agent-connections"), request("/api/v1/rules"), request("/api/v1/check-schedules")]);
   const failures = results.filter(result => result.status === "rejected");
   state.posts = results[0].status === "fulfilled" ? results[0].value.posts : [];
   state.alerts = results[1].status === "fulfilled" ? results[1].value.alerts : [];
@@ -66,7 +66,8 @@ async function loadCore() {
   state.agentRequests = results[4].status === "fulfilled" ? results[4].value : [];
   state.agentConnections = results[5].status === "fulfilled" ? results[5].value.connections : [];
   state.rules = results[6].status === "fulfilled" ? results[6].value.rules : [];
-  updatePostSelects(); renderOverview(); renderPosts(); renderIncidents(); renderCollectorHealth(); renderAgentRequests(); renderRuleInventory();
+  state.checkSchedules = results[7].status === "fulfilled" ? results[7].value.schedules : [];
+  updatePostSelects(); renderOverview(); renderPosts(); renderIncidents(); renderCollectorHealth(); renderAgentRequests(); renderRuleInventory(); renderCheckSchedules();
   if (failures.length) showMessage(`${failures.length} workspace section${failures.length === 1 ? "" : "s"} could not be loaded. Available data is still shown.`, "error");
 }
 
@@ -92,6 +93,7 @@ function route() {
   $("#page").focus({ preventScroll: true });
   if (current === "survey") renderSurvey();
   if (current === "rules") renderRuleInventory();
+  if (current === "checks") renderCheckSchedules();
   if (current === "edit-post") renderPostEditor(new URLSearchParams(location.hash.split("?")[1] || "").get("id"));
   if (current === "collectors" && !$('#collector [name="server_url"]').value) $('#collector [name="server_url"]').value = location.origin;
 }
@@ -202,6 +204,8 @@ function renderRuleInventory() {
   $$('[data-rule-toggle]', inventory).forEach(button => button.onclick = async () => { try { await request(`/api/v1/rules/${encodeURIComponent(button.dataset.ruleToggle)}/enabled`, { method: "POST", headers: { "X-Watchpost-CSRF": state.csrf }, body: JSON.stringify({ enabled: button.dataset.enabled !== "true" }) }); await loadCore(); showMessage(`Rule ${button.dataset.enabled === "true" ? "paused" : "enabled"}.`); } catch (error) { showMessage(error.message, "error"); } });
   if (selected && state.posts.some(post => post.id === selected)) $('#rule [name="PostID"]').value = selected;
 }
+
+function renderCheckSchedules(){const view=$('[data-view="checks"]');if(!view)return;let panel=$("#check-schedules");if(!panel){panel=document.createElement("section");panel.id="check-schedules";panel.className="panel";view.append(panel)}panel.innerHTML='<h2>Scheduled checks</h2><p>Run HTTP, TCP, TLS, DNS or ICMP centrally without installing an agent.</p>'+ (state.checkSchedules.length?state.checkSchedules.map(item=>`<article class="rule-row"><div><h3>${escapeHTML(item.ID||item.id)}</h3><p>${escapeHTML(item.PostID||item.post_id)} · ${escapeHTML(title(item.Kind||item.kind))} every ${escapeHTML(item.IntervalSeconds||item.interval_seconds)}s</p></div><span class="badge ${item.Last&&!item.Last.ok?'danger':''}">${item.Last?(item.Last.ok?'Healthy':'Failed'):'Pending'}</span></article>`).join(''):stateBox('No scheduled checks','Create one below to begin collecting availability history.'))+`<form id="scheduled-check" class="compact-form"><label>Schedule ID<input name="ID" placeholder="homepage-http" required></label><label>Post<select name="PostID" required><option value="">Choose post</option>${state.posts.map(post=>`<option value="${escapeHTML(post.id)}">${escapeHTML(post.name)}</option>`).join("")}</select></label><label>Every (seconds)<input name="IntervalSeconds" type="number" min="30" max="86400" value="60" required></label><button>Schedule current target</button></form>`;$("#scheduled-check").onsubmit=async event=>{event.preventDefault();const raw=formJSON(event.currentTarget),source=formJSON($("#check")),value={...raw,Kind:source.kind,Address:source.address,ServerName:source.serverName,IntervalSeconds:Number(raw.IntervalSeconds)};try{await request("/api/v1/check-schedules",{method:"POST",headers:{"X-Watchpost-CSRF":state.csrf},body:JSON.stringify(value)});await loadCore();showMessage("Scheduled check created.")}catch(error){showMessage(error.message,"error")}};}
 
 function renderIncidents() {
   $("#incidents").innerHTML = state.incidents.length ? state.incidents.map(incident => `<article class="incident-row"><div><h3>${escapeHTML(incident.Title || incident.title)}</h3><p>${escapeHTML(incident.Severity || incident.severity)} · ${escapeHTML(incident.Status || incident.status)}</p></div></article>`).join("") : stateBox("No incidents", "Open an incident when related evidence needs durable coordination.");

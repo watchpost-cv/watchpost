@@ -48,6 +48,9 @@ WP-A12 makes those states policy-aware. Enabled per-post rules, active alert
 severity, maintenance, observation quality/freshness and agent health determine
 the bar state and its visible explanation. A missing rule is unknown—not safe.
 The Rules view lists starter policy and supports explicit pause/enable actions.
+WP-A13 adds persistent central-check schedules for HTTP, TCP, TLS, DNS and
+ICMP. They execute in bounded batches, store explicit latency/failure/expiry
+facts and are configured beneath a post. They do not require an agent.
 The authoritative gap inventory is
 `docs/implementation-reconciliation.md`; do not restore the former claim that
 WP00–WP18 are implemented.

@@ -57,6 +57,8 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/collector/v1/observations", s.handleCollectorBatch)
 	mux.HandleFunc("GET /api/v1/host-snapshot", s.require("viewer", s.handleHostSnapshot))
 	mux.HandleFunc("POST /api/v1/checks", s.require("operator", s.handleCheck))
+	mux.HandleFunc("POST /api/v1/check-schedules", s.require("operator", s.handleCreateCheckSchedule))
+	mux.HandleFunc("GET /api/v1/check-schedules", s.require("viewer", s.handleListCheckSchedules))
 	mux.HandleFunc("GET /api/v1/posts/{id}/history", s.require("viewer", s.handleHistory))
 	mux.HandleFunc("GET /api/v1/survey", s.require("viewer", s.handleSurvey))
 	mux.HandleFunc("POST /api/v1/rules", s.require("operator", s.handleCreateRule))
@@ -490,6 +492,25 @@ func (s *Server) handleCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, result)
+}
+func (s *Server) handleCreateCheckSchedule(w http.ResponseWriter, r *http.Request) {
+	var in checks.Schedule
+	if !decode(w, r, &in) {
+		return
+	}
+	if err := s.checks.Save(r.Context(), in); err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
+}
+func (s *Server) handleListCheckSchedules(w http.ResponseWriter, r *http.Request) {
+	items, err := s.checks.List(r.Context())
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": "check schedules unavailable"})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"schedules": items})
 }
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	from, err := time.Parse(time.RFC3339, r.URL.Query().Get("from"))
