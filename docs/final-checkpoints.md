@@ -1,5 +1,18 @@
 # WP12–WP18 implementation notes
 
+## WP01R–WP08R recovery batch
+
+The 2026-08-28 recovery batch corrected earlier component-level completion
+claims and closed the ordinary Linux host workflow. Its final executable gate
+is `hardening/host-journey.sh`. The gate builds one binary, starts separate
+server and collector processes, creates the administrator and host post, pairs
+with a one-use token, receives host telemetry, stops and restarts both sides,
+and proves at least two CPU history points remain queryable through the API.
+
+This evidence covers the Linux loopback development deployment. It does not by
+itself prove other operating systems, hostile networks, long-duration scale,
+production TLS termination, or complete rule/notification/device workflows.
+
 ## Evidence and devices
 
 Logs are bounded, redacted at ingestion, searchable only within a post and time

@@ -1,8 +1,9 @@
 # Watchpost engineering handover
 
-Current execution: WP01R through WP07R are complete as of 2026-08-28. WP08R is
-next. Collector health is server-derived from durable facts and must preserve
-the explicit state vocabulary tested in `internal/collectorhealth`.
+Current execution: WP01R through WP08R are complete as of 2026-08-28. The first
+recovery batch is closed. `hardening/host-journey.sh` is the mandatory Linux
+gate: it pairs separate server/collector processes, restarts both, and proves
+continuing history. Do not regress the guided enrollment-to-confirmation flow.
 The authoritative gap inventory is
 `docs/implementation-reconciliation.md`; do not restore the former claim that
 WP00–WP18 are implemented.

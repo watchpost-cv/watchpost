@@ -25,8 +25,9 @@ On Linux, inspect the host signals produced by the bundled collector sampler:
 ./watchpost collector sample
 ```
 
-This sampling command does not yet pair or deliver telemetry; those lifecycle
-commands are introduced by WP04R–WP06R.
+For a monitored host, enroll the post in the SPA, generate its one-use pairing
+command, run that command on the host, and install the service. The collector
+then persists and delivers CPU, memory, disk, load, uptime, and health signals.
 
 After pairing, install and inspect a per-user systemd collector service:
 
@@ -40,6 +41,10 @@ After pairing, install and inspect a per-user systemd collector service:
 Use `--system` as root for an explicit machine-wide service. The installer
 copies the binary to a stable location; it does not depend on the downloaded
 binary remaining in the current directory.
+
+The local queue is limited to 256 batches or 8 MiB. It survives restart,
+replays in sequence, removes only acknowledged batches, and reports saturation
+through `collector.dropped_samples`.
 
 For source-tree development without keeping a binary:
 

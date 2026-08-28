@@ -29,7 +29,7 @@ supporting evidence; it is not completion by itself.
   default dashboards and starter rules, proven with separate server and
   collector processes across restart.
 
-Progress: WP01R through WP07R complete. WP02R added a versioned, bounded, atomic
+Progress: WP01R through WP08R complete. WP02R added a versioned, bounded, atomic
 batch contract, contiguous acknowledgement semantics, compatibility/clock/
 quality validation, integration tests, and documented retry/freshness rules.
 WP03R added the supplied-binary Linux sampler for CPU, memory, root disk, load,
@@ -44,6 +44,10 @@ deletion, network timeouts, and jittered exponential retry capped at five minute
 WP07R added persisted receipt/observation/collector-clock/rejection/partial
 facts and explicit never-connected, healthy, stale, offline, skewed, rejected,
 partial, and revoked states in the API and SPA.
+WP08R joined post creation, optional starter rules, one-use pairing, first-
+delivery confirmation, collector health, and resource survey navigation. The
+Linux gate builds one binary, starts separate server/collector processes,
+pairs over HTTP loopback, restarts both, and proves continuing CPU history.
 
 Every monitored system, service, endpoint, application, or device is a
 **post**. This is the canonical schema, API, code, test, UI, and documentation
