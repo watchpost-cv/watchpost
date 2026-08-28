@@ -1,9 +1,9 @@
 # Watchpost development checkpoints
 
 Status: original WP00–WP18 implementation claims were reconciled on 2026-08-28.
-The codebase contains useful foundations, but it is not yet a functioning
-end-to-end monitoring product. The active recovery programme is WP01R–WP08R
-below. Original checkpoints are retained as design history, not completion
+The codebase contains useful foundations and a proven Linux host loop. The
+active recovery programme now continues through WP16R below. Original
+checkpoints are retained as design history, not completion
 claims. See `docs/implementation-reconciliation.md`.
 
 ## Active recovery programme
@@ -28,6 +28,22 @@ supporting evidence; it is not completion by itself.
 - **WP08R — complete host journey:** guided creation/pairing/confirmation,
   default dashboards and starter rules, proven with separate server and
   collector processes across restart.
+- **WP09R — operable rules and alerts:** list and enable/disable versioned rules,
+  preserve deterministic alert transitions, and expose the lifecycle to operators.
+- **WP10R — observable notification delivery:** manage routes without returning
+  secrets and expose durable retry/delivery outcomes.
+- **WP11R — incident ownership:** attributable assignment, notes, transitions,
+  linked evidence, and a useful durable timeline.
+- **WP12R — navigable evidence:** bounded logs and changes can be retrieved by
+  exact citation and opened in context.
+- **WP13R — durable read-only devices:** save bounded SNMPv3 profiles for device
+  posts, test them, and retain readings without adding write authority.
+- **WP14R — evidence-grounded investigation:** assemble bounded post evidence,
+  verify citations, show uncertainty, and remain read-only.
+- **WP15R — inspectable typed actions:** list requests and show approval,
+  execution, and verification state without arbitrary commands.
+- **WP16R — operable fleet trust:** list, pair, revoke, and inspect peers and
+  bounded store-and-forward state while each node remains useful alone.
 
 Progress: WP01R through WP08R complete. WP02R added a versioned, bounded, atomic
 batch contract, contiguous acknowledgement semantics, compatibility/clock/
@@ -48,6 +64,8 @@ WP08R joined post creation, optional starter rules, one-use pairing, first-
 delivery confirmation, collector health, and resource survey navigation. The
 Linux gate builds one binary, starts separate server/collector processes,
 pairs over HTTP loopback, restarts both, and proves continuing CPU history.
+WP09R makes rules inspectable and independently enableable/disableable through
+authenticated APIs while retaining deterministic transition and restart tests.
 
 Every monitored system, service, endpoint, application, or device is a
 **post**. This is the canonical schema, API, code, test, UI, and documentation

@@ -48,6 +48,8 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/posts/{id}/history", s.require("viewer", s.handleHistory))
 	mux.HandleFunc("GET /api/v1/survey", s.require("viewer", s.handleSurvey))
 	mux.HandleFunc("POST /api/v1/rules", s.require("operator", s.handleCreateRule))
+	mux.HandleFunc("GET /api/v1/rules", s.require("viewer", s.handleListRules))
+	mux.HandleFunc("POST /api/v1/rules/{id}/enabled", s.require("operator", s.handleSetRuleEnabled))
 	mux.HandleFunc("GET /api/v1/alerts", s.require("viewer", s.handleListAlerts))
 	mux.HandleFunc("POST /api/v1/alerts/{id}/acknowledge", s.require("operator", s.handleAcknowledge))
 	mux.HandleFunc("POST /api/v1/notification-routes", s.require("admin", s.handleCreateRoute))
@@ -418,6 +420,27 @@ func (s *Server) handleCreateRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(201)
+}
+func (s *Server) handleListRules(w http.ResponseWriter, r *http.Request) {
+	items, err := s.rules.ListRules(r.Context())
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": "list rules failed"})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"rules": items})
+}
+func (s *Server) handleSetRuleEnabled(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Enabled bool `json:"enabled"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	if err := s.rules.SetEnabled(r.Context(), r.PathValue("id"), in.Enabled); err != nil {
+		writeJSON(w, 404, map[string]string{"error": err.Error()})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 func (s *Server) handleCreateRoute(w http.ResponseWriter, r *http.Request) {
 	var route notify.Route

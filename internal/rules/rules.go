@@ -16,6 +16,38 @@ type Rule struct {
 	MissingPolicy, Severity      string
 	Enabled                      bool
 }
+
+func (e *Engine) ListRules(ctx context.Context) ([]Rule, error) {
+	rows, err := e.s.DB.QueryContext(ctx, `SELECT id,post_id,signal,operator,threshold,duration_seconds,recovery_threshold,missing_policy,severity,enabled FROM rules ORDER BY post_id,id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Rule{}
+	for rows.Next() {
+		var item Rule
+		var seconds int64
+		if err = rows.Scan(&item.ID, &item.PostID, &item.Signal, &item.Operator, &item.Threshold, &seconds, &item.RecoveryThreshold, &item.MissingPolicy, &item.Severity, &item.Enabled); err != nil {
+			return nil, err
+		}
+		item.Duration = time.Duration(seconds) * time.Second
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (e *Engine) SetEnabled(ctx context.Context, id string, enabled bool) error {
+	result, err := e.s.DB.ExecContext(ctx, `UPDATE rules SET enabled=?,version=version+1 WHERE id=?`, enabled, id)
+	if err != nil {
+		return err
+	}
+	n, _ := result.RowsAffected()
+	if n != 1 {
+		return errors.New("rule not found")
+	}
+	return nil
+}
+
 type Alert struct {
 	ID                  int64  `json:"id"`
 	RuleID              string `json:"rule_id"`
