@@ -2,7 +2,7 @@
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
-const state = { csrf: "", user: null, posts: [], collectors: [], alerts: [], incidents: [], agentRequests: [], postLimit: 50 };
+const state = { csrf: "", user: null, posts: [], collectors: [], agentConnections: [], alerts: [], incidents: [], agentRequests: [], postLimit: 50 };
 const routes = new Set(["overview", "survey", "posts", "edit-post", "enroll", "collectors", "checks", "history", "rules", "evidence", "investigate", "actions", "incidents", "devices", "fleet"]);
 
 async function request(path, options = {}) {
@@ -57,13 +57,14 @@ async function enterApp(session) {
 
 async function loadCore() {
   $("#summary").innerHTML = stateBox("Loading workspace", "Collecting the latest operational state.", "loading");
-  const results = await Promise.allSettled([request("/api/v1/posts"), request("/api/v1/alerts"), request("/api/v1/incidents"), request("/api/v1/collectors"), request("/api/v1/agent-pairing-requests")]);
+  const results = await Promise.allSettled([request("/api/v1/posts"), request("/api/v1/alerts"), request("/api/v1/incidents"), request("/api/v1/collectors"), request("/api/v1/agent-pairing-requests"), request("/api/v1/agent-connections")]);
   const failures = results.filter(result => result.status === "rejected");
   state.posts = results[0].status === "fulfilled" ? results[0].value.posts : [];
   state.alerts = results[1].status === "fulfilled" ? results[1].value.alerts : [];
   state.incidents = results[2].status === "fulfilled" ? results[2].value.incidents : [];
   state.collectors = results[3].status === "fulfilled" ? results[3].value.collectors : [];
   state.agentRequests = results[4].status === "fulfilled" ? results[4].value : [];
+  state.agentConnections = results[5].status === "fulfilled" ? results[5].value.connections : [];
   updatePostSelects(); renderOverview(); renderPosts(); renderIncidents(); renderCollectorHealth(); renderAgentRequests();
   if (failures.length) showMessage(`${failures.length} workspace section${failures.length === 1 ? "" : "s"} could not be loaded. Available data is still shown.`, "error");
 }
@@ -128,7 +129,9 @@ async function renderSurvey() {
 
 function postRow(post) {
   const stale = post.archived ? "Archived" : post.maintenance ? "Maintenance" : "Active";
-  return `<article class="post-row" data-post-id="${escapeHTML(post.id)}"><div><h3>${escapeHTML(post.name)}</h3><p>${escapeHTML(title(post.kind))} · <code>${escapeHTML(post.id)}</code>${post.address ? ` · ${escapeHTML(post.address)}` : ""} <span class="badge">${stale}</span></p></div><div class="row-actions"><button class="quiet-button" type="button" data-post-action="edit">Edit</button>${post.kind === "host" ? `<button class="quiet-button" type="button" data-post-action="connect">Connect</button>` : ""}<button class="quiet-button" type="button" data-post-action="maintenance">${post.maintenance ? "End maintenance" : "Start maintenance"}</button><button class="quiet-button" type="button" data-post-action="archive">${post.archived ? "Restore" : "Archive"}</button></div></article>`;
+  const connections=state.agentConnections.filter(item=>item.post_id===post.id),connection=connections[0];
+  const monitoring=connection?`<span class="badge ${["offline","rejected"].includes(connection.status)?"danger":connection.status==="healthy"?"":"warning"}">Agent · ${escapeHTML(title(connection.status))}</span>`:post.kind==="host"?`<span class="badge warning">No agent</span>`:"";
+  return `<article class="post-row" data-post-id="${escapeHTML(post.id)}"><div><h3>${escapeHTML(post.name)}</h3><p>${escapeHTML(title(post.kind))} · <code>${escapeHTML(post.id)}</code>${post.address ? ` · ${escapeHTML(post.address)}` : ""} <span class="badge">${stale}</span> ${monitoring}</p>${connection?`<p>${escapeHTML(connection.hostname)} · ${escapeHTML(connection.platform)} · ${connections.length} agent connection${connections.length===1?"":"s"}</p>`:""}</div><div class="row-actions"><button class="quiet-button" type="button" data-post-action="edit">Edit</button>${post.kind === "host"&&!connection ? `<button class="quiet-button" type="button" data-post-action="connect">Connect</button>` : ""}<button class="quiet-button" type="button" data-post-action="maintenance">${post.maintenance ? "End maintenance" : "Start maintenance"}</button><button class="quiet-button" type="button" data-post-action="archive">${post.archived ? "Restore" : "Archive"}</button></div></article>`;
 }
 
 function renderPosts() {

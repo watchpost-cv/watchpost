@@ -29,6 +29,9 @@ post enrollment, an administrator can select an existing post or create a host
 post from the request, and approval allows the agent to deliver its immediate
 CPU, memory, filesystem and uptime sample. Agent connections remain monitoring
 details beneath posts rather than duplicate inventory rows.
+WP-A07 adds authenticated connection inventory and renders agent identity and
+health inside each post row. “Collector” remains an implementation/API
+compatibility term; it must not return as separate user-facing inventory.
 The authoritative gap inventory is
 `docs/implementation-reconciliation.md`; do not restore the former claim that
 WP00–WP18 are implemented.

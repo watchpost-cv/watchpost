@@ -48,6 +48,8 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/agent/v2/pairing-requests", s.handleAgentPairingRequest)
 	mux.HandleFunc("GET /api/agent/v2/pairing-requests/{id}", s.handleAgentPairingPoll)
 	mux.HandleFunc("GET /api/v1/agent-pairing-requests", s.require("viewer", s.handleListAgentPairingRequests))
+	mux.HandleFunc("GET /api/v1/agent-connections", s.require("viewer", s.handleListAgentConnections))
+	mux.HandleFunc("GET /api/v1/posts/{id}/agent-connections", s.require("viewer", s.handleListPostAgentConnections))
 	mux.HandleFunc("POST /api/v1/agent-pairing-requests/{id}/approve", s.require("admin", s.handleApproveAgentPairingRequest))
 	mux.HandleFunc("POST /api/v1/agent-pairing-requests/{id}/reject", s.require("admin", s.handleRejectAgentPairingRequest))
 	mux.HandleFunc("POST /api/v1/observations", s.handleObservation)
@@ -128,6 +130,22 @@ func (s *Server) handleListAgentPairingRequests(w http.ResponseWriter, r *http.R
 		return
 	}
 	writeJSON(w, 200, result)
+}
+func (s *Server) handleListAgentConnections(w http.ResponseWriter, r *http.Request) {
+	result, err := s.agentPairing.Connections(r.Context(), "")
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": "agent connections unavailable"})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"connections": result})
+}
+func (s *Server) handleListPostAgentConnections(w http.ResponseWriter, r *http.Request) {
+	result, err := s.agentPairing.Connections(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": "agent connections unavailable"})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"connections": result})
 }
 func (s *Server) handleApproveAgentPairingRequest(w http.ResponseWriter, r *http.Request) {
 	var input struct {

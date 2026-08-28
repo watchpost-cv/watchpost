@@ -15,6 +15,10 @@ WP-A07–WP-A18 then move agent state beneath posts, add configurable local
 collectors, dense policy-aware visualisation, non-host methods, lifecycle,
 packaging, scale and recovery evidence.
 
+The detailed sibling plan is authoritative. WP-A07 is complete: authenticated
+connection APIs and post inventory now expose agents as monitoring details
+beneath their post, including explicit health, without creating duplicate posts.
+
 Status: original WP00–WP18 implementation claims were reconciled on 2026-08-28.
 The codebase contains useful foundations and a proven Linux host loop. The
 active recovery programme now continues through WP16R below. Original

@@ -41,6 +41,17 @@ type Enrollment struct {
 	Credential  string `json:"credential,omitempty"`
 }
 
+type Connection struct {
+	InstallationID string     `json:"installation_id"`
+	PostID         string     `json:"post_id"`
+	Hostname       string     `json:"hostname"`
+	Platform       string     `json:"platform"`
+	AgentVersion   string     `json:"agent_version"`
+	CreatedAt      time.Time  `json:"created_at"`
+	LastSeenAt     *time.Time `json:"last_seen_at,omitempty"`
+	Status         string     `json:"status"`
+}
+
 func New(s *store.Store) *Service { return &Service{s: s, now: time.Now} }
 
 func (s *Service) Create(ctx context.Context, installationID, secret, hostname, platform, version string) (Request, error) {
@@ -89,6 +100,51 @@ func (s *Service) List(ctx context.Context) ([]Request, error) {
 		value.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 		if value.State == "pending" && !s.now().UTC().Before(value.ExpiresAt) {
 			value.State = "expired"
+		}
+		result = append(result, value)
+	}
+	return result, rows.Err()
+}
+
+func (s *Service) Connections(ctx context.Context, postID string) ([]Connection, error) {
+	query := `SELECT a.installation_id,a.post_id,a.hostname,a.platform,a.agent_version,a.created_at,c.last_seen_at,c.last_error,c.revoked_at FROM agent_connections a JOIN collector_keys c ON c.id=a.installation_id WHERE a.revoked_at IS NULL`
+	arguments := []any{}
+	if postID != "" {
+		query += ` AND a.post_id=?`
+		arguments = append(arguments, postID)
+	}
+	query += ` ORDER BY a.hostname,a.installation_id`
+	rows, err := s.s.DB.QueryContext(ctx, query, arguments...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := []Connection{}
+	now := s.now().UTC()
+	for rows.Next() {
+		var value Connection
+		var created string
+		var seen, lastError, revoked sql.NullString
+		if err = rows.Scan(&value.InstallationID, &value.PostID, &value.Hostname, &value.Platform, &value.AgentVersion, &created, &seen, &lastError, &revoked); err != nil {
+			return nil, err
+		}
+		value.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+		value.Status = "never_connected"
+		if revoked.Valid {
+			value.Status = "revoked"
+		} else if lastError.Valid && lastError.String != "" {
+			value.Status = "rejected"
+		} else if seen.Valid {
+			parsed, _ := time.Parse(time.RFC3339Nano, seen.String)
+			value.LastSeenAt = &parsed
+			since := now.Sub(parsed)
+			if since <= 2*time.Minute {
+				value.Status = "healthy"
+			} else if since <= 5*time.Minute {
+				value.Status = "stale"
+			} else {
+				value.Status = "offline"
+			}
 		}
 		result = append(result, value)
 	}
