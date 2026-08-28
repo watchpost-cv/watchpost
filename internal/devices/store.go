@@ -71,3 +71,14 @@ func (p *ProfileStore) List(ctx context.Context) ([]SavedProfile, error) {
 	}
 	return items, rows.Err()
 }
+func (p *ProfileStore) Delete(ctx context.Context, id string) error {
+	result, err := p.s.DB.ExecContext(ctx, `DELETE FROM device_profiles WHERE id=?`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := result.RowsAffected()
+	if n != 1 {
+		return errors.New("device profile not found")
+	}
+	return nil
+}

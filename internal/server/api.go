@@ -91,6 +91,8 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/devices/snmp/poll", s.require("operator", s.handleSNMPPoll))
 	mux.HandleFunc("POST /api/v1/device-profiles", s.require("operator", s.handleSaveDeviceProfile))
 	mux.HandleFunc("GET /api/v1/device-profiles", s.require("viewer", s.handleListDeviceProfiles))
+	mux.HandleFunc("DELETE /api/v1/device-profiles/{id}", s.require("operator", s.handleDeleteDeviceProfile))
+	mux.HandleFunc("GET /api/v1/device-adapters", s.require("viewer", s.handleListDeviceAdapters))
 }
 
 func (s *Server) handleAgentPairingRequest(w http.ResponseWriter, r *http.Request) {
@@ -944,6 +946,16 @@ func (s *Server) handleListDeviceProfiles(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, 200, map[string]any{"profiles": items})
+}
+func (s *Server) handleDeleteDeviceProfile(w http.ResponseWriter, r *http.Request) {
+	if err := s.devices.Delete(r.Context(), r.PathValue("id")); err != nil {
+		writeJSON(w, 404, map[string]string{"error": err.Error()})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+func (s *Server) handleListDeviceAdapters(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, map[string]any{"adapters": devices.Adapters()})
 }
 func (s *Server) handleSNMPPoll(w http.ResponseWriter, r *http.Request) {
 	var in struct {

@@ -26,6 +26,9 @@ pauseable; absent policy is labelled unknown rather than presented as healthy.
 WP-A13 is complete: durable per-post HTTP, TCP, TLS, DNS and ICMP schedules
 run centrally, retain bounded result facts, and remain a monitoring method
 beneath a post rather than creating agent or collector inventory.
+WP-A14 is complete: SNMPv3 authPriv is registered as an explicitly read-only
+device adapter. Successful tests save bounded post-owned profile metadata and
+OIDs, never passwords; operators can inspect or remove the monitoring method.
 
 Status: original WP00–WP18 implementation claims were reconciled on 2026-08-28.
 The codebase contains useful foundations and a proven Linux host loop. The
