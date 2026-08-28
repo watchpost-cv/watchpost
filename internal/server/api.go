@@ -71,6 +71,8 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/actions/{id}/approve", s.require("admin", s.handleApproveAction))
 	mux.HandleFunc("POST /api/v1/actions/{id}/execute", s.require("operator", s.handleExecuteAction))
 	mux.HandleFunc("POST /api/v1/peers", s.require("admin", s.handleEnrollPeer))
+	mux.HandleFunc("GET /api/v1/peers", s.require("viewer", s.handleListPeers))
+	mux.HandleFunc("POST /api/v1/peers/{id}/revoke", s.require("admin", s.handleRevokePeer))
 	mux.HandleFunc("POST /api/v1/federation/{peer}", s.handleFederation)
 	mux.HandleFunc("POST /api/v1/devices/snmp/poll", s.require("operator", s.handleSNMPPoll))
 	mux.HandleFunc("POST /api/v1/device-profiles", s.require("operator", s.handleSaveDeviceProfile))
@@ -751,6 +753,21 @@ func (s *Server) handleEnrollPeer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 201, map[string]string{"id": in.ID, "secret": secret})
+}
+func (s *Server) handleListPeers(w http.ResponseWriter, r *http.Request) {
+	items, err := s.fleet.List(r.Context())
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": "fleet status unavailable"})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"peers": items})
+}
+func (s *Server) handleRevokePeer(w http.ResponseWriter, r *http.Request) {
+	if err := s.fleet.Revoke(r.Context(), r.PathValue("id")); err != nil {
+		writeJSON(w, 409, map[string]string{"error": err.Error()})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 func (s *Server) handleFederation(w http.ResponseWriter, r *http.Request) {
 	secret := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")

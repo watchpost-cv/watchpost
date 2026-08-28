@@ -25,11 +25,13 @@ type Message struct {
 	Severity string `json:"severity"`
 }
 type RouteStatus struct {
-	ID                           string `json:"id"`
-	Kind                         string `json:"kind"`
-	Destination                  string `json:"destination"`
-	Enabled                      bool   `json:"enabled"`
-	Pending, Retrying, Delivered int    `json:"pending"`
+	ID          string `json:"id"`
+	Kind        string `json:"kind"`
+	Destination string `json:"destination"`
+	Enabled     bool   `json:"enabled"`
+	Pending     int    `json:"pending"`
+	Retrying    int    `json:"retrying"`
+	Delivered   int    `json:"delivered"`
 }
 
 func (s *Service) ListRoutes(ctx context.Context) ([]RouteStatus, error) {

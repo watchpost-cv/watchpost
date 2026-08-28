@@ -45,7 +45,8 @@ supporting evidence; it is not completion by itself.
 - **WP16R — operable fleet trust:** list, pair, revoke, and inspect peers and
   bounded store-and-forward state while each node remains useful alone.
 
-Progress: WP01R through WP08R complete. WP02R added a versioned, bounded, atomic
+Progress: WP01R through WP16R complete as recovery slices. These do not replace
+the broader original WP09–WP16 release gates retained below. WP02R added a versioned, bounded, atomic
 batch contract, contiguous acknowledgement semantics, compatibility/clock/
 quality validation, integration tests, and documented retry/freshness rules.
 WP03R added the supplied-binary Linux sampler for CPU, memory, root disk, load,
@@ -81,6 +82,9 @@ conversation post before the provider sees it.
 WP15R exposes bounded action request records including typed parameters, actor,
 independent approver, lifecycle timestamps, execution state, and verification
 result; no generic command or shell action is registered.
+WP16R exposes active/revoked peer trust, creation/revocation time, pending and
+delivered outbox work, received event counts, and an explicit admin revocation
+operation. Nodes remain locally useful and federation payloads remain bounded.
 
 Every monitored system, service, endpoint, application, or device is a
 **post**. This is the canonical schema, API, code, test, UI, and documentation
