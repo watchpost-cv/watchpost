@@ -184,6 +184,26 @@ func (s *Service) Revoke(ctx context.Context, installationID string) error {
 	}
 	return tx.Commit()
 }
+func (s *Service) Rotate(ctx context.Context, installationID, current string) (string, error) {
+	if installationID == "" || current == "" {
+		return "", errors.New("agent credential required")
+	}
+	old := sha256.Sum256([]byte(current))
+	credential, err := random(32)
+	if err != nil {
+		return "", err
+	}
+	next := sha256.Sum256([]byte(credential))
+	result, err := s.s.DB.ExecContext(ctx, `UPDATE collector_keys SET secret_hash=?,last_error='' WHERE id=? AND secret_hash=? AND revoked_at IS NULL`, next[:], installationID, old[:])
+	if err != nil {
+		return "", err
+	}
+	n, _ := result.RowsAffected()
+	if n != 1 {
+		return "", errors.New("agent credential rejected")
+	}
+	return credential, nil
+}
 
 func (s *Service) Decide(ctx context.Context, id, postID string, approve bool) error {
 	now := s.now().UTC()

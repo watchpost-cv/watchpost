@@ -32,6 +32,9 @@ OIDs, never passwords; operators can inspect or remove the monitoring method.
 WP-A15 is complete: bounded starter evidence profiles cover network devices,
 UPS/PDU equipment, environmental sensors and storage appliances. Every reading
 now carries quality, observation time and a finite freshness horizon.
+WP-A16 is complete: the agent supports atomic upgrades and credential rotation
+through web/CLI parity. Move requires explicit unpair and new approval; archive,
+delete, revoke, reset and uninstall retain distinct authority/data semantics.
 
 Status: original WP00–WP18 implementation claims were reconciled on 2026-08-28.
 The codebase contains useful foundations and a proven Linux host loop. The

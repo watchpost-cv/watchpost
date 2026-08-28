@@ -2,12 +2,39 @@ package agentpairing
 
 import (
 	"context"
+	"crypto/sha256"
 	"testing"
 	"time"
 
 	"github.com/watchpost-ops/watchpost/internal/posts"
 	"github.com/watchpost-ops/watchpost/internal/store"
 )
+
+func TestRotateCredentialInvalidatesPreviousSecret(t *testing.T) {
+	ctx := context.Background()
+	database, err := store.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	_, err = posts.New(database).Create(ctx, posts.Post{ID: "host-one", Name: "Host one", Kind: "host", Labels: map[string]string{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := sha256.Sum256([]byte("old-secret"))
+	_, err = database.DB.Exec(`INSERT INTO collector_keys(id,post_id,secret_hash) VALUES('install-1','host-one',?)`, old[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := New(database)
+	next, err := service.Rotate(ctx, "install-1", "old-secret")
+	if err != nil || next == "" {
+		t.Fatalf("rotate: %v", err)
+	}
+	if _, err = service.Rotate(ctx, "install-1", "old-secret"); err == nil {
+		t.Fatal("old credential still valid")
+	}
+}
 
 func TestConnectionsRemainDetailsBeneathPost(t *testing.T) {
 	ctx := context.Background()

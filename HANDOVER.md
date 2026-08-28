@@ -57,6 +57,9 @@ passwords remain transient. Successful tests save the method beneath its post.
 WP-A15 supplies bounded network, UPS/PDU, environment and storage presets.
 Vendor-neutral OIDs are prefilled where standards exist; vendor-specific
 environment/storage OIDs remain explicit. Readings carry quality and freshness.
+WP-A16 closes lifecycle ambiguity: upgrade preserves identity/state; rotation
+atomically invalidates the old credential; moving requires unpair and approval.
+Archive, permanent deletion, revoke, reset and uninstall remain separate.
 The authoritative gap inventory is
 `docs/implementation-reconciliation.md`; do not restore the former claim that
 WP00–WP18 are implemented.

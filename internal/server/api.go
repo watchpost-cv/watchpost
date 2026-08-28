@@ -46,6 +46,7 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/posts/{id}/pairing-tokens", s.require("admin", s.handleCreatePairingToken))
 	mux.HandleFunc("POST /api/collector/v1/pair", s.handlePairCollector)
 	mux.HandleFunc("POST /api/agent/v2/pairing-requests", s.handleAgentPairingRequest)
+	mux.HandleFunc("POST /api/agent/v2/rotate", s.handleRotateAgentCredential)
 	mux.HandleFunc("GET /api/agent/v2/pairing-requests/{id}", s.handleAgentPairingPoll)
 	mux.HandleFunc("GET /api/v1/agent-pairing-requests", s.require("viewer", s.handleListAgentPairingRequests))
 	mux.HandleFunc("GET /api/v1/agent-connections", s.require("viewer", s.handleListAgentConnections))
@@ -113,6 +114,15 @@ func (s *Server) handleAgentPairingRequest(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, 201, request)
+}
+func (s *Server) handleRotateAgentCredential(w http.ResponseWriter, r *http.Request) {
+	installation := r.Header.Get("X-Watchpost-Installation")
+	credential, err := s.agentPairing.Rotate(r.Context(), installation, agentpairing.Bearer(r.Header.Get("Authorization")))
+	if err != nil {
+		writeJSON(w, 401, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]string{"credential": credential})
 }
 
 func (s *Server) handleAgentPairingPoll(w http.ResponseWriter, r *http.Request) {
