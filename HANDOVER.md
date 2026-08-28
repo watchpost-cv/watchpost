@@ -63,6 +63,10 @@ Archive, permanent deletion, revoke, reset and uninstall remain separate.
 WP-A17 packages the currently supported Linux agent for amd64/arm64 with
 checksums, installer and tag workflow. The survey is regression-tested with
 500 posts and 20,000 observations; browser dogfood remains a release limit.
+WP-A18 closes this architecture programme as a local development candidate.
+Both repositories pass normal/race/vet/build gates and fail closed on corrupt
+state; Watchpost passes stopped-backup recovery. Accessibility foundations are
+tested, but external accessibility/security/platform review remains required.
 The authoritative gap inventory is
 `docs/implementation-reconciliation.md`; do not restore the former claim that
 WP00–WP18 are implemented.

@@ -57,3 +57,6 @@ textarea:focus,
   .survey-grid,.survey-controls { grid-template-columns: 1fr; }
   .survey-heading { display: block; }
 }
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,[tabindex]:focus-visible{outline:3px solid #f0f2ef;outline-offset:3px}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
+@media (forced-colors:active){.health-meter i,.health-state i{forced-color-adjust:none;border:1px solid CanvasText}.health-meter.safe i{background:Highlight}.health-meter.warning i{background:Mark}.health-meter.critical i{background:LinkText}}

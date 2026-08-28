@@ -39,6 +39,10 @@ WP-A17 is complete as a development packaging gate: the Linux agent produces
 amd64/arm64 archives and checksums, has a checksum-verifying user/system
 installer and tag workflow, while a 500-post/20,000-observation survey test
 proves the server-side response bound. This is not a production scale claim.
+WP-A18 is complete as a local hardening gate: normal/race/vet/build, corrupt
+state fail-closed tests, backup/restore drill, Nift builds, keyboard focus,
+reduced-motion and forced-colour fallbacks pass. Published limitations remain
+authoritative; this does not authorize a production release.
 
 Status: original WP00–WP18 implementation claims were reconciled on 2026-08-28.
 The codebase contains useful foundations and a proven Linux host loop. The
