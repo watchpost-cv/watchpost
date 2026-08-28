@@ -76,6 +76,12 @@ func TestDashboardUXContracts(t *testing.T) {
 			t.Errorf("stylesheet missing %s", required)
 		}
 	}
+	extra := read("/app-extra.css")
+	for _, required := range []string{"health-meter.safe", "health-meter.warning", "health-meter.critical", "grid-template-columns: repeat(2"} {
+		if !strings.Contains(extra, required) {
+			t.Errorf("dense survey stylesheet missing %s", required)
+		}
+	}
 }
 
 func TestBootstrapShowsOnlyRequiredAuthState(t *testing.T) {

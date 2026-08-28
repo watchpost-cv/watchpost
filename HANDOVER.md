@@ -41,6 +41,9 @@ contiguous ingestion contract remains the authority during replay.
 WP-A10 makes agent revocation an administrator operation and exposes the full
 connection health vocabulary beneath posts. Local unpair/reset remain agent
 operations because Watchpost cannot silently mutate software on another host.
+WP-A11 replaces graph-only survey cards with dense visual health bars, compact
+trends and accessible values. Safe is green, warning amber, critical red and
+unknown/stale grey or explicitly labelled; attention-first is the default order.
 The authoritative gap inventory is
 `docs/implementation-reconciliation.md`; do not restore the former claim that
 WP00–WP18 are implemented.
