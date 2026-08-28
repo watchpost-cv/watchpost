@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -37,6 +39,7 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/collectors", s.require("viewer", s.handleListCollectors))
 	mux.HandleFunc("GET /api/v1/posts/{id}", s.require("viewer", s.handleGetPost))
 	mux.HandleFunc("PUT /api/v1/posts/{id}", s.require("operator", s.handleUpdatePost))
+	mux.HandleFunc("DELETE /api/v1/posts/{id}", s.require("admin", s.handleDeletePost))
 	mux.HandleFunc("POST /api/v1/posts/{id}/dependencies", s.require("operator", s.handleAddDependency))
 	mux.HandleFunc("POST /api/v1/posts/{id}/collectors", s.require("admin", s.handleEnrollCollector))
 	mux.HandleFunc("POST /api/v1/posts/{id}/pairing-tokens", s.require("admin", s.handleCreatePairingToken))
@@ -221,6 +224,29 @@ func (s *Server) handleUpdatePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, post)
+}
+func (s *Server) handleDeletePost(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		ConfirmID string `json:"confirm_id"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	id := r.PathValue("id")
+	if in.ConfirmID != id {
+		writeJSON(w, 400, map[string]string{"error": "type the post ID to confirm permanent deletion"})
+		return
+	}
+	user := r.Context().Value(userContextKey{}).(auth.User)
+	if err := s.posts.Delete(r.Context(), id, user.ID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSON(w, 404, map[string]string{"error": "post not found"})
+			return
+		}
+		writeJSON(w, 500, map[string]string{"error": "delete post failed"})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 func (s *Server) handleAddDependency(w http.ResponseWriter, r *http.Request) {
 	var in struct {

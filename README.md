@@ -25,9 +25,13 @@ On Linux, inspect the host signals produced by the bundled collector sampler:
 ./watchpost collector sample
 ```
 
-For a monitored host, enroll the post in the SPA, generate its one-use pairing
-command, run that command on the host, and install the service. The collector
-then persists and delivers CPU, memory, disk, load, uptime, and health signals.
+For a monitored host, use **Add a machine or device** in the SPA. Record a
+hostname or IP for inventory and active checks, choose **Host**, then generate
+the one-use pairing commands. Set the Watchpost URL to an address reachable
+from that machine (remote machines cannot use `127.0.0.1`). Copy the compiled
+binary to the post, run the pairing commands there, and install the service.
+The collector initiates outbound delivery of CPU, memory, disk, load, uptime,
+and health signals; it does not expose an inbound management port.
 
 After pairing, install and inspect a per-user systemd collector service:
 
@@ -54,6 +58,11 @@ go run ./cmd/watchpost
 
 The early `./watchpost serve` form remains accepted for compatibility, but the
 subcommand is no longer required.
+
+Posts can be edited from **Posts → Edit**. Archiving preserves history;
+permanent deletion is an administrator-only, ID-confirmed operation that also
+removes the post's credentials, telemetry, rules, alerts, logs, and scoped
+investigation records.
 
 The default listener is `127.0.0.1:8080`. Command-line options override
 `WATCHPOST_LISTEN` and `WATCHPOST_DATA_DIR`; defaults apply below both.

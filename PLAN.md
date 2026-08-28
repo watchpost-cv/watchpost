@@ -96,6 +96,11 @@ endpoint, and proves a post survives upgrade and rollback. HTTPS proxy mode
 sets Secure session cookies explicitly and is documented for Caddy and nginx.
 WP18R composes normal/race/vet/fuzz validation with release, two-process host,
 stopped-backup recovery/corruption, and bounded server-plus-collector soak
+evidence. A post-lifecycle usability repair subsequently added first-class
+address/hostname inventory, an explicit outbound collector pairing URL, post
+editing, and confirmed permanent deletion. A per-post configuration web server
+remains deliberately out of scope: it would add an inbound attack surface;
+future local diagnostics should remain read-only and opt-in.
 gates. Remaining platform, scheduling, UI, federation, backup, capacity, model,
 and external-review limits are published in `RELEASE_LIMITATIONS.md`.
 

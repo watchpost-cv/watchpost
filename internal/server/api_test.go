@@ -60,6 +60,42 @@ func TestSetupLoginCSRFAndPostAPI(t *testing.T) {
 	}
 }
 
+func TestPostEditAndConfirmedDeleteAPI(t *testing.T) {
+	handler := testServer(t).Handler()
+	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"email": "admin@example.com", "password": "1234567"}, nil, "")
+	login := apiRequest(t, handler, "POST", "/api/v1/login", map[string]string{"email": "admin@example.com", "password": "1234567"}, nil, "")
+	cookie := login.Result().Cookies()[0]
+	var session struct {
+		CSRF string `json:"csrf_token"`
+	}
+	_ = json.Unmarshal(login.Body.Bytes(), &session)
+	created := apiRequest(t, handler, "POST", "/api/v1/posts", map[string]any{"id": "this-machine", "name": "This machine", "kind": "host", "address": "127.0.0.1", "labels": map[string]string{}}, cookie, session.CSRF)
+	if created.Code != 201 {
+		t.Fatalf("create: %d %s", created.Code, created.Body.String())
+	}
+	var post posts.Post
+	_ = json.Unmarshal(created.Body.Bytes(), &post)
+	post.Name = "Local machine"
+	data, _ := json.Marshal(post)
+	request := httptest.NewRequest("PUT", "/api/v1/posts/this-machine", bytes.NewReader(data))
+	request.AddCookie(cookie)
+	request.Header.Set("X-Watchpost-CSRF", session.CSRF)
+	request.Header.Set("If-Match", "1")
+	updated := httptest.NewRecorder()
+	handler.ServeHTTP(updated, request)
+	if updated.Code != 200 || !bytes.Contains(updated.Body.Bytes(), []byte("Local machine")) {
+		t.Fatalf("update: %d %s", updated.Code, updated.Body.String())
+	}
+	wrong := apiRequest(t, handler, "DELETE", "/api/v1/posts/this-machine", map[string]string{"confirm_id": "wrong"}, cookie, session.CSRF)
+	if wrong.Code != 400 {
+		t.Fatalf("wrong confirmation: %d", wrong.Code)
+	}
+	deleted := apiRequest(t, handler, "DELETE", "/api/v1/posts/this-machine", map[string]string{"confirm_id": "this-machine"}, cookie, session.CSRF)
+	if deleted.Code != 204 {
+		t.Fatalf("delete: %d %s", deleted.Code, deleted.Body.String())
+	}
+}
+
 func TestSecureCookieBehindHTTPSProxy(t *testing.T) {
 	s := testServer(t)
 	s.cfg.SecureCookies = true

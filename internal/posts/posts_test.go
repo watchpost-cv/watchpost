@@ -13,7 +13,7 @@ func TestCRUDConcurrencyAndCycles(t *testing.T) {
 	}
 	defer s.Close()
 	p := New(s)
-	a, e := p.Create(context.Background(), Post{ID: "host-a", Name: "A", Kind: "host", Labels: map[string]string{"env": "test"}})
+	a, e := p.Create(context.Background(), Post{ID: "host-a", Name: "A", Kind: "host", Address: "192.0.2.10", Labels: map[string]string{"env": "test"}})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -22,8 +22,9 @@ func TestCRUDConcurrencyAndCycles(t *testing.T) {
 		t.Fatal(e)
 	}
 	a.Name = "A2"
+	a.Address = "host-a.example"
 	a, e = p.Update(context.Background(), a, a.Version)
-	if e != nil || a.Version != 2 {
+	if e != nil || a.Version != 2 || a.Address != "host-a.example" {
 		t.Fatalf("%#v %v", a, e)
 	}
 	if _, e = p.Update(context.Background(), a, 1); e == nil {
@@ -34,5 +35,11 @@ func TestCRUDConcurrencyAndCycles(t *testing.T) {
 	}
 	if e = p.AddDependency(context.Background(), "host-b", "host-a"); e == nil {
 		t.Fatal("cycle accepted")
+	}
+	if e = p.Delete(context.Background(), "host-a", nil); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = p.Get(context.Background(), "host-a"); e == nil {
+		t.Fatal("deleted post still exists")
 	}
 }

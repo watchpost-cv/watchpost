@@ -5,6 +5,12 @@ recovery programme is closed as a local Linux development candidate, not a
 public production release. `hardening/complete-gate.sh` is authoritative and
 `RELEASE_LIMITATIONS.md` must accompany release decisions. Do not regress the
 guided enrollment-to-confirmation flow.
+Host enrollment records an optional address or hostname, then pairs the
+bundled collector using an explicit Watchpost URL reachable from the post. The
+collector is outbound-only. Post editing is optimistic-concurrency protected;
+permanent deletion is administrator-only, requires the exact post ID, is
+audited, and removes post-scoped evidence and credentials. Preserve the clear
+archive-versus-delete distinction.
 The authoritative gap inventory is
 `docs/implementation-reconciliation.md`; do not restore the former claim that
 WP00–WP18 are implemented.

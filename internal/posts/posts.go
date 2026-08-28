@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/watchpost-ops/watchpost/internal/store"
@@ -18,6 +19,7 @@ type Post struct {
 	ID          string            `json:"id"`
 	Name        string            `json:"name"`
 	Kind        string            `json:"kind"`
+	Address     string            `json:"address"`
 	Owner       string            `json:"owner"`
 	Labels      map[string]string `json:"labels"`
 	Maintenance bool              `json:"maintenance"`
@@ -28,7 +30,7 @@ type Store struct{ s *store.Store }
 
 func New(s *store.Store) *Store { return &Store{s: s} }
 func (s *Store) Create(ctx context.Context, p Post) (Post, error) {
-	if !idPattern.MatchString(p.ID) || len(p.Name) < 1 || len(p.Name) > 120 || !kinds[p.Kind] || len(p.Labels) > 32 {
+	if !valid(p) {
 		return Post{}, errors.New("invalid post")
 	}
 	for k, v := range p.Labels {
@@ -38,7 +40,7 @@ func (s *Store) Create(ctx context.Context, p Post) (Post, error) {
 	}
 	labels, _ := json.Marshal(p.Labels)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	_, err := s.s.DB.ExecContext(ctx, `INSERT INTO posts(id,name,kind,owner,labels_json,maintenance,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`, p.ID, p.Name, p.Kind, p.Owner, string(labels), p.Maintenance, now, now)
+	_, err := s.s.DB.ExecContext(ctx, `INSERT INTO posts(id,name,kind,address,owner,labels_json,maintenance,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`, p.ID, p.Name, p.Kind, p.Address, p.Owner, string(labels), p.Maintenance, now, now)
 	if err != nil {
 		return Post{}, err
 	}
@@ -47,7 +49,7 @@ func (s *Store) Create(ctx context.Context, p Post) (Post, error) {
 func (s *Store) Get(ctx context.Context, id string) (Post, error) {
 	var p Post
 	var labels string
-	err := s.s.DB.QueryRowContext(ctx, `SELECT id,name,kind,owner,labels_json,maintenance,archived,version FROM posts WHERE id=?`, id).Scan(&p.ID, &p.Name, &p.Kind, &p.Owner, &labels, &p.Maintenance, &p.Archived, &p.Version)
+	err := s.s.DB.QueryRowContext(ctx, `SELECT id,name,kind,address,owner,labels_json,maintenance,archived,version FROM posts WHERE id=?`, id).Scan(&p.ID, &p.Name, &p.Kind, &p.Address, &p.Owner, &labels, &p.Maintenance, &p.Archived, &p.Version)
 	if err != nil {
 		return Post{}, err
 	}
@@ -57,7 +59,7 @@ func (s *Store) Get(ctx context.Context, id string) (Post, error) {
 	return p, nil
 }
 func (s *Store) List(ctx context.Context) ([]Post, error) {
-	rows, err := s.s.DB.QueryContext(ctx, `SELECT id,name,kind,owner,labels_json,maintenance,archived,version FROM posts ORDER BY name,id`)
+	rows, err := s.s.DB.QueryContext(ctx, `SELECT id,name,kind,address,owner,labels_json,maintenance,archived,version FROM posts ORDER BY name,id`)
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +68,7 @@ func (s *Store) List(ctx context.Context) ([]Post, error) {
 	for rows.Next() {
 		var p Post
 		var labels string
-		if err := rows.Scan(&p.ID, &p.Name, &p.Kind, &p.Owner, &labels, &p.Maintenance, &p.Archived, &p.Version); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Kind, &p.Address, &p.Owner, &labels, &p.Maintenance, &p.Archived, &p.Version); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(labels), &p.Labels); err != nil {
@@ -77,8 +79,11 @@ func (s *Store) List(ctx context.Context) ([]Post, error) {
 	return result, rows.Err()
 }
 func (s *Store) Update(ctx context.Context, p Post, expected int) (Post, error) {
+	if !valid(p) {
+		return Post{}, errors.New("invalid post")
+	}
 	labels, _ := json.Marshal(p.Labels)
-	r, err := s.s.DB.ExecContext(ctx, `UPDATE posts SET name=?,owner=?,labels_json=?,maintenance=?,archived=?,version=version+1,updated_at=? WHERE id=? AND version=?`, p.Name, p.Owner, string(labels), p.Maintenance, p.Archived, time.Now().UTC().Format(time.RFC3339Nano), p.ID, expected)
+	r, err := s.s.DB.ExecContext(ctx, `UPDATE posts SET name=?,address=?,owner=?,labels_json=?,maintenance=?,archived=?,version=version+1,updated_at=? WHERE id=? AND version=?`, p.Name, p.Address, p.Owner, string(labels), p.Maintenance, p.Archived, time.Now().UTC().Format(time.RFC3339Nano), p.ID, expected)
 	if err != nil {
 		return Post{}, err
 	}
@@ -87,6 +92,57 @@ func (s *Store) Update(ctx context.Context, p Post, expected int) (Post, error) 
 		return Post{}, errors.New("post version conflict")
 	}
 	return s.Get(ctx, p.ID)
+}
+
+func valid(p Post) bool {
+	if !idPattern.MatchString(p.ID) || len(p.Name) < 1 || len(p.Name) > 120 || len(p.Address) > 255 || !kinds[p.Kind] || len(p.Labels) > 32 {
+		return false
+	}
+	for k, v := range p.Labels {
+		if len(k) > 63 || len(v) > 255 {
+			return false
+		}
+	}
+	return true
+}
+
+// Delete permanently removes a post and all evidence and credentials scoped to it.
+func (s *Store) Delete(ctx context.Context, id string, actorID any) error {
+	tx, err := s.s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var exists int
+	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM posts WHERE id=?`, id).Scan(&exists); err != nil {
+		return err
+	}
+	if exists == 0 {
+		return sql.ErrNoRows
+	}
+	statements := []string{
+		`DELETE FROM conversation_messages WHERE conversation_id IN (SELECT id FROM conversations WHERE post_id=?)`, `DELETE FROM conversations WHERE post_id=?`, `DELETE FROM action_requests WHERE post_id=?`,
+		`DELETE FROM device_profile_oids WHERE profile_id IN (SELECT id FROM device_profiles WHERE post_id=?)`, `DELETE FROM device_profiles WHERE post_id=?`,
+		`DELETE FROM notification_deliveries WHERE alert_id IN (SELECT id FROM alerts WHERE post_id=?)`, `DELETE FROM incident_alerts WHERE alert_id IN (SELECT id FROM alerts WHERE post_id=?)`,
+		`DELETE FROM alerts WHERE post_id=?`, `DELETE FROM rules WHERE post_id=?`, `DELETE FROM observations WHERE post_id=?`, `DELETE FROM collector_pairing_tokens WHERE post_id=?`,
+		`DELETE FROM collector_keys WHERE post_id=?`, `DELETE FROM logs WHERE post_id=?`, `DELETE FROM changes WHERE post_id=?`, `DELETE FROM post_dependencies WHERE post_id=? OR depends_on_id=?`,
+	}
+	for _, statement := range statements {
+		args := []any{id}
+		if strings.Contains(statement, " OR depends_on_id") {
+			args = append(args, id)
+		}
+		if _, err = tx.ExecContext(ctx, statement, args...); err != nil {
+			return err
+		}
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM posts WHERE id=?`, id); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO audit(at,actor_user_id,action,object_type,object_id,detail) VALUES(?,?,'delete','post',?,'permanent deletion confirmed')`, time.Now().UTC().Format(time.RFC3339Nano), actorID, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func (s *Store) AddDependency(ctx context.Context, id, depends string) error {
 	if id == depends {
