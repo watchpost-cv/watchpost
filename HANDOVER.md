@@ -1,7 +1,8 @@
 # Watchpost engineering handover
 
-Current execution: WP01R and WP02R are complete as of 2026-08-28. WP03R is
-next. Collector protocol v1 is documented in `docs/monitoring-contracts.md`.
+Current execution: WP01R through WP03R are complete as of 2026-08-28. WP04R is
+next. `watchpost collector sample` now exercises the real Linux sampler;
+pairing and delivery are not complete until WP04R/WP06R.
 The authoritative gap inventory is
 `docs/implementation-reconciliation.md`; do not restore the former claim that
 WP00–WP18 are implemented.

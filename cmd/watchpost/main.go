@@ -2,14 +2,17 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/watchpost-ops/watchpost/internal/config"
+	"github.com/watchpost-ops/watchpost/internal/hostcollector"
 	"github.com/watchpost-ops/watchpost/internal/server"
 	"github.com/watchpost-ops/watchpost/internal/store"
 )
@@ -24,6 +27,9 @@ func main() {
 }
 
 func run(args []string) error {
+	if len(args) > 0 && args[0] == "collector" {
+		return runCollector(args[1:])
+	}
 	// Serving is Watchpost's primary operation, matching Warden, Cortex, and
 	// Trestle: a built binary starts with ./watchpost. Keep `serve` as a
 	// backwards-compatible alias for scripts written during early development.
@@ -53,4 +59,17 @@ func run(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return app.Run(ctx)
+}
+
+func runCollector(args []string) error {
+	if len(args) != 1 || args[0] != "sample" {
+		return fmt.Errorf("usage: watchpost collector sample")
+	}
+	samples, err := hostcollector.New().Sample(context.Background(), 250*time.Millisecond)
+	if err != nil {
+		return fmt.Errorf("sample host: %w", err)
+	}
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(map[string]any{"version": 1, "samples": samples})
 }

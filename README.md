@@ -19,6 +19,15 @@ go build -o watchpost ./cmd/watchpost
 ./watchpost
 ```
 
+On Linux, inspect the host signals produced by the bundled collector sampler:
+
+```sh
+./watchpost collector sample
+```
+
+This sampling command does not yet pair or deliver telemetry; those lifecycle
+commands are introduced by WP04R–WP06R.
+
 For source-tree development without keeping a binary:
 
 ```sh
