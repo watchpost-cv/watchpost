@@ -1,5 +1,10 @@
 # Watchpost engineering handover
 
+Current execution: WP01R completed the honest implementation reconciliation on
+2026-08-28. WP02R is next. The authoritative gap inventory is
+`docs/implementation-reconciliation.md`; do not restore the former claim that
+WP00–WP18 are implemented.
+
 Watchpost is an open-source, web-based monitoring and operations platform with
 an agent designed into the product from the beginning. It is intended to become
 a practical alternative to traditional infrastructure monitoring suites, not a

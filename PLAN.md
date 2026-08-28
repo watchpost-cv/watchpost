@@ -1,8 +1,33 @@
 # Watchpost development checkpoints
 
-Status: WP00 through WP18 implemented as a development candidate. WP18 does not
-authorize or claim a public release; external real-platform, long-duration,
-upgrade, and independent security evidence remains required before tagging.
+Status: original WP00–WP18 implementation claims were reconciled on 2026-08-28.
+The codebase contains useful foundations, but it is not yet a functioning
+end-to-end monitoring product. The active recovery programme is WP01R–WP08R
+below. Original checkpoints are retained as design history, not completion
+claims. See `docs/implementation-reconciliation.md`.
+
+## Active recovery programme
+
+These checkpoints are outcome gates. A package, endpoint, table, or form is
+supporting evidence; it is not completion by itself.
+
+- **WP01R — honest reconciliation:** inventory complete, partial, misleading,
+  and absent behaviour; align UI, website, plan, and handovers.
+- **WP02R — collector contract:** freeze and test identity, pairing,
+  observations, sequencing, time, compatibility, retries, and freshness.
+- **WP03R — Linux collector:** ship real CPU, memory, disk, load, uptime, and
+  collector-health sampling in the supplied binary.
+- **WP04R — secure pairing:** short-lived one-use token creates collector
+  identity and writes local configuration without manual secret copying.
+- **WP05R — service lifecycle:** install/run/status/logs/uninstall using systemd
+  with restrictive configuration and credential permissions.
+- **WP06R — reliable delivery:** restart-safe sequence state, bounded disk
+  buffer, exponential backoff, ordered replay, deduplication, and visible loss.
+- **WP07R — health semantics:** healthy, stale, offline, skewed, rejected,
+  partial, and never-connected are explicit and absence is never zero.
+- **WP08R — complete host journey:** guided creation/pairing/confirmation,
+  default dashboards and starter rules, proven with separate server and
+  collector processes across restart.
 
 Every monitored system, service, endpoint, application, or device is a
 **post**. This is the canonical schema, API, code, test, UI, and documentation
