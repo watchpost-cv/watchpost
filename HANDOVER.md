@@ -35,6 +35,9 @@ compatibility term; it must not return as separate user-facing inventory.
 WP-A08 lives in the agent repository: its website and CLI share a validated,
 atomic local collector profile covering CPU, memory, load, uptime, bounded
 filesystem paths and collection interval.
+WP-A09 adds the standalone agent's restart-safe 256-batch/8-MiB ordered queue,
+bounded retry state and explicit skipped-collection accounting. Watchpost's
+contiguous ingestion contract remains the authority during replay.
 The authoritative gap inventory is
 `docs/implementation-reconciliation.md`; do not restore the former claim that
 WP00–WP18 are implemented.
