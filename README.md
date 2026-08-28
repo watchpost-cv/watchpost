@@ -28,6 +28,19 @@ On Linux, inspect the host signals produced by the bundled collector sampler:
 This sampling command does not yet pair or deliver telemetry; those lifecycle
 commands are introduced by WP04R–WP06R.
 
+After pairing, install and inspect a per-user systemd collector service:
+
+```sh
+./watchpost collector install
+./watchpost collector status
+./watchpost collector logs
+./watchpost collector uninstall
+```
+
+Use `--system` as root for an explicit machine-wide service. The installer
+copies the binary to a stable location; it does not depend on the downloaded
+binary remaining in the current directory.
+
 For source-tree development without keeping a binary:
 
 ```sh

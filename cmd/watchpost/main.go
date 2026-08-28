@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/watchpost-ops/watchpost/internal/collectorclient"
+	"github.com/watchpost-ops/watchpost/internal/collectorservice"
 	"github.com/watchpost-ops/watchpost/internal/config"
 	"github.com/watchpost-ops/watchpost/internal/hostcollector"
 	"github.com/watchpost-ops/watchpost/internal/server"
@@ -92,7 +94,72 @@ func runCollector(args []string) error {
 		fmt.Fprintf(os.Stdout, "Paired collector %s with post %s.\nConfiguration: %s\n", config.CollectorID, config.PostID, *configPath)
 		return nil
 	}
-	return fmt.Errorf("usage: watchpost collector {sample|pair}")
+	if len(args) > 0 && args[0] == "run" {
+		return runCollectorLoop(args[1:])
+	}
+	if len(args) > 0 && map[string]bool{"install": true, "status": true, "logs": true, "uninstall": true}[args[0]] {
+		action := args[0]
+		fs := flag.NewFlagSet("watchpost collector "+action, flag.ContinueOnError)
+		system := fs.Bool("system", false, "manage a system-wide collector service")
+		configPath := fs.String("config", "", "collector configuration path")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if fs.NArg() != 0 {
+			return fmt.Errorf("unexpected collector arguments")
+		}
+		paths, err := collectorservice.Resolve(*system, *configPath)
+		if err != nil {
+			return err
+		}
+		manager := collectorservice.New()
+		switch action {
+		case "install":
+			executable, err := os.Executable()
+			if err != nil {
+				return err
+			}
+			return manager.Install(executable, paths)
+		case "status":
+			return manager.Status(paths)
+		case "logs":
+			return manager.Logs(paths)
+		case "uninstall":
+			return manager.Uninstall(paths)
+		}
+	}
+	return fmt.Errorf("usage: watchpost collector {sample|pair|run|install|status|logs|uninstall}")
+}
+
+func runCollectorLoop(args []string) error {
+	fs := flag.NewFlagSet("watchpost collector run", flag.ContinueOnError)
+	configPath := fs.String("config", defaultCollectorConfig(), "collector configuration path")
+	interval := fs.Duration("interval", time.Minute, "sampling interval")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 || *interval < time.Second {
+		return errors.New("invalid collector run options")
+	}
+	if _, err := collectorclient.Load(*configPath); err != nil {
+		return fmt.Errorf("load collector config: %w", err)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	ticker := time.NewTicker(*interval)
+	defer ticker.Stop()
+	for {
+		samples, err := hostcollector.New().Sample(ctx, 250*time.Millisecond)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stdout, "sampled %d host signals (delivery begins at WP06R)\n", len(samples))
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+		}
+	}
 }
 
 func defaultCollectorConfig() string {

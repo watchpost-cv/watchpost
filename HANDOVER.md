@@ -1,8 +1,9 @@
 # Watchpost engineering handover
 
-Current execution: WP01R through WP04R are complete as of 2026-08-28. WP05R is
-next. Pair with `watchpost collector pair --server URL --token TOKEN`; remote
-pairing requires HTTPS and writes a `0600` post-scoped configuration.
+Current execution: WP01R through WP05R are complete as of 2026-08-28. WP06R is
+next. Collector install/status/logs/uninstall support per-user systemd and an
+explicit root-only `--system` mode. The run loop samples but WP06R must connect
+durable delivery before unattended monitoring is claimed.
 The authoritative gap inventory is
 `docs/implementation-reconciliation.md`; do not restore the former claim that
 WP00–WP18 are implemented.

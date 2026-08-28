@@ -29,13 +29,15 @@ supporting evidence; it is not completion by itself.
   default dashboards and starter rules, proven with separate server and
   collector processes across restart.
 
-Progress: WP01R through WP04R complete. WP02R added a versioned, bounded, atomic
+Progress: WP01R through WP05R complete. WP02R added a versioned, bounded, atomic
 batch contract, contiguous acknowledgement semantics, compatibility/clock/
 quality validation, integration tests, and documented retry/freshness rules.
 WP03R added the supplied-binary Linux sampler for CPU, memory, root disk, load,
 uptime, and collector health with deterministic fixtures and real `/proc` use.
 WP04R added ten-minute, one-use, hashed pairing tokens; an HTTPS-or-loopback
 pairing client; post-scoped credential exchange; and private local config.
+WP05R added stable binary installation, hardened per-user or explicit system
+systemd units, foreground run, status, bounded log viewing, and uninstall.
 
 Every monitored system, service, endpoint, application, or device is a
 **post**. This is the canonical schema, API, code, test, UI, and documentation
