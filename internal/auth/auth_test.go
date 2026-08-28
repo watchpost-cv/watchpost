@@ -57,3 +57,24 @@ func TestLoginAndAuthenticate(t *testing.T) {
 		t.Fatalf("got=%#v err=%v", got, err)
 	}
 }
+
+func TestMinimumPasswordLengthIsSeven(t *testing.T) {
+	s, err := store.Open(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	m := New(s)
+	if _, err = m.Setup(context.Background(), "admin@example.com", "123456"); err == nil {
+		t.Fatal("six-character password accepted")
+	}
+	if required, err := m.SetupRequired(context.Background()); err != nil || !required {
+		t.Fatalf("setup required=%v err=%v", required, err)
+	}
+	if _, err = m.Setup(context.Background(), "admin@example.com", "1234567"); err != nil {
+		t.Fatalf("seven-character password rejected: %v", err)
+	}
+	if required, err := m.SetupRequired(context.Background()); err != nil || required {
+		t.Fatalf("setup required=%v err=%v", required, err)
+	}
+}

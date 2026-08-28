@@ -24,14 +24,20 @@ func main() {
 }
 
 func run(args []string) error {
-	if len(args) == 0 || args[0] != "serve" {
-		return fmt.Errorf("usage: watchpost serve [options]")
+	// Serving is Watchpost's primary operation, matching Warden, Cortex, and
+	// Trestle: a built binary starts with ./watchpost. Keep `serve` as a
+	// backwards-compatible alias for scripts written during early development.
+	if len(args) > 0 && args[0] == "serve" {
+		args = args[1:]
 	}
-	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	fs := flag.NewFlagSet("watchpost", flag.ContinueOnError)
 	listen := fs.String("listen", "", "listen address (overrides WATCHPOST_LISTEN)")
 	dataDir := fs.String("data-dir", "", "data directory (overrides WATCHPOST_DATA_DIR)")
-	if err := fs.Parse(args[1:]); err != nil {
+	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("usage: watchpost [options]")
 	}
 	cfg, err := config.Load(config.Overrides{Listen: *listen, DataDir: *dataDir})
 	if err != nil {

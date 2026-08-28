@@ -17,6 +17,7 @@ import (
 )
 
 const passwordRounds = 210_000
+const MinimumPasswordLength = 7
 
 type User struct {
 	ID    int64  `json:"id"`
@@ -36,8 +37,8 @@ type Manager struct {
 func New(s *store.Store) *Manager { return &Manager{store: s, failures: map[string][]time.Time{}} }
 
 func (m *Manager) Setup(ctx context.Context, email, password string) (User, error) {
-	if !strings.Contains(email, "@") || len(password) < 12 {
-		return User{}, errors.New("valid email and password of at least 12 characters required")
+	if !strings.Contains(email, "@") || len(password) < MinimumPasswordLength {
+		return User{}, fmt.Errorf("valid email and password of at least %d characters required", MinimumPasswordLength)
 	}
 	hash, err := passwordHash(password)
 	if err != nil {
@@ -68,6 +69,14 @@ func (m *Manager) Setup(ctx context.Context, email, password string) (User, erro
 		return User{}, err
 	}
 	return User{ID: id, Email: email, Role: "admin"}, nil
+}
+
+func (m *Manager) SetupRequired(ctx context.Context) (bool, error) {
+	var count int
+	if err := m.store.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&count); err != nil {
+		return false, err
+	}
+	return count == 0, nil
 }
 
 func (m *Manager) Login(ctx context.Context, email, password string) (Session, error) {

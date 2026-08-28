@@ -12,9 +12,21 @@ boundary that remains before tagging.
 Read [HANDOVER.md](HANDOVER.md) for the boundaries and [PLAN.md](PLAN.md) for the
 ordered implementation programme.
 
+Compile and run Watchpost:
+
 ```sh
-go run ./cmd/watchpost serve
+go build -o watchpost ./cmd/watchpost
+./watchpost
 ```
+
+For source-tree development without keeping a binary:
+
+```sh
+go run ./cmd/watchpost
+```
+
+The early `./watchpost serve` form remains accepted for compatibility, but the
+subcommand is no longer required.
 
 The default listener is `127.0.0.1:8080`. Command-line options override
 `WATCHPOST_LISTEN` and `WATCHPOST_DATA_DIR`; defaults apply below both.

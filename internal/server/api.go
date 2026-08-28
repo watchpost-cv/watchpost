@@ -27,6 +27,7 @@ const sessionCookie = "watchpost_session"
 type userContextKey struct{}
 
 func (s *Server) registerAPI(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/v1/bootstrap", s.handleBootstrap)
 	mux.HandleFunc("POST /api/v1/setup", s.handleSetup)
 	mux.HandleFunc("POST /api/v1/login", s.handleLogin)
 	mux.HandleFunc("POST /api/v1/logout", s.require("viewer", s.handleLogout))
@@ -60,6 +61,23 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/peers", s.require("admin", s.handleEnrollPeer))
 	mux.HandleFunc("POST /api/v1/federation/{peer}", s.handleFederation)
 	mux.HandleFunc("POST /api/v1/devices/snmp/poll", s.require("operator", s.handleSNMPPoll))
+}
+
+func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
+	setupRequired, err := s.auth.SetupRequired(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "bootstrap state unavailable"})
+		return
+	}
+	response := map[string]any{"setup_required": setupRequired, "authenticated": false}
+	if cookie, cookieErr := r.Cookie(sessionCookie); cookieErr == nil {
+		if session, authErr := s.auth.Authenticate(r.Context(), cookie.Value); authErr == nil {
+			response["authenticated"] = true
+			response["user"] = session.User
+			response["csrf_token"] = session.CSRF
+		}
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func decode(w http.ResponseWriter, r *http.Request, value any) bool {

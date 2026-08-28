@@ -3,10 +3,13 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/watchpost-ops/watchpost/internal/posts"
 )
 
 func apiRequest(t *testing.T, handler http.Handler, method, path string, body any, cookie *http.Cookie, csrf string) *httptest.ResponseRecorder {
@@ -54,6 +57,20 @@ func TestSetupLoginCSRFAndPostAPI(t *testing.T) {
 	listed := apiRequest(t, handler, "GET", "/api/v1/posts", nil, cookie, "")
 	if listed.Code != 200 || !bytes.Contains(listed.Body.Bytes(), []byte("host-a")) {
 		t.Fatalf("list: %d %s", listed.Code, listed.Body.String())
+	}
+}
+
+func TestDensePostInventory(t *testing.T) {
+	s := testServer(t)
+	for i := 0; i < 125; i++ {
+		id := fmt.Sprintf("dogfood-%03d", i)
+		if _, err := s.posts.Create(t.Context(), posts.Post{ID: id, Name: "Dogfood " + id, Kind: "host", Labels: map[string]string{}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	items, err := s.posts.List(t.Context())
+	if err != nil || len(items) != 125 {
+		t.Fatalf("dense inventory len=%d err=%v", len(items), err)
 	}
 }
 

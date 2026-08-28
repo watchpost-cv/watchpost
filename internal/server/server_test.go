@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/watchpost-ops/watchpost/internal/config"
@@ -44,8 +45,53 @@ func TestEmbeddedDashboard(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
 	testServer(t).Handler().ServeHTTP(w, r)
-	if w.Code != http.StatusOK || !contains(w.Body.String(), "deterministic alerts") {
+	if w.Code != http.StatusOK || !contains(w.Body.String(), "Enroll a post") {
 		t.Fatalf("unexpected dashboard: status=%d body=%q", w.Code, w.Body.String())
+	}
+}
+
+func TestDashboardUXContracts(t *testing.T) {
+	handler := testServer(t).Handler()
+	read := func(path string) string {
+		t.Helper()
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: %d", path, w.Code)
+		}
+		return w.Body.String()
+	}
+	html := read("/")
+	for _, required := range []string{"id=\"logout\"", "minlength=\"7\"", "data-view=\"enroll\"", "data-view=\"checks\"", "data-view=\"devices\"", "data-view=\"fleet\"", "class=\"resize-handle\""} {
+		if !strings.Contains(html, required) {
+			t.Errorf("dashboard missing %s", required)
+		}
+	}
+	if strings.Contains(html, "WP00–WP18 development candidate") {
+		t.Error("development checkpoint label leaked into product chrome")
+	}
+	css := read("/app.css")
+	for _, required := range []string{"--bg:#111312", "--accent:#9fcb78", "padding-right:46px", "cursor:ns-resize"} {
+		if !strings.Contains(css, required) {
+			t.Errorf("stylesheet missing %s", required)
+		}
+	}
+}
+
+func TestBootstrapShowsOnlyRequiredAuthState(t *testing.T) {
+	s := testServer(t)
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/bootstrap", nil))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"setup_required":true`) {
+		t.Fatalf("initial bootstrap: %d %s", w.Code, w.Body.String())
+	}
+	if _, err := s.auth.Setup(t.Context(), "admin@example.com", "1234567"); err != nil {
+		t.Fatal(err)
+	}
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/bootstrap", nil))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"setup_required":false`) {
+		t.Fatalf("completed bootstrap: %d %s", w.Code, w.Body.String())
 	}
 }
 

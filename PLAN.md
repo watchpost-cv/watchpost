@@ -262,7 +262,7 @@ separate threat model and must never imply that Watchpost is a safety system.
 
 ### WP01
 
-- `watchpost serve` provides graceful signal-driven shutdown.
+- `watchpost` starts the service directly and provides graceful signal-driven shutdown; `watchpost serve` remains a compatibility alias.
 - Configuration precedence is flags, environment, then safe defaults.
 - The embedded dashboard truthfully reports that no posts are enrolled.
 - Health, readiness, version, and bounded diagnostics are implemented.
