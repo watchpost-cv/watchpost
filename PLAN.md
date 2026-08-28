@@ -72,6 +72,9 @@ WP11R adds attributable incident assignment and replaces placeholder actors in
 creation, transition, and note events with the authenticated user's identity.
 WP12R adds an authorised exact-evidence resolver for bounded log and change
 citations, returning the complete stored record and its post context.
+WP13R adds schema-versioned, post-linked SNMPv3 profile persistence for address,
+username, kind, and at most 64 read-only OIDs. Authentication and privacy
+passwords remain transient connection-test inputs and are never returned.
 
 Every monitored system, service, endpoint, application, or device is a
 **post**. This is the canonical schema, API, code, test, UI, and documentation

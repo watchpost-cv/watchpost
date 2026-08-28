@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const SchemaVersion = 5
+const SchemaVersion = 6
 
 type Store struct{ DB *sql.DB }
 
@@ -141,6 +141,21 @@ func (s *Store) migrate(ctx context.Context) error {
 			}
 		}
 		if _, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations(version,applied_at) VALUES(5,?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return err
+		}
+		version = 5
+	}
+	if version == 5 {
+		statements := []string{
+			`CREATE TABLE device_profiles(id TEXT PRIMARY KEY,post_id TEXT NOT NULL REFERENCES posts(id),kind TEXT NOT NULL,address TEXT NOT NULL,port INTEGER NOT NULL,username TEXT NOT NULL,created_at TEXT NOT NULL)`,
+			`CREATE TABLE device_profile_oids(profile_id TEXT NOT NULL REFERENCES device_profiles(id) ON DELETE CASCADE,position INTEGER NOT NULL,name TEXT NOT NULL,oid TEXT NOT NULL,unit TEXT NOT NULL,PRIMARY KEY(profile_id,position))`,
+		}
+		for _, statement := range statements {
+			if _, err = tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("migration 6: %w", err)
+			}
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations(version,applied_at) VALUES(6,?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 			return err
 		}
 	}

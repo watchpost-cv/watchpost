@@ -1,6 +1,6 @@
 # Watchpost engineering handover
 
-Current execution: WP01R through WP12R are complete as of 2026-08-28. The
+Current execution: WP01R through WP13R are complete as of 2026-08-28. The
 second recovery batch is active. `hardening/host-journey.sh` is the mandatory Linux
 gate: it pairs separate server/collector processes, restarts both, and proves
 continuing history. Do not regress the guided enrollment-to-confirmation flow.

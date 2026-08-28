@@ -72,6 +72,8 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/peers", s.require("admin", s.handleEnrollPeer))
 	mux.HandleFunc("POST /api/v1/federation/{peer}", s.handleFederation)
 	mux.HandleFunc("POST /api/v1/devices/snmp/poll", s.require("operator", s.handleSNMPPoll))
+	mux.HandleFunc("POST /api/v1/device-profiles", s.require("operator", s.handleSaveDeviceProfile))
+	mux.HandleFunc("GET /api/v1/device-profiles", s.require("viewer", s.handleListDeviceProfiles))
 }
 
 func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
@@ -756,6 +758,25 @@ func (s *Server) handleFederation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(202)
+}
+func (s *Server) handleSaveDeviceProfile(w http.ResponseWriter, r *http.Request) {
+	var in devices.SavedProfile
+	if !decode(w, r, &in) {
+		return
+	}
+	if err := s.devices.Save(r.Context(), in); err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	w.WriteHeader(201)
+}
+func (s *Server) handleListDeviceProfiles(w http.ResponseWriter, r *http.Request) {
+	items, err := s.devices.List(r.Context())
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": "device profiles unavailable"})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"profiles": items})
 }
 func (s *Server) handleSNMPPoll(w http.ResponseWriter, r *http.Request) {
 	var in struct {
