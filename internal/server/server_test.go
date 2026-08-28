@@ -45,7 +45,7 @@ func TestEmbeddedDashboard(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
 	testServer(t).Handler().ServeHTTP(w, r)
-	if w.Code != http.StatusOK || !contains(w.Body.String(), "Enroll a post") {
+	if w.Code != http.StatusOK || !contains(w.Body.String(), "Add a post") {
 		t.Fatalf("unexpected dashboard: status=%d body=%q", w.Code, w.Body.String())
 	}
 }
@@ -71,7 +71,7 @@ func TestDashboardUXContracts(t *testing.T) {
 		t.Error("development checkpoint label leaked into product chrome")
 	}
 	css := read("/app.css")
-	for _, required := range []string{"--bg:#111312", "--accent:#9fcb78", "padding-right:46px", "cursor:ns-resize"} {
+	for _, required := range []string{"--bg:#111312", "--accent:#9fcb78", "padding-right:40px", "background-position:right 14px center", "cursor:ns-resize"} {
 		if !strings.Contains(css, required) {
 			t.Errorf("stylesheet missing %s", required)
 		}

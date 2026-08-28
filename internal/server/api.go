@@ -89,21 +89,66 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 }
 
 func (s *Server) handleAgentPairingRequest(w http.ResponseWriter, r *http.Request) {
-	var input struct { InstallationID string `json:"installation_id"`; RequestSecret string `json:"request_secret"`; Hostname string `json:"hostname"`; Platform string `json:"platform"`; AgentVersion string `json:"agent_version"` }
-	if !decode(w,r,&input){return}
-	request,err:=s.agentPairing.Create(r.Context(),input.InstallationID,input.RequestSecret,input.Hostname,input.Platform,input.AgentVersion)
-	if err!=nil{writeJSON(w,400,map[string]string{"error":err.Error()});return}
-	writeJSON(w,201,request)
+	var input struct {
+		InstallationID string `json:"installation_id"`
+		RequestSecret  string `json:"request_secret"`
+		Hostname       string `json:"hostname"`
+		Platform       string `json:"platform"`
+		AgentVersion   string `json:"agent_version"`
+	}
+	if !decode(w, r, &input) {
+		return
+	}
+	request, err := s.agentPairing.Create(r.Context(), input.InstallationID, input.RequestSecret, input.Hostname, input.Platform, input.AgentVersion)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 201, request)
 }
 
 func (s *Server) handleAgentPairingPoll(w http.ResponseWriter, r *http.Request) {
-	secret:=agentpairing.Bearer(r.Header.Get("Authorization")); if secret==""{writeJSON(w,401,map[string]string{"error":"pairing authentication required"});return}
-	result,err:=s.agentPairing.Poll(r.Context(),r.PathValue("id"),secret);if err!=nil{writeJSON(w,409,map[string]string{"error":err.Error()});return};writeJSON(w,200,result)
+	secret := agentpairing.Bearer(r.Header.Get("Authorization"))
+	if secret == "" {
+		writeJSON(w, 401, map[string]string{"error": "pairing authentication required"})
+		return
+	}
+	result, err := s.agentPairing.Poll(r.Context(), r.PathValue("id"), secret)
+	if err != nil {
+		writeJSON(w, 409, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, result)
 }
 
-func (s *Server) handleListAgentPairingRequests(w http.ResponseWriter,r *http.Request){result,err:=s.agentPairing.List(r.Context());if err!=nil{writeJSON(w,500,map[string]string{"error":"pairing requests unavailable"});return};writeJSON(w,200,result)}
-func (s *Server) handleApproveAgentPairingRequest(w http.ResponseWriter,r *http.Request){var input struct{PostID string `json:"post_id"`};if !decode(w,r,&input){return};if err:=s.agentPairing.Decide(r.Context(),r.PathValue("id"),input.PostID,true);err!=nil{writeJSON(w,409,map[string]string{"error":err.Error()});return};w.WriteHeader(http.StatusNoContent)}
-func (s *Server) handleRejectAgentPairingRequest(w http.ResponseWriter,r *http.Request){if err:=s.agentPairing.Decide(r.Context(),r.PathValue("id"),"",false);err!=nil{writeJSON(w,409,map[string]string{"error":err.Error()});return};w.WriteHeader(http.StatusNoContent)}
+func (s *Server) handleListAgentPairingRequests(w http.ResponseWriter, r *http.Request) {
+	result, err := s.agentPairing.List(r.Context())
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": "pairing requests unavailable"})
+		return
+	}
+	writeJSON(w, 200, result)
+}
+func (s *Server) handleApproveAgentPairingRequest(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		PostID string `json:"post_id"`
+	}
+	if !decode(w, r, &input) {
+		return
+	}
+	if err := s.agentPairing.Decide(r.Context(), r.PathValue("id"), input.PostID, true); err != nil {
+		writeJSON(w, 409, map[string]string{"error": err.Error()})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+func (s *Server) handleRejectAgentPairingRequest(w http.ResponseWriter, r *http.Request) {
+	if err := s.agentPairing.Decide(r.Context(), r.PathValue("id"), "", false); err != nil {
+		writeJSON(w, 409, map[string]string{"error": err.Error()})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
 
 func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 	setupRequired, err := s.auth.SetupRequired(r.Context())

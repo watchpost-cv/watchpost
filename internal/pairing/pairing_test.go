@@ -31,6 +31,14 @@ func TestPairingTokenIsShortLivedAndSingleUse(t *testing.T) {
 	if _, err = service.Consume(ctx, token.Token, "agent-b"); err == nil {
 		t.Fatal("reused token")
 	}
+	rotation, err := service.Create(ctx, "host-a", 5*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rotated, err := service.Consume(ctx, rotation.Token, "agent-a")
+	if err != nil || rotated.Secret == enrollment.Secret {
+		t.Fatalf("collector credential was not rotated: %#v %v", rotated, err)
+	}
 	expired, _ := service.Create(ctx, "host-a", time.Minute)
 	service.now = func() time.Time { return now.Add(2 * time.Minute) }
 	if _, err = service.Consume(ctx, expired.Token, "agent-c"); err == nil {

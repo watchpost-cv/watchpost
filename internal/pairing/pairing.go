@@ -74,8 +74,13 @@ func (s *Service) Consume(ctx context.Context, token, collectorID string) (Enrol
 	if used != nil || !now.Before(expiresAt) {
 		return Enrollment{}, errors.New("pairing token expired or used")
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO collector_keys(id,post_id,secret_hash) VALUES(?,?,?)`, collectorID, postID, secretHash[:]); err != nil {
+	result, err := tx.ExecContext(ctx, `INSERT INTO collector_keys(id,post_id,secret_hash) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET secret_hash=excluded.secret_hash,revoked_at=NULL,last_sequence=0,last_seen_at=NULL,last_observed_at=NULL,last_sent_at=NULL,last_error='',last_rejected_at=NULL,rejected_count=0,partial=0 WHERE collector_keys.post_id=excluded.post_id`, collectorID, postID, secretHash[:])
+	if err != nil {
 		return Enrollment{}, errors.New("collector identity unavailable")
+	}
+	rows, _ := result.RowsAffected()
+	if rows != 1 {
+		return Enrollment{}, errors.New("collector identity belongs to another post")
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE collector_pairing_tokens SET used_at=? WHERE token_hash=? AND used_at IS NULL`, now.Format(time.RFC3339Nano), tokenHash[:]); err != nil {
 		return Enrollment{}, err

@@ -89,7 +89,12 @@ func (m Manager) Install(source string, paths Paths) error {
 	if err := m.systemctl(paths, "daemon-reload"); err != nil {
 		return err
 	}
-	return m.systemctl(paths, "enable", "--now", "watchpost-collector.service")
+	if err := m.systemctl(paths, "enable", "watchpost-collector.service"); err != nil {
+		return err
+	}
+	// Restart rather than relying on enable --now: an already-running collector
+	// must reload credentials written by a fresh pairing operation.
+	return m.systemctl(paths, "restart", "watchpost-collector.service")
 }
 func (m Manager) Status(paths Paths) error {
 	return m.systemctl(paths, "status", "--no-pager", "watchpost-collector.service")
@@ -128,10 +133,12 @@ func copyFile(source, destination string, mode os.FileMode) error {
 	if err = os.MkdirAll(filepath.Dir(destination), 0755); err != nil {
 		return err
 	}
-	output, err := os.OpenFile(destination, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
+	output, err := os.CreateTemp(filepath.Dir(destination), ".watchpost-install-*")
 	if err != nil {
 		return err
 	}
+	temporary := output.Name()
+	defer os.Remove(temporary)
 	if _, err = io.Copy(output, input); err != nil {
 		output.Close()
 		return err
@@ -139,5 +146,10 @@ func copyFile(source, destination string, mode os.FileMode) error {
 	if err = output.Close(); err != nil {
 		return err
 	}
-	return os.Chmod(destination, mode)
+	if err = os.Chmod(temporary, mode); err != nil {
+		return err
+	}
+	// Renaming a complete temporary file over the destination is atomic on the
+	// supported local filesystems and works while the previous executable runs.
+	return os.Rename(temporary, destination)
 }

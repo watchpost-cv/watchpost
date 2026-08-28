@@ -32,25 +32,25 @@ import (
 )
 
 type Server struct {
-	cfg       config.Config
-	version   string
-	logger    *slog.Logger
-	store     *store.Store
-	auth      *auth.Manager
-	posts     *posts.Store
-	ingest    *ingest.Service
-	history   *history.Store
-	rules     *rules.Engine
-	notify    *notify.Service
-	incidents *incidents.Store
-	evidence  *evidence.Store
-	agent     *agent.Service
+	cfg          config.Config
+	version      string
+	logger       *slog.Logger
+	store        *store.Store
+	auth         *auth.Manager
+	posts        *posts.Store
+	ingest       *ingest.Service
+	history      *history.Store
+	rules        *rules.Engine
+	notify       *notify.Service
+	incidents    *incidents.Store
+	evidence     *evidence.Store
+	agent        *agent.Service
 	agentPairing *agentpairing.Service
-	actions   *actions.Registry
-	fleet     *fleet.Service
-	pairing   *pairing.Service
-	health    *collectorhealth.Store
-	devices   *devices.ProfileStore
+	actions      *actions.Registry
+	fleet        *fleet.Service
+	pairing      *pairing.Service
+	health       *collectorhealth.Store
+	devices      *devices.ProfileStore
 }
 
 func New(cfg config.Config, version string, logger *slog.Logger, database *store.Store) *Server {
