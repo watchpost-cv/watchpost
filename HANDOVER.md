@@ -32,6 +32,9 @@ details beneath posts rather than duplicate inventory rows.
 WP-A07 adds authenticated connection inventory and renders agent identity and
 health inside each post row. “Collector” remains an implementation/API
 compatibility term; it must not return as separate user-facing inventory.
+WP-A08 lives in the agent repository: its website and CLI share a validated,
+atomic local collector profile covering CPU, memory, load, uptime, bounded
+filesystem paths and collection interval.
 The authoritative gap inventory is
 `docs/implementation-reconciliation.md`; do not restore the former claim that
 WP00–WP18 are implemented.
