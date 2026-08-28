@@ -65,11 +65,15 @@ func (s *Service) Investigate(ctx context.Context, conversationID, userID int64,
 		return Response{}, errors.New("invalid investigation")
 	}
 	var ownerID int64
-	if err := s.s.DB.QueryRowContext(ctx, `SELECT user_id FROM conversations WHERE id=? AND user_id=?`, conversationID, userID).Scan(&ownerID); err != nil {
+	var postID *string
+	if err := s.s.DB.QueryRowContext(ctx, `SELECT user_id,post_id FROM conversations WHERE id=? AND user_id=?`, conversationID, userID).Scan(&ownerID, &postID); err != nil {
 		return Response{}, err
 	}
+	if len(citations) == 0 && postID != nil {
+		citations, _ = s.recentCitations(ctx, *postID, 20)
+	}
 	for _, citation := range citations {
-		if err := s.verifyCitation(ctx, citation); err != nil {
+		if err := s.verifyCitation(ctx, citation, postID); err != nil {
 			return Response{}, err
 		}
 	}
@@ -106,25 +110,45 @@ func (s *Service) Investigate(ctx context.Context, conversationID, userID int64,
 	}
 	return response, nil
 }
-func (s *Service) verifyCitation(ctx context.Context, c Citation) error {
+func (s *Service) verifyCitation(ctx context.Context, c Citation, postID *string) error {
 	var query string
 	switch c.Kind {
 	case "log":
-		query = `SELECT COUNT(*) FROM logs WHERE id=?`
+		query = `SELECT COUNT(*) FROM logs WHERE id=? AND (? IS NULL OR post_id=?)`
 	case "alert":
-		query = `SELECT COUNT(*) FROM alerts WHERE id=?`
+		query = `SELECT COUNT(*) FROM alerts WHERE id=? AND (? IS NULL OR post_id=?)`
 	case "incident":
 		query = `SELECT COUNT(*) FROM incidents WHERE id=?`
 	case "change":
-		query = `SELECT COUNT(*) FROM changes WHERE id=?`
+		query = `SELECT COUNT(*) FROM changes WHERE id=? AND (? IS NULL OR post_id=?)`
 	default:
 		return errors.New("unsupported evidence kind")
 	}
 	var count int
-	if err := s.s.DB.QueryRowContext(ctx, query, c.ID).Scan(&count); err != nil || count != 1 {
+	args := []any{c.ID}
+	if c.Kind != "incident" {
+		args = append(args, postID, postID)
+	}
+	if err := s.s.DB.QueryRowContext(ctx, query, args...).Scan(&count); err != nil || count != 1 {
 		return errors.New("evidence does not exist")
 	}
 	return nil
+}
+func (s *Service) recentCitations(ctx context.Context, postID string, limit int) ([]Citation, error) {
+	rows, err := s.s.DB.QueryContext(ctx, `SELECT kind,id,summary FROM (SELECT 'log' kind,id,message summary,observed_at at FROM logs WHERE post_id=? UNION ALL SELECT 'change',id,summary,occurred_at FROM changes WHERE post_id=? UNION ALL SELECT 'alert',id,state,updated_at FROM alerts WHERE post_id=?) ORDER BY at DESC LIMIT ?`, postID, postID, postID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Citation{}
+	for rows.Next() {
+		var c Citation
+		if err = rows.Scan(&c.Kind, &c.ID, &c.Summary); err != nil {
+			return nil, err
+		}
+		items = append(items, c)
+	}
+	return items, rows.Err()
 }
 func nullable(v string) any {
 	if v == "" {

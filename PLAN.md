@@ -75,6 +75,9 @@ citations, returning the complete stored record and its post context.
 WP13R adds schema-versioned, post-linked SNMPv3 profile persistence for address,
 username, kind, and at most 64 read-only OIDs. Authentication and privacy
 passwords remain transient connection-test inputs and are never returned.
+WP14R automatically assembles at most 20 recent logs, changes, and alerts when
+the operator supplies no evidence, and verifies every citation belongs to the
+conversation post before the provider sees it.
 
 Every monitored system, service, endpoint, application, or device is a
 **post**. This is the canonical schema, API, code, test, UI, and documentation
