@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/watchpost-ops/watchpost/internal/contract"
@@ -123,7 +124,9 @@ type due struct {
 
 // RunDue executes due schedules in bounded batches and returns the results so
 // callers can route them through the canonical observation and rule pipeline.
-func (s *ScheduleStore) RunDue(ctx context.Context, runner *Runner, now time.Time) ([]DueResult, error) {
+// Network probes run on a bounded worker pool; result storage is sequential so
+// the single database connection is never contended by parallel writes.
+func (s *ScheduleStore) RunDue(ctx context.Context, runner *Runner, now time.Time, workers int) ([]DueResult, error) {
 	rows, err := s.s.DB.QueryContext(ctx, `SELECT id,post_id,kind,address,server_name,interval_seconds FROM check_schedules WHERE enabled=1 AND next_run_at<=? ORDER BY next_run_at LIMIT 32`, now.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, err
@@ -138,9 +141,28 @@ func (s *ScheduleStore) RunDue(ctx context.Context, runner *Runner, now time.Tim
 		work = append(work, v)
 	}
 	rows.Close()
-	results := []DueResult{}
-	for _, v := range work {
-		result := s.runWithPolicy(ctx, runner, v)
+	if workers < 1 {
+		workers = 1
+	}
+	results := make([]DueResult, len(work))
+	semaphore := make(chan struct{}, workers)
+	var wg sync.WaitGroup
+	for index, v := range work {
+		wg.Add(1)
+		go func(index int, v due) {
+			defer wg.Done()
+			select {
+			case semaphore <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			defer func() { <-semaphore }()
+			results[index] = DueResult{Schedule: Schedule{ID: v.id, PostID: v.post, Kind: v.kind, Address: v.address, ServerName: v.server, IntervalSeconds: v.interval}, Result: s.runWithPolicy(ctx, runner, v)}
+		}(index, v)
+	}
+	wg.Wait()
+	for index, v := range work {
+		result := results[index].Result
 		var expires any
 		if result.ExpiresAt != nil {
 			expires = result.ExpiresAt.UTC().Format(time.RFC3339Nano)
@@ -160,7 +182,6 @@ func (s *ScheduleStore) RunDue(ctx context.Context, runner *Runner, now time.Tim
 		if e = tx.Commit(); e != nil {
 			return nil, e
 		}
-		results = append(results, DueResult{Schedule: Schedule{ID: v.id, PostID: v.post, Kind: v.kind, Address: v.address, ServerName: v.server, IntervalSeconds: v.interval}, Result: result})
 	}
 	return results, nil
 }

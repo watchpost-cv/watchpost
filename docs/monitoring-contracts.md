@@ -170,6 +170,17 @@ travel through a generic untyped command path. Write-capable industrial or
 building-control actions remain out of scope under a separate authority and
 safety model.
 
+## Concurrency and ingestion budgets
+
+Scheduled central checks run their network probes on a bounded worker pool
+(`WATCHPOST_CHECK_WORKERS`, default 4) so one slow target does not stall later
+due work; result storage stays sequential so the single database connection is
+never contended by parallel writers. On-demand checks are additionally
+rate-limited to 60 per minute. Telemetry ingestion is budgeted per collector
+(`WATCHPOST_INGEST_MAX_SAMPLES_PER_MINUTE`, default 3600): a collector that
+exceeds its per-minute sample budget is rejected with the same fail-closed
+contract as other rejects, and the agent records the rejection and backs off.
+
 ## Storage capacity contract
 
 Watchpost measures its total SQLite footprint — `watchpost.db` plus the

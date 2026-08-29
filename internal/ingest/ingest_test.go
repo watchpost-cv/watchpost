@@ -155,3 +155,41 @@ func TestExpiredPendingCredentialDoesNotInvalidateOld(t *testing.T) {
 		t.Fatalf("old credential rejected after expired replacement: %v", err)
 	}
 }
+
+func TestIngestRateBudgetRejectsOverflow(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	_, _ = posts.New(db).Create(ctx, posts.Post{ID: "host-a", Name: "Host", Kind: "host"})
+	service := New(db)
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+	service.SetIngestRate(3)
+	secret, _ := service.Enroll(ctx, "collector-a", "host-a")
+	value := 50.0
+	batch := []Observation{{Version: 1, PostID: "host-a", CollectorID: "collector-a", ObservedAt: now, Sequence: 1, Signal: "cpu.percent", Value: &value, Unit: "percent", Quality: "good", Labels: map[string]string{}}}
+	if err = service.AcceptBatch(ctx, secret, batch, now); err != nil {
+		t.Fatalf("first batch rejected: %v", err)
+	}
+	second := []Observation{{Version: 1, PostID: "host-a", CollectorID: "collector-a", ObservedAt: now, Sequence: 2, Signal: "cpu.percent", Value: &value, Unit: "percent", Quality: "good", Labels: map[string]string{}}}
+	if err = service.AcceptBatch(ctx, secret, second, now); err != nil {
+		t.Fatalf("second batch rejected: %v", err)
+	}
+	third := []Observation{{Version: 1, PostID: "host-a", CollectorID: "collector-a", ObservedAt: now, Sequence: 3, Signal: "cpu.percent", Value: &value, Unit: "percent", Quality: "good", Labels: map[string]string{}}}
+	if err = service.AcceptBatch(ctx, secret, third, now); err != nil {
+		t.Fatalf("third batch rejected: %v", err)
+	}
+	fourth := []Observation{{Version: 1, PostID: "host-a", CollectorID: "collector-a", ObservedAt: now, Sequence: 4, Signal: "cpu.percent", Value: &value, Unit: "percent", Quality: "good", Labels: map[string]string{}}}
+	if err = service.AcceptBatch(ctx, secret, fourth, now); err == nil {
+		t.Fatal("batch beyond the per-minute budget was accepted")
+	}
+	// A new minute resets the budget.
+	service.now = func() time.Time { return now.Add(time.Minute) }
+	next := []Observation{{Version: 1, PostID: "host-a", CollectorID: "collector-a", ObservedAt: now.Add(time.Minute), Sequence: 4, Signal: "cpu.percent", Value: &value, Unit: "percent", Quality: "good", Labels: map[string]string{}}}
+	if err = service.AcceptBatch(ctx, secret, next, now.Add(time.Minute)); err != nil {
+		t.Fatalf("batch in the next minute rejected: %v", err)
+	}
+}

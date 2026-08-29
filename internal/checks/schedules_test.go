@@ -24,7 +24,7 @@ func TestScheduledHTTPCheckPersistsResult(t *testing.T) {
 	if err = s.Save(ctx, Schedule{ID: "web-http", PostID: "web", Kind: "http", Address: "http://127.0.0.1:1", IntervalSeconds: 60}); err != nil {
 		t.Fatal(err)
 	}
-	if results, err := s.RunDue(ctx, New(time.Second), now.Add(time.Second)); err != nil || len(results) != 1 {
+	if results, err := s.RunDue(ctx, New(time.Second), now.Add(time.Second), 4); err != nil || len(results) != 1 {
 		t.Fatalf("run due: %d %v", len(results), err)
 	}
 	items, err := s.List(ctx)

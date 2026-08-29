@@ -122,6 +122,7 @@ func New(cfg config.Config, version string, logger *slog.Logger, database *store
 	server.checkLimiter = &checkRateLimiter{}
 	server.secrets = secrets.New(cfg.MasterKey)
 	server.devices = devices.NewProfileStoreWithKey(database, server.secrets)
+	server.ingest.SetIngestRate(cfg.IngestRate)
 	server.registerActions()
 	server.provisionBootstrap()
 	return server
@@ -316,7 +317,7 @@ func (s *Server) checkLoop(ctx context.Context) {
 				s.logger.Warn("scheduled checks paused; storage full", "error", err)
 				continue
 			}
-			results, err := s.checks.RunDue(ctx, runner, now)
+			results, err := s.checks.RunDue(ctx, runner, now, s.cfg.CheckWorkers)
 			if err != nil {
 				s.logger.Warn("scheduled checks failed", "error", err)
 				continue

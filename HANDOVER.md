@@ -214,6 +214,13 @@ R18b adds scheduled online backups (`WATCHPOST_BACKUP_DIR`,
 `WATCHPOST_BACKUP_SCHEDULE`, optional `WATCHPOST_BACKUP_PASSPHRASE_FILE`,
 `WATCHPOST_BACKUP_RETAIN`), with operator status at `GET /api/v1/backup-status`.
 The passphrase file is re-read per run so rotation needs no restart.
+
+## Concurrency and ingestion budgets
+
+R19 runs scheduled check probes on a bounded worker pool
+(`WATCHPOST_CHECK_WORKERS`, default 4) with sequential result storage, and
+budgets telemetry per collector (`WATCHPOST_INGEST_MAX_SAMPLES_PER_MINUTE`,
+default 3600). Both are race-tested.
 Host enrollment records an optional address or hostname, then pairs the
 separately installed Watchpost Agent through request/approval against an
 explicit Watchpost URL reachable from the post. The

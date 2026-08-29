@@ -23,6 +23,8 @@ type Config struct {
 	CheckPolicy   CheckPolicy
 	MasterKey     string
 	Backup        Backup
+	CheckWorkers  int
+	IngestRate    int
 }
 
 // Backup holds the scheduled online-backup configuration. A zero schedule
@@ -108,7 +110,7 @@ type Overrides struct {
 }
 
 func Load(overrides Overrides) (Config, error) {
-	cfg := Config{Listen: DefaultListen, Retention: DefaultRetention(), Storage: DefaultStorage(), SetupTokenTTL: time.Hour, Backup: Backup{Schedule: 24 * time.Hour, Retain: 7}}
+	cfg := Config{Listen: DefaultListen, Retention: DefaultRetention(), Storage: DefaultStorage(), SetupTokenTTL: time.Hour, Backup: Backup{Schedule: 24 * time.Hour, Retain: 7}, CheckWorkers: 4, IngestRate: 3600}
 	if dir, err := os.UserConfigDir(); err == nil {
 		cfg.DataDir = filepath.Join(dir, "watchpost")
 	} else {
@@ -150,10 +152,31 @@ func Load(overrides Overrides) (Config, error) {
 	if err := applyBackupEnv(&cfg); err != nil {
 		return Config{}, err
 	}
+	if err := applyOpsEnv(&cfg); err != nil {
+		return Config{}, err
+	}
 	if err := validate(cfg); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+func applyOpsEnv(cfg *Config) error {
+	if value := os.Getenv("WATCHPOST_CHECK_WORKERS"); value != "" {
+		workers, err := strconv.Atoi(value)
+		if err != nil || workers < 1 || workers > 64 {
+			return fmt.Errorf("WATCHPOST_CHECK_WORKERS: invalid value")
+		}
+		cfg.CheckWorkers = workers
+	}
+	if value := os.Getenv("WATCHPOST_INGEST_MAX_SAMPLES_PER_MINUTE"); value != "" {
+		rate, err := strconv.Atoi(value)
+		if err != nil || rate < 1 || rate > 1000000 {
+			return fmt.Errorf("WATCHPOST_INGEST_MAX_SAMPLES_PER_MINUTE: invalid value")
+		}
+		cfg.IngestRate = rate
+	}
+	return nil
 }
 
 func applyBackupEnv(cfg *Config) error {

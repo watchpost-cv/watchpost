@@ -154,7 +154,12 @@ positive `WATCHPOST_BACKUP_SCHEDULE` are set, optionally encrypted via
 `WATCHPOST_BACKUP_PASSPHRASE_FILE` and bounded by `WATCHPOST_BACKUP_RETAIN`.
 `GET /api/v1/backup-status` exposes last/next run and last error to operators.
 The passphrase file is re-read each run so it can be rotated without a restart.
-Bounded check concurrency and ingestion budgets are R19.
+
+R19 is complete: scheduled checks run their network probes on a bounded worker
+pool (`WATCHPOST_CHECK_WORKERS`, default 4) while result storage stays
+sequential, and telemetry ingestion is budgeted per collector
+(`WATCHPOST_INGEST_MAX_SAMPLES_PER_MINUTE`, default 3600). Both are race-tested.
+Agent-first host UX is R21.
 
 ## Agent architecture programme (WP-A01–WP-A18)
 

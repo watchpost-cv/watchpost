@@ -2,6 +2,7 @@ package checks
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/watchpost-ops/watchpost/internal/contract"
+	"github.com/watchpost-ops/watchpost/internal/store"
 )
 
 func TestHTTPAndTCPChecks(t *testing.T) {
@@ -61,5 +63,45 @@ func TestResultObservationsCanonicalContract(t *testing.T) {
 	days := tlsObs[2].Value
 	if tlsObs[2].Signal != "tls.expires_in_days" || days == nil || *days < 29 || *days > 31 {
 		t.Fatalf("tls expiry observation wrong: %#v", tlsObs[2])
+	}
+}
+
+func TestRunDueConcurrentWorkersReturnAllResults(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Now().UTC()
+	if _, err := db.DB.Exec(`INSERT INTO posts(id,name,kind,created_at,updated_at) VALUES('web','Web','http_endpoint',?,?)`, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	s := NewScheduleStore(db)
+	for i := 0; i < 8; i++ {
+		id := fmt.Sprintf("web-%d", i)
+		if err := s.Save(ctx, Schedule{ID: id, PostID: "web", Kind: "http", Address: "http://127.0.0.1:1", IntervalSeconds: 60}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	results, err := s.RunDue(ctx, New(time.Second), time.Now().UTC().Add(time.Second), 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 8 {
+		t.Fatalf("results=%d want 8", len(results))
+	}
+	for _, result := range results {
+		if result.Result.OK {
+			t.Fatalf("unexpectedly healthy check: %#v", result)
+		}
+	}
+	// All schedules advanced; a second run has nothing due.
+	again, err := s.RunDue(ctx, New(time.Second), time.Now().UTC().Add(time.Second), 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again) != 0 {
+		t.Fatalf("second run returned %d due", len(again))
 	}
 }

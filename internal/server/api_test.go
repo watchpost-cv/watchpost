@@ -183,7 +183,7 @@ func TestFailedCentralCheckFiresRuleAlert(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
-	results, err := s.checks.RunDue(t.Context(), checks.New(time.Second), now)
+	results, err := s.checks.RunDue(t.Context(), checks.New(time.Second), now, 4)
 	if err != nil || len(results) != 1 {
 		t.Fatalf("run due: %d %v", len(results), err)
 	}

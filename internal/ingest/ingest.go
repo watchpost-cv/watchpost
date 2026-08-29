@@ -11,6 +11,7 @@ import (
 	"errors"
 	"github.com/watchpost-ops/watchpost/internal/store"
 	"math"
+	"sync"
 	"time"
 )
 
@@ -48,6 +49,9 @@ func (s *Service) AcceptBatch(ctx context.Context, secret string, observations [
 			return err
 		}
 	}
+	if !s.allow(first.CollectorID, len(observations), now) {
+		return errors.New("collector ingestion rate exceeded")
+	}
 	for index, o := range observations {
 		if o.Version != 1 || o.PostID != info.post || o.CollectorID != first.CollectorID || o.Sequence != info.last+int64(index)+1 || len(o.Signal) < 1 || len(o.Signal) > 128 || len(o.Labels) > 32 || !quality[o.Quality] || (o.Value != nil && (math.IsNaN(*o.Value) || math.IsInf(*o.Value, 0))) || o.ObservedAt.Before(now.Add(-24*time.Hour)) || o.ObservedAt.After(now.Add(5*time.Minute)) {
 			return errors.New("invalid or non-contiguous observation batch")
@@ -84,11 +88,45 @@ func (s *Service) RecordRejection(ctx context.Context, collectorID string, cause
 }
 
 type Service struct {
-	s   *store.Store
-	now func() time.Time
+	s     *store.Store
+	now   func() time.Time
+	mu    sync.Mutex
+	rate  map[string]*rateWindow
+	limit int
 }
 
-func New(s *store.Store) *Service { return &Service{s: s, now: time.Now} }
+type rateWindow struct {
+	minuteStart time.Time
+	samples     int
+}
+
+func New(s *store.Store) *Service { return &Service{s: s, now: time.Now, rate: map[string]*rateWindow{}, limit: 3600} }
+
+// SetIngestRate bounds accepted samples per collector per minute. Zero or a
+// negative value disables the budget.
+func (s *Service) SetIngestRate(limit int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.limit = limit
+}
+
+func (s *Service) allow(collectorID string, samples int, now time.Time) bool {
+	if s.limit <= 0 {
+		return true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	window, ok := s.rate[collectorID]
+	if !ok || now.Sub(window.minuteStart) >= time.Minute {
+		window = &rateWindow{minuteStart: now}
+		s.rate[collectorID] = window
+	}
+	if window.samples+samples > s.limit {
+		return false
+	}
+	window.samples += samples
+	return true
+}
 func (s *Service) Enroll(ctx context.Context, id, postID string) (string, error) {
 	b := make([]byte, 32)
 	if _, e := rand.Read(b); e != nil {
@@ -184,6 +222,9 @@ func (s *Service) Accept(ctx context.Context, secret string, o Observation) erro
 		if e = s.promotePending(ctx, tx, o.CollectorID); e != nil {
 			return e
 		}
+	}
+	if !s.allow(o.CollectorID, 1, now) {
+		return errors.New("collector ingestion rate exceeded")
 	}
 	if o.Sequence <= info.last {
 		return errors.New("replayed observation")
