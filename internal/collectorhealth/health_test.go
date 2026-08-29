@@ -8,6 +8,7 @@ import (
 
 	"github.com/watchpost-ops/watchpost/internal/ingest"
 	"github.com/watchpost-ops/watchpost/internal/posts"
+	"github.com/watchpost-ops/watchpost/internal/audit"
 	"github.com/watchpost-ops/watchpost/internal/store"
 )
 
@@ -15,9 +16,9 @@ func TestCollectorHealthTransitions(t *testing.T) {
 	ctx := context.Background()
 	db, _ := store.Open(ctx, t.TempDir())
 	defer db.Close()
-	_, _ = posts.New(db).Create(ctx, posts.Post{ID: "host-a", Name: "A", Kind: "host"})
+	_, _ = posts.New(db).Create(ctx, posts.Post{ID: "host-a", Name: "A", Kind: "host"}, audit.Entry{Action: "test"})
 	service := ingest.New(db)
-	secret, _ := service.Enroll(ctx, "agent-a", "host-a")
+	secret, _ := service.Enroll(ctx, "agent-a", "host-a", audit.Entry{Action: "test"})
 	health := New(db)
 	now := time.Now().UTC()
 	health.now = func() time.Time { return now }

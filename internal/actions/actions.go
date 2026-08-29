@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"github.com/watchpost-ops/watchpost/internal/audit"
 	"github.com/watchpost-ops/watchpost/internal/store"
 	"sync"
 	"time"
@@ -74,7 +76,7 @@ func (r *Registry) Register(d Definition) error {
 	r.definitions[d.Type] = d
 	return nil
 }
-func (r *Registry) Request(ctx context.Context, actionType, postID string, parameters map[string]any, userID int64, key string) (int64, error) {
+func (r *Registry) Request(ctx context.Context, actionType, postID string, parameters map[string]any, userID int64, key string, entry audit.Entry) (int64, error) {
 	r.mu.RLock()
 	d, ok := r.definitions[actionType]
 	r.mu.RUnlock()
@@ -90,14 +92,34 @@ func (r *Registry) Request(ctx context.Context, actionType, postID string, param
 		state = "pending"
 	}
 	now := r.now().UTC().Format(time.RFC3339Nano)
-	result, err := r.s.DB.ExecContext(ctx, `INSERT INTO action_requests(type,post_id,parameters_json,state,requested_by,requested_at,updated_at,idempotency_key) VALUES(?,?,?,?,?,?,?,?)`, actionType, nullable(postID), string(encoded), state, userID, now, now, key)
+	tx, err := r.s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
-	return result.LastInsertId()
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `INSERT INTO action_requests(type,post_id,parameters_json,state,requested_by,requested_at,updated_at,idempotency_key) VALUES(?,?,?,?,?,?,?,?)`, actionType, nullable(postID), string(encoded), state, userID, now, now, key)
+	if err != nil {
+		return 0, err
+	}
+	id, _ := result.LastInsertId()
+	entry.ActorID = userID
+	entry.ObjectType = "action"
+	entry.ObjectID = fmt.Sprint(id)
+	if err = audit.Insert(ctx, tx, entry); err != nil {
+		return 0, err
+	}
+	if err = tx.Commit(); err != nil {
+		return 0, err
+	}
+	return id, nil
 }
-func (r *Registry) Approve(ctx context.Context, id, approver int64) error {
-	result, err := r.s.DB.ExecContext(ctx, `UPDATE action_requests SET state='approved',approved_by=?,updated_at=? WHERE id=? AND state='pending' AND requested_by<>?`, approver, r.now().UTC().Format(time.RFC3339Nano), id, approver)
+func (r *Registry) Approve(ctx context.Context, id, approver int64, entry audit.Entry) error {
+	tx, err := r.s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE action_requests SET state='approved',approved_by=?,updated_at=? WHERE id=? AND state='pending' AND requested_by<>?`, approver, r.now().UTC().Format(time.RFC3339Nano), id, approver)
 	if err != nil {
 		return err
 	}
@@ -105,9 +127,15 @@ func (r *Registry) Approve(ctx context.Context, id, approver int64) error {
 	if n != 1 {
 		return errors.New("action cannot be approved")
 	}
-	return nil
+	entry.ActorID = approver
+	entry.ObjectType = "action"
+	entry.ObjectID = fmt.Sprint(id)
+	if err = audit.Insert(ctx, tx, entry); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
-func (r *Registry) Execute(ctx context.Context, id int64) (map[string]any, error) {
+func (r *Registry) Execute(ctx context.Context, id int64, entry audit.Entry) (map[string]any, error) {
 	var kind, post, encoded, state string
 	if err := r.s.DB.QueryRowContext(ctx, `SELECT type,COALESCE(post_id,''),parameters_json,state FROM action_requests WHERE id=?`, id).Scan(&kind, &post, &encoded, &state); err != nil {
 		return nil, err
@@ -138,9 +166,21 @@ func (r *Registry) Execute(ctx context.Context, id int64) (map[string]any, error
 		result = map[string]any{"error": err.Error()}
 	}
 	output, _ := json.Marshal(result)
-	_, updateErr := r.s.DB.ExecContext(ctx, `UPDATE action_requests SET state=?,result_json=?,updated_at=? WHERE id=? AND state='executing'`, newState, string(output), r.now().UTC().Format(time.RFC3339Nano), id)
-	if updateErr != nil {
+	tx, txErr := r.s.DB.BeginTx(ctx, nil)
+	if txErr != nil {
+		return nil, txErr
+	}
+	defer tx.Rollback()
+	if _, updateErr := tx.ExecContext(ctx, `UPDATE action_requests SET state=?,result_json=?,updated_at=? WHERE id=? AND state='executing'`, newState, string(output), r.now().UTC().Format(time.RFC3339Nano), id); updateErr != nil {
 		return nil, updateErr
+	}
+	entry.ObjectType = "action"
+	entry.ObjectID = fmt.Sprint(id)
+	if err := audit.Insert(ctx, tx, entry); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
 	}
 	return result, err
 }

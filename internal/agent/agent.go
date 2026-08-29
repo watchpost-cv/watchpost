@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
+	"github.com/watchpost-ops/watchpost/internal/audit"
 	"github.com/watchpost-ops/watchpost/internal/evidence"
 	"github.com/watchpost-ops/watchpost/internal/history"
 	"github.com/watchpost-ops/watchpost/internal/incidents"
@@ -52,17 +54,32 @@ type Service struct {
 func New(s *store.Store, p Provider) *Service {
 	return &Service{s: s, logs: evidence.New(s), history: history.New(s), incidents: incidents.New(s), provider: p, now: time.Now}
 }
-func (s *Service) Start(ctx context.Context, userID int64, postID string, incidentID *int64) (int64, error) {
+func (s *Service) Start(ctx context.Context, userID int64, postID string, incidentID *int64, entry audit.Entry) (int64, error) {
 	if postID == "" && incidentID == nil {
 		return 0, errors.New("conversation requires post or incident")
 	}
-	result, err := s.s.DB.ExecContext(ctx, `INSERT INTO conversations(user_id,post_id,incident_id,created_at) VALUES(?,?,?,?)`, userID, nullable(postID), incidentID, s.now().UTC().Format(time.RFC3339Nano))
+	tx, err := s.s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
-	return result.LastInsertId()
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `INSERT INTO conversations(user_id,post_id,incident_id,created_at) VALUES(?,?,?,?)`, userID, nullable(postID), incidentID, s.now().UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return 0, err
+	}
+	id, _ := result.LastInsertId()
+	entry.ActorID = userID
+	entry.ObjectType = "conversation"
+	entry.ObjectID = fmt.Sprint(id)
+	if err = audit.Insert(ctx, tx, entry); err != nil {
+		return 0, err
+	}
+	if err = tx.Commit(); err != nil {
+		return 0, err
+	}
+	return id, nil
 }
-func (s *Service) Investigate(ctx context.Context, conversationID, userID int64, question string, citations []Citation) (Response, error) {
+func (s *Service) Investigate(ctx context.Context, conversationID, userID int64, question string, citations []Citation, entry audit.Entry) (Response, error) {
 	if len(question) < 1 || len(question) > 4000 || len(citations) > 100 {
 		return Response{}, errors.New("invalid investigation")
 	}
@@ -117,6 +134,12 @@ func (s *Service) Investigate(ctx context.Context, conversationID, userID int64,
 		return Response{}, err
 	}
 	if err = insertEvidenceSnapshot(ctx, tx, conversationID, assistantMessageID, now, response.Citations); err != nil {
+		return Response{}, err
+	}
+	entry.ActorID = userID
+	entry.ObjectType = "conversation"
+	entry.ObjectID = fmt.Sprint(conversationID)
+	if err = audit.Insert(ctx, tx, entry); err != nil {
 		return Response{}, err
 	}
 	if err = tx.Commit(); err != nil {

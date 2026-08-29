@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/watchpost-ops/watchpost/internal/secrets"
+	"github.com/watchpost-ops/watchpost/internal/audit"
 	"github.com/watchpost-ops/watchpost/internal/store"
 )
 
@@ -28,7 +29,7 @@ func TestProfileCredentialsEncryptedRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	profile := SavedProfile{ID: "ups-poll", PostID: "ups-1", Kind: "ups", Address: "192.0.2.10", Port: 161, Username: "monitor", OIDs: []OID{{Name: "battery_charge", OID: ".1.3.6.1.2.1.33.1.2.4.0", Unit: "percent"}}, AuthPassword: "auth-secret", PrivacyPassword: "privacy-secret", IntervalSeconds: 60}
-	if err := store.Save(context.Background(), profile); err != nil {
+	if err := store.Save(context.Background(), profile, audit.Entry{Action: "test"}); err != nil {
 		t.Fatal(err)
 	}
 	// Credentials are never returned in listing.
@@ -68,7 +69,7 @@ func TestProfileSaveRefusesCredentialsWithoutMasterKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	profile := SavedProfile{ID: "ups-poll", PostID: "ups-1", Kind: "ups", Address: "192.0.2.10", Port: 161, Username: "monitor", OIDs: []OID{{Name: "battery_charge", OID: ".1.3.6.1.2.1.33.1.2.4.0", Unit: "percent"}}, AuthPassword: "auth", PrivacyPassword: "privacy", IntervalSeconds: 60}
-	if err := store.Save(context.Background(), profile); err == nil {
+	if err := store.Save(context.Background(), profile, audit.Entry{Action: "test"}); err == nil {
 		t.Fatal("credential storage succeeded without a master key")
 	}
 	// Metadata-only profiles still work without a key.
@@ -76,7 +77,7 @@ func TestProfileSaveRefusesCredentialsWithoutMasterKey(t *testing.T) {
 	metadataOnly.AuthPassword = ""
 	metadataOnly.PrivacyPassword = ""
 	metadataOnly.IntervalSeconds = 0
-	if err := store.Save(context.Background(), metadataOnly); err != nil {
+	if err := store.Save(context.Background(), metadataOnly, audit.Entry{Action: "test"}); err != nil {
 		t.Fatalf("metadata-only profile rejected: %v", err)
 	}
 }
@@ -89,7 +90,7 @@ func TestWrongMasterKeyCannotReadCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	profile := SavedProfile{ID: "ups-poll", PostID: "ups-1", Kind: "ups", Address: "192.0.2.10", Port: 161, Username: "monitor", OIDs: []OID{}, AuthPassword: "auth", PrivacyPassword: "privacy", IntervalSeconds: 60}
-	if err := store.Save(context.Background(), profile); err != nil {
+	if err := store.Save(context.Background(), profile, audit.Entry{Action: "test"}); err != nil {
 		t.Fatal(err)
 	}
 	wrong := NewProfileStoreWithKey(db, secrets.New("key-b"))

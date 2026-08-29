@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"github.com/watchpost-ops/watchpost/internal/posts"
+	"github.com/watchpost-ops/watchpost/internal/audit"
 	"github.com/watchpost-ops/watchpost/internal/store"
 	"testing"
 	"time"
@@ -17,14 +18,14 @@ func TestAuthenticatedIngestRejectsReplayAndClock(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer db.Close()
-	_, e = posts.New(db).Create(ctx, posts.Post{ID: "host-a", Name: "A", Kind: "host"})
+	_, e = posts.New(db).Create(ctx, posts.Post{ID: "host-a", Name: "A", Kind: "host"}, audit.Entry{Action: "test"})
 	if e != nil {
 		t.Fatal(e)
 	}
 	s := New(db)
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	s.now = func() time.Time { return now }
-	secret, e := s.Enroll(ctx, "collector-a", "host-a")
+	secret, e := s.Enroll(ctx, "collector-a", "host-a", audit.Entry{Action: "test"})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -49,9 +50,9 @@ func TestAcceptBatchIsAtomicAndContiguous(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	_, _ = posts.New(db).Create(ctx, posts.Post{ID: "host-a", Name: "Host", Kind: "host"})
+	_, _ = posts.New(db).Create(ctx, posts.Post{ID: "host-a", Name: "Host", Kind: "host"}, audit.Entry{Action: "test"})
 	service := New(db)
-	secret, _ := service.Enroll(ctx, "collector-a", "host-a")
+	secret, _ := service.Enroll(ctx, "collector-a", "host-a", audit.Entry{Action: "test"})
 	now := time.Now().UTC()
 	value := 50.0
 	items := []Observation{{Version: 1, PostID: "host-a", CollectorID: "collector-a", ObservedAt: now, Sequence: 1, Signal: "cpu.percent", Value: &value, Unit: "percent", Quality: "good", Labels: map[string]string{}}, {Version: 1, PostID: "host-a", CollectorID: "collector-a", ObservedAt: now, Sequence: 2, Signal: "memory.percent", Value: &value, Unit: "percent", Quality: "good", Labels: map[string]string{}}}
@@ -77,14 +78,14 @@ func FuzzObservationValidation(f *testing.F) {
 			t.Fatal(err)
 		}
 		defer db.Close()
-		_, err = posts.New(db).Create(context.Background(), posts.Post{ID: "host-a", Name: "A", Kind: "host"})
+		_, err = posts.New(db).Create(context.Background(), posts.Post{ID: "host-a", Name: "A", Kind: "host"}, audit.Entry{Action: "test"})
 		if err != nil {
 			t.Fatal(err)
 		}
 		service := New(db)
 		now := time.Now().UTC()
 		service.now = func() time.Time { return now }
-		secret, err := service.Enroll(context.Background(), "collector-a", "host-a")
+		secret, err := service.Enroll(context.Background(), "collector-a", "host-a", audit.Entry{Action: "test"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -99,11 +100,11 @@ func TestPendingCredentialPromotedOnFirstUse(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	_, _ = posts.New(db).Create(ctx, posts.Post{ID: "host-a", Name: "Host", Kind: "host"})
+	_, _ = posts.New(db).Create(ctx, posts.Post{ID: "host-a", Name: "Host", Kind: "host"}, audit.Entry{Action: "test"})
 	service := New(db)
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	service.now = func() time.Time { return now }
-	oldSecret, _ := service.Enroll(ctx, "collector-a", "host-a")
+	oldSecret, _ := service.Enroll(ctx, "collector-a", "host-a", audit.Entry{Action: "test"})
 	pendingRaw := "pending-replacement-credential"
 	pendingHash := sha256.Sum256([]byte(pendingRaw))
 	if _, err = db.DB.Exec(`UPDATE collector_keys SET pending_secret_hash=?,pending_expires_at=? WHERE id='collector-a'`, pendingHash[:], now.Add(10*time.Minute).Format(time.RFC3339Nano)); err != nil {
@@ -135,11 +136,11 @@ func TestExpiredPendingCredentialDoesNotInvalidateOld(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	_, _ = posts.New(db).Create(ctx, posts.Post{ID: "host-a", Name: "Host", Kind: "host"})
+	_, _ = posts.New(db).Create(ctx, posts.Post{ID: "host-a", Name: "Host", Kind: "host"}, audit.Entry{Action: "test"})
 	service := New(db)
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	service.now = func() time.Time { return now }
-	oldSecret, _ := service.Enroll(ctx, "collector-a", "host-a")
+	oldSecret, _ := service.Enroll(ctx, "collector-a", "host-a", audit.Entry{Action: "test"})
 	pendingRaw := "expired-pending-replacement"
 	pendingHash := sha256.Sum256([]byte(pendingRaw))
 	if _, err = db.DB.Exec(`UPDATE collector_keys SET pending_secret_hash=?,pending_expires_at=? WHERE id='collector-a'`, pendingHash[:], now.Add(-time.Minute).Format(time.RFC3339Nano)); err != nil {
@@ -163,12 +164,12 @@ func TestIngestRateBudgetRejectsOverflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	_, _ = posts.New(db).Create(ctx, posts.Post{ID: "host-a", Name: "Host", Kind: "host"})
+	_, _ = posts.New(db).Create(ctx, posts.Post{ID: "host-a", Name: "Host", Kind: "host"}, audit.Entry{Action: "test"})
 	service := New(db)
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	service.now = func() time.Time { return now }
 	service.SetIngestRate(3)
-	secret, _ := service.Enroll(ctx, "collector-a", "host-a")
+	secret, _ := service.Enroll(ctx, "collector-a", "host-a", audit.Entry{Action: "test"})
 	value := 50.0
 	batch := []Observation{{Version: 1, PostID: "host-a", CollectorID: "collector-a", ObservedAt: now, Sequence: 1, Signal: "cpu.percent", Value: &value, Unit: "percent", Quality: "good", Labels: map[string]string{}}}
 	if err = service.AcceptBatch(ctx, secret, batch, now); err != nil {

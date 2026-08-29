@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"github.com/watchpost-ops/watchpost/internal/audit"
 	"github.com/watchpost-ops/watchpost/internal/store"
 	"time"
 )
@@ -58,7 +59,7 @@ func (s *Service) List(ctx context.Context) ([]PeerStatus, error) {
 }
 
 func New(s *store.Store) *Service { return &Service{s: s, now: time.Now} }
-func (s *Service) Enroll(ctx context.Context, id string) (string, error) {
+func (s *Service) Enroll(ctx context.Context, id string, entry audit.Entry) (string, error) {
 	if id == "" {
 		return "", errors.New("peer ID required")
 	}
@@ -68,8 +69,23 @@ func (s *Service) Enroll(ctx context.Context, id string) (string, error) {
 	}
 	secret := base64.RawURLEncoding.EncodeToString(bytes)
 	hash := sha256.Sum256([]byte(secret))
-	_, err := s.s.DB.ExecContext(ctx, `INSERT INTO peers(id,secret_hash,state,created_at) VALUES(?,?,'active',?)`, id, hash[:], s.now().UTC().Format(time.RFC3339Nano))
-	return secret, err
+	tx, err := s.s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `INSERT INTO peers(id,secret_hash,state,created_at) VALUES(?,?,'active',?)`, id, hash[:], s.now().UTC().Format(time.RFC3339Nano)); err != nil {
+		return "", err
+	}
+	entry.ObjectType = "peer"
+	entry.ObjectID = id
+	if err = audit.Insert(ctx, tx, entry); err != nil {
+		return "", err
+	}
+	if err = tx.Commit(); err != nil {
+		return "", err
+	}
+	return secret, nil
 }
 func Sign(secret string, envelope Envelope) Envelope {
 	mac := hmac.New(sha256.New, []byte(secret))
@@ -114,8 +130,13 @@ func (s *Service) Queue(ctx context.Context, peerID, eventID, kind string, paylo
 	_, err = s.s.DB.ExecContext(ctx, `INSERT INTO federation_outbox(peer_id,event_id,kind,payload_json,created_at) VALUES(?,?,?,?,?)`, peerID, eventID, kind, string(encoded), s.now().UTC().Format(time.RFC3339Nano))
 	return err
 }
-func (s *Service) Revoke(ctx context.Context, id string) error {
-	result, err := s.s.DB.ExecContext(ctx, `UPDATE peers SET state='revoked',revoked_at=? WHERE id=? AND state='active'`, s.now().UTC().Format(time.RFC3339Nano), id)
+func (s *Service) Revoke(ctx context.Context, id string, entry audit.Entry) error {
+	tx, err := s.s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE peers SET state='revoked',revoked_at=? WHERE id=? AND state='active'`, s.now().UTC().Format(time.RFC3339Nano), id)
 	if err != nil {
 		return err
 	}
@@ -123,7 +144,12 @@ func (s *Service) Revoke(ctx context.Context, id string) error {
 	if n != 1 {
 		return errors.New("active peer not found")
 	}
-	return nil
+	entry.ObjectType = "peer"
+	entry.ObjectID = id
+	if err = audit.Insert(ctx, tx, entry); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func signingBytes(e Envelope) []byte {
 	copy := e

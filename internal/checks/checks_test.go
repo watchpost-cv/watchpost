@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/watchpost-ops/watchpost/internal/contract"
+	"github.com/watchpost-ops/watchpost/internal/audit"
 	"github.com/watchpost-ops/watchpost/internal/store"
 )
 
@@ -80,7 +81,7 @@ func TestRunDueConcurrentWorkersReturnAllResults(t *testing.T) {
 	s := NewScheduleStore(db)
 	for i := 0; i < 8; i++ {
 		id := fmt.Sprintf("web-%d", i)
-		if err := s.Save(ctx, Schedule{ID: id, PostID: "web", Kind: "http", Address: "http://127.0.0.1:1", IntervalSeconds: 60}); err != nil {
+		if err := s.Save(ctx, Schedule{ID: id, PostID: "web", Kind: "http", Address: "http://127.0.0.1:1", IntervalSeconds: 60}, audit.Entry{Action: "test"}); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/watchpost-ops/watchpost/internal/audit"
 	"github.com/watchpost-ops/watchpost/internal/store"
 )
 
@@ -29,7 +30,7 @@ type Post struct {
 type Store struct{ s *store.Store }
 
 func New(s *store.Store) *Store { return &Store{s: s} }
-func (s *Store) Create(ctx context.Context, p Post) (Post, error) {
+func (s *Store) Create(ctx context.Context, p Post, entry audit.Entry) (Post, error) {
 	if !valid(p) {
 		return Post{}, errors.New("invalid post")
 	}
@@ -40,8 +41,20 @@ func (s *Store) Create(ctx context.Context, p Post) (Post, error) {
 	}
 	labels, _ := json.Marshal(p.Labels)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	_, err := s.s.DB.ExecContext(ctx, `INSERT INTO posts(id,name,kind,address,owner,labels_json,maintenance,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`, p.ID, p.Name, p.Kind, p.Address, p.Owner, string(labels), p.Maintenance, now, now)
+	tx, err := s.s.DB.BeginTx(ctx, nil)
 	if err != nil {
+		return Post{}, err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `INSERT INTO posts(id,name,kind,address,owner,labels_json,maintenance,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`, p.ID, p.Name, p.Kind, p.Address, p.Owner, string(labels), p.Maintenance, now, now); err != nil {
+		return Post{}, err
+	}
+	entry.ObjectType = "post"
+	entry.ObjectID = p.ID
+	if err = audit.Insert(ctx, tx, entry); err != nil {
+		return Post{}, err
+	}
+	if err = tx.Commit(); err != nil {
 		return Post{}, err
 	}
 	return s.Get(ctx, p.ID)
@@ -94,18 +107,31 @@ func (s *Store) Count(ctx context.Context) (int, error) {
 	}
 	return count, nil
 }
-func (s *Store) Update(ctx context.Context, p Post, expected int) (Post, error) {
+func (s *Store) Update(ctx context.Context, p Post, expected int, entry audit.Entry) (Post, error) {
 	if !valid(p) {
 		return Post{}, errors.New("invalid post")
 	}
 	labels, _ := json.Marshal(p.Labels)
-	r, err := s.s.DB.ExecContext(ctx, `UPDATE posts SET name=?,address=?,owner=?,labels_json=?,maintenance=?,archived=?,version=version+1,updated_at=? WHERE id=? AND version=?`, p.Name, p.Address, p.Owner, string(labels), p.Maintenance, p.Archived, time.Now().UTC().Format(time.RFC3339Nano), p.ID, expected)
+	tx, err := s.s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return Post{}, err
+	}
+	defer tx.Rollback()
+	r, err := tx.ExecContext(ctx, `UPDATE posts SET name=?,address=?,owner=?,labels_json=?,maintenance=?,archived=?,version=version+1,updated_at=? WHERE id=? AND version=?`, p.Name, p.Address, p.Owner, string(labels), p.Maintenance, p.Archived, time.Now().UTC().Format(time.RFC3339Nano), p.ID, expected)
 	if err != nil {
 		return Post{}, err
 	}
 	n, _ := r.RowsAffected()
 	if n != 1 {
 		return Post{}, errors.New("post version conflict")
+	}
+	entry.ObjectType = "post"
+	entry.ObjectID = p.ID
+	if err = audit.Insert(ctx, tx, entry); err != nil {
+		return Post{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return Post{}, err
 	}
 	return s.Get(ctx, p.ID)
 }
@@ -123,7 +149,7 @@ func valid(p Post) bool {
 }
 
 // Delete permanently removes a post and all evidence and credentials scoped to it.
-func (s *Store) Delete(ctx context.Context, id string, actorID any) error {
+func (s *Store) Delete(ctx context.Context, id string, entry audit.Entry) error {
 	tx, err := s.s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -155,12 +181,14 @@ func (s *Store) Delete(ctx context.Context, id string, actorID any) error {
 	if _, err = tx.ExecContext(ctx, `DELETE FROM posts WHERE id=?`, id); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO audit(at,actor_user_id,action,object_type,object_id,detail) VALUES(?,?,'delete','post',?,'permanent deletion confirmed')`, time.Now().UTC().Format(time.RFC3339Nano), actorID, id); err != nil {
+	entry.ObjectType = "post"
+	entry.ObjectID = id
+	if err = audit.Insert(ctx, tx, entry); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
-func (s *Store) AddDependency(ctx context.Context, id, depends string) error {
+func (s *Store) AddDependency(ctx context.Context, id, depends string, entry audit.Entry) error {
 	if id == depends {
 		return errors.New("self dependency")
 	}
@@ -178,6 +206,11 @@ func (s *Store) AddDependency(ctx context.Context, id, depends string) error {
 		return errors.New("dependency cycle")
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO post_dependencies(post_id,depends_on_id) VALUES(?,?)`, id, depends); err != nil {
+		return err
+	}
+	entry.ObjectType = "post"
+	entry.ObjectID = id
+	if err = audit.Insert(ctx, tx, entry); err != nil {
 		return err
 	}
 	return tx.Commit()

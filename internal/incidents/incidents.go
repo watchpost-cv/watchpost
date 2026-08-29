@@ -3,6 +3,8 @@ package incidents
 import (
 	"context"
 	"errors"
+	"fmt"
+	"github.com/watchpost-ops/watchpost/internal/audit"
 	"github.com/watchpost-ops/watchpost/internal/store"
 	"time"
 )
@@ -28,7 +30,7 @@ type Store struct {
 }
 
 func New(s *store.Store) *Store { return &Store{s: s, now: time.Now} }
-func (s *Store) Create(ctx context.Context, title, severity, actor string, alertIDs []int64) (Incident, error) {
+func (s *Store) Create(ctx context.Context, title, severity, actor string, alertIDs []int64, entry audit.Entry) (Incident, error) {
 	if title == "" || !map[string]bool{"info": true, "warning": true, "critical": true}[severity] {
 		return Incident{}, errors.New("invalid incident")
 	}
@@ -51,12 +53,17 @@ func (s *Store) Create(ctx context.Context, title, severity, actor string, alert
 	if _, err = tx.ExecContext(ctx, `INSERT INTO incident_timeline(incident_id,at,kind,actor,body) VALUES(?,?,'created',?,?)`, id, now.Format(time.RFC3339Nano), actor, title); err != nil {
 		return Incident{}, err
 	}
+	entry.ObjectType = "incident"
+	entry.ObjectID = fmt.Sprint(id)
+	if err = audit.Insert(ctx, tx, entry); err != nil {
+		return Incident{}, err
+	}
 	if err = tx.Commit(); err != nil {
 		return Incident{}, err
 	}
 	return Incident{ID: id, Title: title, Severity: severity, Status: "open", CreatedAt: now, UpdatedAt: now}, nil
 }
-func (s *Store) Transition(ctx context.Context, id int64, status, actor, summary string) (Incident, error) {
+func (s *Store) Transition(ctx context.Context, id int64, status, actor, summary string, entry audit.Entry) (Incident, error) {
 	if !map[string]bool{"open": true, "investigating": true, "mitigated": true, "resolved": true}[status] {
 		return Incident{}, errors.New("invalid status")
 	}
@@ -77,19 +84,36 @@ func (s *Store) Transition(ctx context.Context, id int64, status, actor, summary
 	if _, err = tx.ExecContext(ctx, `INSERT INTO incident_timeline(incident_id,at,kind,actor,body) VALUES(?,?,?,?,?)`, id, now.Format(time.RFC3339Nano), "status", actor, status+": "+summary); err != nil {
 		return Incident{}, err
 	}
+	entry.ObjectType = "incident"
+	entry.ObjectID = fmt.Sprint(id)
+	if err = audit.Insert(ctx, tx, entry); err != nil {
+		return Incident{}, err
+	}
 	if err = tx.Commit(); err != nil {
 		return Incident{}, err
 	}
 	return s.Get(ctx, id)
 }
-func (s *Store) AddNote(ctx context.Context, id int64, actor, body string) error {
+func (s *Store) AddNote(ctx context.Context, id int64, actor, body string, entry audit.Entry) error {
 	if body == "" || len(body) > 10000 {
 		return errors.New("invalid note")
 	}
-	_, err := s.s.DB.ExecContext(ctx, `INSERT INTO incident_timeline(incident_id,at,kind,actor,body) VALUES(?,?,'note',?,?)`, id, s.now().UTC().Format(time.RFC3339Nano), actor, body)
-	return err
+	tx, err := s.s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `INSERT INTO incident_timeline(incident_id,at,kind,actor,body) VALUES(?,?,'note',?,?)`, id, s.now().UTC().Format(time.RFC3339Nano), actor, body); err != nil {
+		return err
+	}
+	entry.ObjectType = "incident"
+	entry.ObjectID = fmt.Sprint(id)
+	if err = audit.Insert(ctx, tx, entry); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
-func (s *Store) Assign(ctx context.Context, id int64, owner, actor string) (Incident, error) {
+func (s *Store) Assign(ctx context.Context, id int64, owner, actor string, entry audit.Entry) (Incident, error) {
 	if owner == "" || len(owner) > 254 {
 		return Incident{}, errors.New("invalid owner")
 	}
@@ -108,6 +132,11 @@ func (s *Store) Assign(ctx context.Context, id int64, owner, actor string) (Inci
 		return Incident{}, errors.New("incident not found")
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO incident_timeline(incident_id,at,kind,actor,body) VALUES(?,?,'assignment',?,?)`, id, now.Format(time.RFC3339Nano), actor, owner); err != nil {
+		return Incident{}, err
+	}
+	entry.ObjectType = "incident"
+	entry.ObjectID = fmt.Sprint(id)
+	if err = audit.Insert(ctx, tx, entry); err != nil {
 		return Incident{}, err
 	}
 	if err = tx.Commit(); err != nil {

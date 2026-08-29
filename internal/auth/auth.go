@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/watchpost-ops/watchpost/internal/audit"
 	"github.com/watchpost-ops/watchpost/internal/store"
 )
 
@@ -108,7 +109,7 @@ func (m *Manager) Setup(ctx context.Context, email, password, token string) (Use
 		return User{}, err
 	}
 	id, _ := result.LastInsertId()
-	if _, err = tx.ExecContext(ctx, `INSERT INTO audit(at,actor_user_id,action,object_type,object_id,detail) VALUES(?,?,'setup','user',?,'first administrator created')`, now, id, fmt.Sprint(id)); err != nil {
+	if err = audit.Insert(ctx, tx, audit.Entry{ActorID: id, Action: "setup", ObjectType: "user", ObjectID: fmt.Sprint(id), Detail: "first administrator created"}); err != nil {
 		return User{}, err
 	}
 	if err = tx.Commit(); err != nil {
@@ -144,7 +145,7 @@ func (m *Manager) ListUsers(ctx context.Context) ([]User, error) {
 	return items, rows.Err()
 }
 
-func (m *Manager) CreateUser(ctx context.Context, email, password, role string) (User, error) {
+func (m *Manager) CreateUser(ctx context.Context, email, password, role string, entry audit.Entry) (User, error) {
 	if !strings.Contains(email, "@") || len(password) < MinimumPasswordLength || !validRole(role) {
 		return User{}, errors.New("valid email, password of at least 7 characters, and role required")
 	}
@@ -152,19 +153,37 @@ func (m *Manager) CreateUser(ctx context.Context, email, password, role string) 
 	if err != nil {
 		return User{}, err
 	}
-	result, err := m.store.DB.ExecContext(ctx, `INSERT INTO users(email,password_hash,role,created_at) VALUES(?,?,?,?)`, strings.TrimSpace(email), hash, role, time.Now().UTC().Format(time.RFC3339Nano))
+	tx, err := m.store.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return User{}, err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `INSERT INTO users(email,password_hash,role,created_at) VALUES(?,?,?,?)`, strings.TrimSpace(email), hash, role, time.Now().UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return User{}, err
 	}
 	id, _ := result.LastInsertId()
+	entry.ObjectType = "user"
+	entry.ObjectID = fmt.Sprint(id)
+	if err = audit.Insert(ctx, tx, entry); err != nil {
+		return User{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return User{}, err
+	}
 	return User{ID: id, Email: strings.TrimSpace(email), Role: role}, nil
 }
 
-func (m *Manager) SetRole(ctx context.Context, id int64, role string) error {
+func (m *Manager) SetRole(ctx context.Context, id int64, role string, entry audit.Entry) error {
 	if !validRole(role) {
 		return errors.New("invalid role")
 	}
-	result, err := m.store.DB.ExecContext(ctx, `UPDATE users SET role=? WHERE id=?`, role, id)
+	tx, err := m.store.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE users SET role=? WHERE id=?`, role, id)
 	if err != nil {
 		return err
 	}
@@ -172,10 +191,18 @@ func (m *Manager) SetRole(ctx context.Context, id int64, role string) error {
 	if n != 1 {
 		return sql.ErrNoRows
 	}
-	return nil
+	entry.ObjectType = "user"
+	entry.ObjectID = fmt.Sprint(id)
+	if err = audit.Insert(ctx, tx, entry); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
-func (m *Manager) ResetPassword(ctx context.Context, id int64, newPassword string) error {
+// ResetPassword rotates a user's password, revoking every session for that
+// user, and records the change atomically. Reset-without-revocation is not the
+// default; a separate explicit operation would be needed for that.
+func (m *Manager) ResetPassword(ctx context.Context, id int64, newPassword string, entry audit.Entry) error {
 	if len(newPassword) < MinimumPasswordLength {
 		return errors.New("password must be at least 7 characters")
 	}
@@ -183,7 +210,12 @@ func (m *Manager) ResetPassword(ctx context.Context, id int64, newPassword strin
 	if err != nil {
 		return err
 	}
-	result, err := m.store.DB.ExecContext(ctx, `UPDATE users SET password_hash=? WHERE id=?`, hash, id)
+	tx, err := m.store.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE users SET password_hash=? WHERE id=?`, hash, id)
 	if err != nil {
 		return err
 	}
@@ -191,12 +223,35 @@ func (m *Manager) ResetPassword(ctx context.Context, id int64, newPassword strin
 	if n != 1 {
 		return sql.ErrNoRows
 	}
-	return nil
+	// A password reset always revokes the user's active sessions so a stolen
+	// session cannot outlive the supposed reset.
+	if _, err = tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id=?`, id); err != nil {
+		return err
+	}
+	entry.ObjectType = "user"
+	entry.ObjectID = fmt.Sprint(id)
+	if err = audit.Insert(ctx, tx, entry); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
-func (m *Manager) RevokeSessions(ctx context.Context, userID int64) (int64, error) {
-	result, err := m.store.DB.ExecContext(ctx, `DELETE FROM sessions WHERE user_id=?`, userID)
+func (m *Manager) RevokeSessions(ctx context.Context, userID int64, entry audit.Entry) (int64, error) {
+	tx, err := m.store.DB.BeginTx(ctx, nil)
 	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id=?`, userID)
+	if err != nil {
+		return 0, err
+	}
+	entry.ObjectType = "user"
+	entry.ObjectID = fmt.Sprint(userID)
+	if err = audit.Insert(ctx, tx, entry); err != nil {
+		return 0, err
+	}
+	if err = tx.Commit(); err != nil {
 		return 0, err
 	}
 	return result.RowsAffected()
@@ -205,7 +260,7 @@ func (m *Manager) RevokeSessions(ctx context.Context, userID int64) (int64, erro
 // ChangePassword verifies the current password and rotates it, revoking every
 // other session for the user while keeping the session identified by
 // keepToken.
-func (m *Manager) ChangePassword(ctx context.Context, userID int64, currentPassword, newPassword, keepToken string) error {
+func (m *Manager) ChangePassword(ctx context.Context, userID int64, currentPassword, newPassword, keepToken string, entry audit.Entry) error {
 	if len(newPassword) < MinimumPasswordLength {
 		return errors.New("password must be at least 7 characters")
 	}
@@ -232,10 +287,16 @@ func (m *Manager) ChangePassword(ctx context.Context, userID int64, currentPassw
 	if _, err = tx.ExecContext(ctx, `UPDATE users SET password_hash=? WHERE id=?`, next, userID); err != nil {
 		return err
 	}
+	entry.ActorID = userID
+	entry.ObjectType = "user"
+	entry.ObjectID = fmt.Sprint(userID)
+	if err = audit.Insert(ctx, tx, entry); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
-func (m *Manager) Login(ctx context.Context, email, password string) (Session, error) {
+func (m *Manager) Login(ctx context.Context, email, password string, entry audit.Entry) (Session, error) {
 	key := strings.ToLower(strings.TrimSpace(email))
 	if !m.allow(key) {
 		return Session{}, errors.New("login temporarily throttled")
@@ -256,8 +317,21 @@ func (m *Manager) Login(ctx context.Context, email, password string) (Session, e
 	if err != nil {
 		return Session{}, err
 	}
-	_, err = m.store.DB.ExecContext(ctx, `INSERT INTO sessions(token_hash,user_id,csrf_token,expires_at) VALUES(?,?,?,?)`, tokenHash(token), u.ID, csrf, time.Now().UTC().Add(24*time.Hour).Format(time.RFC3339Nano))
+	tx, err := m.store.DB.BeginTx(ctx, nil)
 	if err != nil {
+		return Session{}, err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `INSERT INTO sessions(token_hash,user_id,csrf_token,expires_at) VALUES(?,?,?,?)`, tokenHash(token), u.ID, csrf, time.Now().UTC().Add(24*time.Hour).Format(time.RFC3339Nano)); err != nil {
+		return Session{}, err
+	}
+	entry.ActorID = u.ID
+	entry.ObjectType = "session"
+	entry.ObjectID = ""
+	if err = audit.Insert(ctx, tx, entry); err != nil {
+		return Session{}, err
+	}
+	if err = tx.Commit(); err != nil {
 		return Session{}, err
 	}
 	return Session{Token: token, CSRF: csrf, User: u}, nil
@@ -276,9 +350,20 @@ func (m *Manager) Authenticate(ctx context.Context, token string) (Session, erro
 	}
 	return s, nil
 }
-func (m *Manager) Logout(ctx context.Context, token string) error {
-	_, err := m.store.DB.ExecContext(ctx, `DELETE FROM sessions WHERE token_hash=?`, tokenHash(token))
-	return err
+func (m *Manager) Logout(ctx context.Context, token string, entry audit.Entry) error {
+	tx, err := m.store.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `DELETE FROM sessions WHERE token_hash=?`, tokenHash(token)); err != nil {
+		return err
+	}
+	entry.ObjectType = "session"
+	if err = audit.Insert(ctx, tx, entry); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func passwordHash(password string) ([]byte, error) {

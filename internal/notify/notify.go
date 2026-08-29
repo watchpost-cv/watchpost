@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/watchpost-ops/watchpost/internal/audit"
 	"github.com/watchpost-ops/watchpost/internal/store"
 	"net/http"
 	"net/smtp"
@@ -63,12 +64,24 @@ type Service struct {
 func New(s *store.Store, sender Sender) *Service {
 	return &Service{s: s, sender: sender, now: time.Now}
 }
-func (s *Service) CreateRoute(ctx context.Context, r Route) error {
+func (s *Service) CreateRoute(ctx context.Context, r Route, entry audit.Entry) error {
 	if r.ID == "" || !map[string]bool{"webhook": true, "email": true}[r.Kind] || r.Destination == "" {
 		return errors.New("invalid route")
 	}
-	_, err := s.s.DB.ExecContext(ctx, `INSERT INTO notification_routes(id,kind,destination,secret,enabled) VALUES(?,?,?,?,?)`, r.ID, r.Kind, r.Destination, r.Secret, r.Enabled)
-	return err
+	tx, err := s.s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `INSERT INTO notification_routes(id,kind,destination,secret,enabled) VALUES(?,?,?,?,?)`, r.ID, r.Kind, r.Destination, r.Secret, r.Enabled); err != nil {
+		return err
+	}
+	entry.ObjectType = "notification_route"
+	entry.ObjectID = r.ID
+	if err = audit.Insert(ctx, tx, entry); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func (s *Service) Queue(ctx context.Context, alertID int64) error {
 	_, err := s.s.DB.ExecContext(ctx, `INSERT OR IGNORE INTO notification_deliveries(alert_id,route_id,state,next_attempt_at) SELECT ?,id,'pending',? FROM notification_routes WHERE enabled=1`, alertID, s.now().UTC().Format(time.RFC3339Nano))

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/watchpost-ops/watchpost/internal/posts"
+	"github.com/watchpost-ops/watchpost/internal/audit"
 	"github.com/watchpost-ops/watchpost/internal/store"
 	"testing"
 	"time"
@@ -28,7 +29,7 @@ func TestDeduplicateDeliverAndRetry(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer db.Close()
-	_, _ = posts.New(db).Create(ctx, posts.Post{ID: "p", Name: "P", Kind: "host"})
+	_, _ = posts.New(db).Create(ctx, posts.Post{ID: "p", Name: "P", Kind: "host"}, audit.Entry{Action: "test"})
 	_, _ = db.DB.Exec(`INSERT INTO rules(id,post_id,signal,operator,threshold,severity) VALUES('r','p','x','gt',1,'warning')`)
 	result, _ := db.DB.Exec(`INSERT INTO alerts(rule_id,post_id,state,severity,opened_at,updated_at) VALUES('r','p','firing','warning','now','now')`)
 	alert, _ := result.LastInsertId()
@@ -36,7 +37,7 @@ func TestDeduplicateDeliverAndRetry(t *testing.T) {
 	s := New(db, sender)
 	now := time.Now()
 	s.now = func() time.Time { return now }
-	if e = s.CreateRoute(ctx, Route{ID: "web", Kind: "webhook", Destination: "https://example.invalid", Enabled: true}); e != nil {
+	if e = s.CreateRoute(ctx, Route{ID: "web", Kind: "webhook", Destination: "https://example.invalid", Enabled: true}, audit.Entry{Action: "test"}); e != nil {
 		t.Fatal(e)
 	}
 	_ = s.Queue(ctx, alert)

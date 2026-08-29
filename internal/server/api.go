@@ -14,6 +14,7 @@ import (
 
 	"github.com/watchpost-ops/watchpost/internal/agent"
 	"github.com/watchpost-ops/watchpost/internal/agentpairing"
+	"github.com/watchpost-ops/watchpost/internal/audit"
 	"github.com/watchpost-ops/watchpost/internal/auth"
 	"github.com/watchpost-ops/watchpost/internal/checks"
 	"github.com/watchpost-ops/watchpost/internal/collectorcontract"
@@ -126,7 +127,7 @@ func (s *Server) handleAgentPairingRequest(w http.ResponseWriter, r *http.Reques
 }
 func (s *Server) handleRotateAgentCredential(w http.ResponseWriter, r *http.Request) {
 	installation := r.Header.Get("X-Watchpost-Installation")
-	credential, err := s.agentPairing.Rotate(r.Context(), installation, agentpairing.Bearer(r.Header.Get("Authorization")))
+	credential, err := s.agentPairing.Rotate(r.Context(), installation, agentpairing.Bearer(r.Header.Get("Authorization")), audit.Entry{Action: "agent_credential_rotate", ObjectType: "agent_connection", ObjectID: installation, Detail: "credential rotation requested"})
 	if err != nil {
 		writeJSON(w, 401, map[string]string{"error": err.Error()})
 		return
@@ -136,11 +137,10 @@ func (s *Server) handleRotateAgentCredential(w http.ResponseWriter, r *http.Requ
 
 func (s *Server) handleAgentUnpair(w http.ResponseWriter, r *http.Request) {
 	installation := r.Header.Get("X-Watchpost-Installation")
-	if err := s.agentPairing.Unpair(r.Context(), installation, agentpairing.Bearer(r.Header.Get("Authorization"))); err != nil {
+	if err := s.agentPairing.Unpair(r.Context(), installation, agentpairing.Bearer(r.Header.Get("Authorization")), audit.Entry{Action: "agent_unpair", ObjectType: "agent_connection", ObjectID: installation, Detail: "agent self-unpaired"}); err != nil {
 		writeJSON(w, 401, map[string]string{"error": err.Error()})
 		return
 	}
-	s.audit(r, "agent_unpair", "agent_connection", installation, "agent self-unpaired")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -183,11 +183,10 @@ func (s *Server) handleListPostAgentConnections(w http.ResponseWriter, r *http.R
 	writeJSON(w, 200, map[string]any{"connections": result})
 }
 func (s *Server) handleRevokeAgentConnection(w http.ResponseWriter, r *http.Request) {
-	if err := s.agentPairing.Revoke(r.Context(), r.PathValue("id")); err != nil {
+	if err := s.agentPairing.Revoke(r.Context(), r.PathValue("id"), audit.Entry{ActorID: currentUser(r).ID, Action: "agent_connection_revoke", ObjectType: "agent_connection", ObjectID: r.PathValue("id"), Detail: "revoked"}); err != nil {
 		writeJSON(w, 409, map[string]string{"error": err.Error()})
 		return
 	}
-	s.audit(r, "agent_connection_revoke", "agent_connection", r.PathValue("id"), "revoked")
 	w.WriteHeader(http.StatusNoContent)
 }
 func (s *Server) handleApproveAgentPairingRequest(w http.ResponseWriter, r *http.Request) {
@@ -197,19 +196,17 @@ func (s *Server) handleApproveAgentPairingRequest(w http.ResponseWriter, r *http
 	if !decode(w, r, &input) {
 		return
 	}
-	if err := s.agentPairing.Decide(r.Context(), r.PathValue("id"), input.PostID, true); err != nil {
+	if err := s.agentPairing.Decide(r.Context(), r.PathValue("id"), input.PostID, true, audit.Entry{ActorID: currentUser(r).ID, Action: "agent_pairing_approve", ObjectType: "agent_pairing_request", ObjectID: r.PathValue("id"), Detail: "post=" + input.PostID}); err != nil {
 		writeJSON(w, 409, map[string]string{"error": err.Error()})
 		return
 	}
-	s.audit(r, "agent_pairing_approve", "agent_pairing_request", r.PathValue("id"), "post="+input.PostID)
 	w.WriteHeader(http.StatusNoContent)
 }
 func (s *Server) handleRejectAgentPairingRequest(w http.ResponseWriter, r *http.Request) {
-	if err := s.agentPairing.Decide(r.Context(), r.PathValue("id"), "", false); err != nil {
+	if err := s.agentPairing.Decide(r.Context(), r.PathValue("id"), "", false, audit.Entry{ActorID: currentUser(r).ID, Action: "agent_pairing_reject", ObjectType: "agent_pairing_request", ObjectID: r.PathValue("id"), Detail: "rejected"}); err != nil {
 		writeJSON(w, 409, map[string]string{"error": err.Error()})
 		return
 	}
-	s.audit(r, "agent_pairing_reject", "agent_pairing_request", r.PathValue("id"), "rejected")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -257,19 +254,19 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
-	session, err := s.auth.Login(r.Context(), in.Email, in.Password)
+	session, err := s.auth.Login(r.Context(), in.Email, in.Password, audit.Entry{Action: "login", ObjectType: "session", Detail: "login"})
 	if err != nil {
 		writeJSON(w, 401, map[string]string{"error": "invalid credentials"})
 		return
 	}
-	s.auditActor(r.Context(), session.User.ID, "login", "session", "", "login")
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: session.Token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil || s.cfg.SecureCookies, MaxAge: 86400})
 	writeJSON(w, 200, map[string]any{"user": session.User, "csrf_token": session.CSRF})
 }
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	cookie, _ := r.Cookie(sessionCookie)
-	_ = s.auth.Logout(r.Context(), cookie.Value)
-	s.audit(r, "logout", "session", "", "logout")
+	if cookie != nil && cookie.Value != "" {
+		_ = s.auth.Logout(r.Context(), cookie.Value, audit.Entry{ActorID: currentUser(r).ID, Action: "logout", ObjectType: "session", Detail: "logout"})
+	}
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: -1})
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -308,12 +305,11 @@ func (s *Server) handleCreatePost(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &post) {
 		return
 	}
-	post, err := s.posts.Create(r.Context(), post)
+	post, err := s.posts.Create(r.Context(), post, audit.Entry{ActorID: currentUser(r).ID, Action: "post_create", ObjectType: "post", ObjectID: post.ID, Detail: post.Name})
 	if err != nil {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
-	s.audit(r, "post_create", "post", post.ID, post.Name)
 	writeJSON(w, 201, post)
 }
 func (s *Server) handleGetPost(w http.ResponseWriter, r *http.Request) {
@@ -369,12 +365,11 @@ func (s *Server) handleUpdatePost(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": "If-Match version required"})
 		return
 	}
-	post, err = s.posts.Update(r.Context(), post, expected)
+	post, err = s.posts.Update(r.Context(), post, expected, audit.Entry{ActorID: currentUser(r).ID, Action: "post_update", ObjectType: "post", ObjectID: post.ID, Detail: fmt.Sprintf("name=%s maintenance=%t archived=%t", post.Name, post.Maintenance, post.Archived)})
 	if err != nil {
 		writeJSON(w, 409, map[string]string{"error": err.Error()})
 		return
 	}
-	s.audit(r, "post_update", "post", post.ID, fmt.Sprintf("name=%s maintenance=%t archived=%t", post.Name, post.Maintenance, post.Archived))
 	writeJSON(w, 200, post)
 }
 func (s *Server) handleDeletePost(w http.ResponseWriter, r *http.Request) {
@@ -390,7 +385,7 @@ func (s *Server) handleDeletePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := r.Context().Value(userContextKey{}).(auth.User)
-	if err := s.posts.Delete(r.Context(), id, user.ID); err != nil {
+	if err := s.posts.Delete(r.Context(), id, audit.Entry{ActorID: user.ID, Action: "post_delete", ObjectType: "post", ObjectID: id, Detail: "permanent deletion confirmed"}); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeJSON(w, 404, map[string]string{"error": "post not found"})
 			return
@@ -407,11 +402,10 @@ func (s *Server) handleAddDependency(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
-	if err := s.posts.AddDependency(r.Context(), r.PathValue("id"), in.DependsOn); err != nil {
+	if err := s.posts.AddDependency(r.Context(), r.PathValue("id"), in.DependsOn, audit.Entry{ActorID: currentUser(r).ID, Action: "dependency_add", ObjectType: "post", ObjectID: r.PathValue("id"), Detail: "depends_on=" + in.DependsOn}); err != nil {
 		writeJSON(w, 409, map[string]string{"error": err.Error()})
 		return
 	}
-	s.audit(r, "dependency_add", "post", r.PathValue("id"), "depends_on="+in.DependsOn)
 	w.WriteHeader(http.StatusNoContent)
 }
 func (s *Server) handleEnrollCollector(w http.ResponseWriter, r *http.Request) {
@@ -421,22 +415,20 @@ func (s *Server) handleEnrollCollector(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
-	secret, err := s.ingest.Enroll(r.Context(), in.ID, r.PathValue("id"))
+	secret, err := s.ingest.Enroll(r.Context(), in.ID, r.PathValue("id"), audit.Entry{ActorID: currentUser(r).ID, Action: "collector_enroll", ObjectType: "collector", ObjectID: in.ID, Detail: "post=" + r.PathValue("id")})
 	if err != nil {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
-	s.audit(r, "collector_enroll", "collector", in.ID, "post="+r.PathValue("id"))
 	writeJSON(w, 201, map[string]string{"id": in.ID, "secret": secret})
 }
 
 func (s *Server) handleCreatePairingToken(w http.ResponseWriter, r *http.Request) {
-	token, err := s.pairing.Create(r.Context(), r.PathValue("id"), 10*time.Minute)
+	token, err := s.pairing.Create(r.Context(), r.PathValue("id"), 10*time.Minute, audit.Entry{ActorID: currentUser(r).ID, Action: "pairing_token_create", ObjectType: "post", ObjectID: r.PathValue("id"), Detail: "pairing token issued"})
 	if err != nil {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
-	s.audit(r, "pairing_token_create", "post", r.PathValue("id"), "pairing token issued")
 	writeJSON(w, 201, token)
 }
 
@@ -582,11 +574,10 @@ func (s *Server) handleCreateCheckSchedule(w http.ResponseWriter, r *http.Reques
 	if !decode(w, r, &in) {
 		return
 	}
-	if err := s.checks.Save(r.Context(), in); err != nil {
+	if err := s.checks.Save(r.Context(), in, audit.Entry{ActorID: currentUser(r).ID, Action: "check_schedule_create", ObjectType: "check_schedule", ObjectID: in.ID, Detail: in.Kind + " " + in.Address}); err != nil {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
-	s.audit(r, "check_schedule_create", "check_schedule", in.ID, in.Kind+" "+in.Address)
 	w.WriteHeader(http.StatusCreated)
 }
 func (s *Server) handleListCheckSchedules(w http.ResponseWriter, r *http.Request) {
@@ -648,12 +639,11 @@ func (s *Server) handleCreateRule(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
-	err := s.rules.Create(r.Context(), rules.Rule{ID: in.ID, PostID: in.PostID, Signal: in.Signal, Operator: in.Operator, Threshold: in.Threshold, Duration: time.Duration(in.DurationSeconds) * time.Second, MissingPolicy: in.MissingPolicy, Severity: in.Severity, Enabled: true})
+	err := s.rules.Create(r.Context(), rules.Rule{ID: in.ID, PostID: in.PostID, Signal: in.Signal, Operator: in.Operator, Threshold: in.Threshold, Duration: time.Duration(in.DurationSeconds) * time.Second, MissingPolicy: in.MissingPolicy, Severity: in.Severity, Enabled: true}, audit.Entry{ActorID: currentUser(r).ID, Action: "rule_create", ObjectType: "rule", ObjectID: in.ID, Detail: "post=" + in.PostID + " signal=" + in.Signal})
 	if err != nil {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
-	s.audit(r, "rule_create", "rule", in.ID, "post="+in.PostID+" signal="+in.Signal)
 	w.WriteHeader(201)
 }
 func (s *Server) handleListRules(w http.ResponseWriter, r *http.Request) {
@@ -677,11 +667,10 @@ func (s *Server) handleSetRuleEnabled(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
-	if err := s.rules.SetEnabled(r.Context(), r.PathValue("id"), in.Enabled); err != nil {
+	if err := s.rules.SetEnabled(r.Context(), r.PathValue("id"), in.Enabled, audit.Entry{ActorID: currentUser(r).ID, Action: "rule_set_enabled", ObjectType: "rule", ObjectID: r.PathValue("id"), Detail: fmt.Sprintf("enabled=%t", in.Enabled)}); err != nil {
 		writeJSON(w, 404, map[string]string{"error": err.Error()})
 		return
 	}
-	s.audit(r, "rule_set_enabled", "rule", r.PathValue("id"), fmt.Sprintf("enabled=%t", in.Enabled))
 	w.WriteHeader(http.StatusNoContent)
 }
 func (s *Server) handleCreateRoute(w http.ResponseWriter, r *http.Request) {
@@ -690,11 +679,10 @@ func (s *Server) handleCreateRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	route.Enabled = true
-	if err := s.notify.CreateRoute(r.Context(), route); err != nil {
+	if err := s.notify.CreateRoute(r.Context(), route, audit.Entry{ActorID: currentUser(r).ID, Action: "notification_route_create", ObjectType: "notification_route", ObjectID: route.ID, Detail: route.Kind}); err != nil {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
-	s.audit(r, "notification_route_create", "notification_route", route.ID, route.Kind)
 	w.WriteHeader(201)
 }
 func (s *Server) handleListRoutes(w http.ResponseWriter, r *http.Request) {
@@ -719,11 +707,10 @@ func (s *Server) handleAcknowledge(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": "invalid alert"})
 		return
 	}
-	if err = s.rules.Acknowledge(r.Context(), id, time.Now().UTC()); err != nil {
+	if err = s.rules.Acknowledge(r.Context(), id, time.Now().UTC(), audit.Entry{ActorID: currentUser(r).ID, Action: "alert_acknowledge", ObjectType: "alert", ObjectID: fmt.Sprint(id), Detail: "acknowledged"}); err != nil {
 		writeJSON(w, 409, map[string]string{"error": err.Error()})
 		return
 	}
-	s.audit(r, "alert_acknowledge", "alert", fmt.Sprint(id), "acknowledged")
 	w.WriteHeader(http.StatusNoContent)
 }
 func (s *Server) handleCreateIncident(w http.ResponseWriter, r *http.Request) {
@@ -734,12 +721,11 @@ func (s *Server) handleCreateIncident(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
-	incident, err := s.incidents.Create(r.Context(), in.Title, in.Severity, currentUser(r).Email, in.AlertIDs)
+	incident, err := s.incidents.Create(r.Context(), in.Title, in.Severity, currentUser(r).Email, in.AlertIDs, audit.Entry{ActorID: currentUser(r).ID, Action: "incident_create", ObjectType: "incident", ObjectID: "", Detail: in.Title})
 	if err != nil {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
-	s.audit(r, "incident_create", "incident", fmt.Sprint(incident.ID), in.Title)
 	writeJSON(w, 201, incident)
 }
 func (s *Server) handleGetIncident(w http.ResponseWriter, r *http.Request) {
@@ -778,12 +764,11 @@ func (s *Server) handleTransitionIncident(w http.ResponseWriter, r *http.Request
 	if !decode(w, r, &in) {
 		return
 	}
-	incident, err := s.incidents.Transition(r.Context(), id, in.Status, currentUser(r).Email, in.Summary)
+	incident, err := s.incidents.Transition(r.Context(), id, in.Status, currentUser(r).Email, in.Summary, audit.Entry{ActorID: currentUser(r).ID, Action: "incident_transition", ObjectType: "incident", ObjectID: fmt.Sprint(id), Detail: in.Status})
 	if err != nil {
 		writeJSON(w, 409, map[string]string{"error": err.Error()})
 		return
 	}
-	s.audit(r, "incident_transition", "incident", fmt.Sprint(id), in.Status)
 	writeJSON(w, 200, incident)
 }
 func (s *Server) handleIncidentNote(w http.ResponseWriter, r *http.Request) {
@@ -796,11 +781,10 @@ func (s *Server) handleIncidentNote(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
-	if err = s.incidents.AddNote(r.Context(), id, currentUser(r).Email, in.Body); err != nil {
+	if err = s.incidents.AddNote(r.Context(), id, currentUser(r).Email, in.Body, audit.Entry{ActorID: currentUser(r).ID, Action: "incident_note", ObjectType: "incident", ObjectID: fmt.Sprint(id), Detail: "note added"}); err != nil {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
-	s.audit(r, "incident_note", "incident", fmt.Sprint(id), "note added")
 	w.WriteHeader(http.StatusNoContent)
 }
 func (s *Server) handleAssignIncident(w http.ResponseWriter, r *http.Request) {
@@ -815,12 +799,11 @@ func (s *Server) handleAssignIncident(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
-	item, err := s.incidents.Assign(r.Context(), id, in.Owner, currentUser(r).Email)
+	item, err := s.incidents.Assign(r.Context(), id, in.Owner, currentUser(r).Email, audit.Entry{ActorID: currentUser(r).ID, Action: "incident_assign", ObjectType: "incident", ObjectID: fmt.Sprint(id), Detail: "owner=" + in.Owner})
 	if err != nil {
 		writeJSON(w, 409, map[string]string{"error": err.Error()})
 		return
 	}
-	s.audit(r, "incident_assign", "incident", fmt.Sprint(id), "owner="+in.Owner)
 	writeJSON(w, 200, item)
 }
 func currentUser(r *http.Request) auth.User {
@@ -864,12 +847,11 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
-	user, err := s.auth.CreateUser(r.Context(), in.Email, in.Password, in.Role)
+	user, err := s.auth.CreateUser(r.Context(), in.Email, in.Password, in.Role, audit.Entry{ActorID: currentUser(r).ID, Action: "user_create", ObjectType: "user", ObjectID: "", Detail: in.Email + " role=" + in.Role})
 	if err != nil {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
-	s.audit(r, "user_create", "user", fmt.Sprint(user.ID), user.Email+" role="+user.Role)
 	writeJSON(w, 201, user)
 }
 
@@ -889,11 +871,10 @@ func (s *Server) handleSetUserRole(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 409, map[string]string{"error": "cannot demote your own account"})
 		return
 	}
-	if err := s.auth.SetRole(r.Context(), id, in.Role); err != nil {
+	if err := s.auth.SetRole(r.Context(), id, in.Role, audit.Entry{ActorID: currentUser(r).ID, Action: "user_set_role", ObjectType: "user", ObjectID: fmt.Sprint(id), Detail: "role=" + in.Role}); err != nil {
 		writeJSON(w, 409, map[string]string{"error": err.Error()})
 		return
 	}
-	s.audit(r, "user_set_role", "user", fmt.Sprint(id), "role="+in.Role)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -909,11 +890,10 @@ func (s *Server) handleResetUserPassword(w http.ResponseWriter, r *http.Request)
 	if !decode(w, r, &in) {
 		return
 	}
-	if err := s.auth.ResetPassword(r.Context(), id, in.Password); err != nil {
+	if err := s.auth.ResetPassword(r.Context(), id, in.Password, audit.Entry{ActorID: currentUser(r).ID, Action: "user_reset_password", ObjectType: "user", ObjectID: fmt.Sprint(id), Detail: "password reset"}); err != nil {
 		writeJSON(w, 409, map[string]string{"error": err.Error()})
 		return
 	}
-	s.audit(r, "user_reset_password", "user", fmt.Sprint(id), "password reset")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -923,12 +903,12 @@ func (s *Server) handleRevokeUserSessions(w http.ResponseWriter, r *http.Request
 		writeJSON(w, 400, map[string]string{"error": "invalid user"})
 		return
 	}
-	count, err := s.auth.RevokeSessions(r.Context(), id)
+	count, err := s.auth.RevokeSessions(r.Context(), id, audit.Entry{ActorID: currentUser(r).ID, Action: "user_revoke_sessions", ObjectType: "user", ObjectID: fmt.Sprint(id), Detail: "sessions revoked"})
 	if err != nil {
 		writeJSON(w, 500, map[string]string{"error": "sessions could not be revoked"})
 		return
 	}
-	s.audit(r, "user_revoke_sessions", "user", fmt.Sprint(id), fmt.Sprintf("revoked=%d", count))
+	_ = count
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -946,11 +926,10 @@ func (s *Server) handleChangeOwnPassword(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	user := currentUser(r)
-	if err := s.auth.ChangePassword(r.Context(), user.ID, in.CurrentPassword, in.NewPassword, cookie.Value); err != nil {
+	if err := s.auth.ChangePassword(r.Context(), user.ID, in.CurrentPassword, in.NewPassword, cookie.Value, audit.Entry{Action: "user_change_password", ObjectType: "user", Detail: "password changed"}); err != nil {
 		writeJSON(w, 409, map[string]string{"error": err.Error()})
 		return
 	}
-	s.audit(r, "user_change_password", "user", fmt.Sprint(user.ID), "password changed")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -1080,12 +1059,11 @@ func (s *Server) handleConversation(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
-	id, err := s.agent.Start(r.Context(), currentUser(r).ID, in.PostID, in.IncidentID)
+	id, err := s.agent.Start(r.Context(), currentUser(r).ID, in.PostID, in.IncidentID, audit.Entry{Action: "conversation_start", ObjectType: "conversation", ObjectID: "", Detail: "post=" + in.PostID})
 	if err != nil {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
-	s.audit(r, "conversation_start", "conversation", fmt.Sprint(id), "post="+in.PostID)
 	writeJSON(w, 201, map[string]int64{"id": id})
 }
 func (s *Server) handleInvestigate(w http.ResponseWriter, r *http.Request) {
@@ -1101,12 +1079,11 @@ func (s *Server) handleInvestigate(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
-	response, err := s.agent.Investigate(r.Context(), id, currentUser(r).ID, in.Question, in.Evidence)
+	response, err := s.agent.Investigate(r.Context(), id, currentUser(r).ID, in.Question, in.Evidence, audit.Entry{Action: "investigate", ObjectType: "conversation", ObjectID: fmt.Sprint(id), Detail: "question asked"})
 	if err != nil {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
-	s.audit(r, "investigate", "conversation", fmt.Sprint(id), "question asked")
 	writeJSON(w, 200, response)
 }
 func (s *Server) handleRequestAction(w http.ResponseWriter, r *http.Request) {
@@ -1117,12 +1094,11 @@ func (s *Server) handleRequestAction(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
-	id, err := s.actions.Request(r.Context(), in.Type, in.PostID, in.Parameters, currentUser(r).ID, in.IdempotencyKey)
+	id, err := s.actions.Request(r.Context(), in.Type, in.PostID, in.Parameters, currentUser(r).ID, in.IdempotencyKey, audit.Entry{ActorID: currentUser(r).ID, Action: "action_request", ObjectType: "action", ObjectID: "", Detail: in.Type})
 	if err != nil {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
-	s.audit(r, "action_request", "action", fmt.Sprint(id), in.Type)
 	writeJSON(w, 201, map[string]int64{"id": id})
 }
 func (s *Server) handleListActions(w http.ResponseWriter, r *http.Request) {
@@ -1139,11 +1115,10 @@ func (s *Server) handleApproveAction(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": "invalid action"})
 		return
 	}
-	if err = s.actions.Approve(r.Context(), id, currentUser(r).ID); err != nil {
+	if err = s.actions.Approve(r.Context(), id, currentUser(r).ID, audit.Entry{ActorID: currentUser(r).ID, Action: "action_approve", ObjectType: "action", ObjectID: fmt.Sprint(id), Detail: "approved"}); err != nil {
 		writeJSON(w, 409, map[string]string{"error": err.Error()})
 		return
 	}
-	s.audit(r, "action_approve", "action", fmt.Sprint(id), "approved")
 	w.WriteHeader(204)
 }
 func (s *Server) handleExecuteAction(w http.ResponseWriter, r *http.Request) {
@@ -1152,12 +1127,11 @@ func (s *Server) handleExecuteAction(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": "invalid action"})
 		return
 	}
-	result, err := s.actions.Execute(r.Context(), id)
+	result, err := s.actions.Execute(r.Context(), id, audit.Entry{ActorID: currentUser(r).ID, Action: "action_execute", ObjectType: "action", ObjectID: fmt.Sprint(id), Detail: "executed"})
 	if err != nil {
 		writeJSON(w, 409, map[string]string{"error": err.Error()})
 		return
 	}
-	s.audit(r, "action_execute", "action", fmt.Sprint(id), "executed")
 	writeJSON(w, 200, result)
 }
 func (s *Server) handleEnrollPeer(w http.ResponseWriter, r *http.Request) {
@@ -1167,12 +1141,11 @@ func (s *Server) handleEnrollPeer(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
-	secret, err := s.fleet.Enroll(r.Context(), in.ID)
+	secret, err := s.fleet.Enroll(r.Context(), in.ID, audit.Entry{ActorID: currentUser(r).ID, Action: "peer_enroll", ObjectType: "peer", ObjectID: in.ID, Detail: "enrolled"})
 	if err != nil {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
-	s.audit(r, "peer_enroll", "peer", in.ID, "enrolled")
 	writeJSON(w, 201, map[string]string{"id": in.ID, "secret": secret})
 }
 func (s *Server) handleListPeers(w http.ResponseWriter, r *http.Request) {
@@ -1184,11 +1157,10 @@ func (s *Server) handleListPeers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"peers": items})
 }
 func (s *Server) handleRevokePeer(w http.ResponseWriter, r *http.Request) {
-	if err := s.fleet.Revoke(r.Context(), r.PathValue("id")); err != nil {
+	if err := s.fleet.Revoke(r.Context(), r.PathValue("id"), audit.Entry{ActorID: currentUser(r).ID, Action: "peer_revoke", ObjectType: "peer", ObjectID: r.PathValue("id"), Detail: "revoked"}); err != nil {
 		writeJSON(w, 409, map[string]string{"error": err.Error()})
 		return
 	}
-	s.audit(r, "peer_revoke", "peer", r.PathValue("id"), "revoked")
 	w.WriteHeader(http.StatusNoContent)
 }
 func (s *Server) handleFederation(w http.ResponseWriter, r *http.Request) {
@@ -1212,11 +1184,10 @@ func (s *Server) handleSaveDeviceProfile(w http.ResponseWriter, r *http.Request)
 	if !decode(w, r, &in) {
 		return
 	}
-	if err := s.devices.Save(r.Context(), in); err != nil {
+	if err := s.devices.Save(r.Context(), in, audit.Entry{ActorID: currentUser(r).ID, Action: "device_profile_save", ObjectType: "device_profile", ObjectID: in.ID, Detail: in.Kind + " " + in.Address}); err != nil {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
-	s.audit(r, "device_profile_save", "device_profile", in.ID, in.Kind+" "+in.Address)
 	w.WriteHeader(201)
 }
 func (s *Server) handleListDeviceProfiles(w http.ResponseWriter, r *http.Request) {
@@ -1228,11 +1199,10 @@ func (s *Server) handleListDeviceProfiles(w http.ResponseWriter, r *http.Request
 	writeJSON(w, 200, map[string]any{"profiles": items})
 }
 func (s *Server) handleDeleteDeviceProfile(w http.ResponseWriter, r *http.Request) {
-	if err := s.devices.Delete(r.Context(), r.PathValue("id")); err != nil {
+	if err := s.devices.Delete(r.Context(), r.PathValue("id"), audit.Entry{ActorID: currentUser(r).ID, Action: "device_profile_delete", ObjectType: "device_profile", ObjectID: r.PathValue("id"), Detail: "removed"}); err != nil {
 		writeJSON(w, 404, map[string]string{"error": err.Error()})
 		return
 	}
-	s.audit(r, "device_profile_delete", "device_profile", r.PathValue("id"), "removed")
 	w.WriteHeader(http.StatusNoContent)
 }
 func (s *Server) handleListDeviceAdapters(w http.ResponseWriter, r *http.Request) {

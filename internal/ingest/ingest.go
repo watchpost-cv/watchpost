@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/watchpost-ops/watchpost/internal/audit"
 	"github.com/watchpost-ops/watchpost/internal/store"
 	"math"
 	"sync"
@@ -127,15 +128,30 @@ func (s *Service) allow(collectorID string, samples int, now time.Time) bool {
 	window.samples += samples
 	return true
 }
-func (s *Service) Enroll(ctx context.Context, id, postID string) (string, error) {
+func (s *Service) Enroll(ctx context.Context, id, postID string, entry audit.Entry) (string, error) {
 	b := make([]byte, 32)
 	if _, e := rand.Read(b); e != nil {
 		return "", e
 	}
 	secret := hex.EncodeToString(b)
 	h := sha256.Sum256([]byte(secret))
-	_, e := s.s.DB.ExecContext(ctx, `INSERT INTO collector_keys(id,post_id,secret_hash) VALUES(?,?,?)`, id, postID, h[:])
-	return secret, e
+	tx, e := s.s.DB.BeginTx(ctx, nil)
+	if e != nil {
+		return "", e
+	}
+	defer tx.Rollback()
+	if _, e = tx.ExecContext(ctx, `INSERT INTO collector_keys(id,post_id,secret_hash) VALUES(?,?,?)`, id, postID, h[:]); e != nil {
+		return "", e
+	}
+	entry.ObjectType = "collector"
+	entry.ObjectID = id
+	if e = audit.Insert(ctx, tx, entry); e != nil {
+		return "", e
+	}
+	if e = tx.Commit(); e != nil {
+		return "", e
+	}
+	return secret, nil
 }
 
 // Authenticate verifies a collector credential without ingesting anything. It

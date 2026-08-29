@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/watchpost-ops/watchpost/internal/posts"
+	"github.com/watchpost-ops/watchpost/internal/audit"
 	"github.com/watchpost-ops/watchpost/internal/store"
 )
 
@@ -18,7 +19,7 @@ func TestRotateUsesOverlapAndConfirm(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	_, err = posts.New(database).Create(ctx, posts.Post{ID: "host-one", Name: "Host one", Kind: "host", Labels: map[string]string{}})
+	_, err = posts.New(database).Create(ctx, posts.Post{ID: "host-one", Name: "Host one", Kind: "host", Labels: map[string]string{}}, audit.Entry{Action: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +29,7 @@ func TestRotateUsesOverlapAndConfirm(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := New(database)
-	next, err := service.Rotate(ctx, "install-1", "old-secret")
+	next, err := service.Rotate(ctx, "install-1", "old-secret", audit.Entry{Action: "test"})
 	if err != nil || next == "" {
 		t.Fatalf("rotate: %v", err)
 	}
@@ -45,11 +46,11 @@ func TestRotateUsesOverlapAndConfirm(t *testing.T) {
 		t.Fatal("pending credential not stored as a hash")
 	}
 	// Rotation requires the current active credential.
-	if _, err = service.Rotate(ctx, "install-1", "wrong-secret"); err == nil {
+	if _, err = service.Rotate(ctx, "install-1", "wrong-secret", audit.Entry{Action: "test"}); err == nil {
 		t.Fatal("rotate with wrong current credential succeeded")
 	}
 	// Re-rotating with the active credential replaces the pending slot.
-	again, err := service.Rotate(ctx, "install-1", "old-secret")
+	again, err := service.Rotate(ctx, "install-1", "old-secret", audit.Entry{Action: "test"})
 	if err != nil || again == "" {
 		t.Fatalf("re-rotate: %v", err)
 	}
@@ -69,7 +70,7 @@ func TestConnectionsRemainDetailsBeneathPost(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	_, err = posts.New(database).Create(ctx, posts.Post{ID: "host-one", Name: "Host one", Kind: "host", Labels: map[string]string{}})
+	_, err = posts.New(database).Create(ctx, posts.Post{ID: "host-one", Name: "Host one", Kind: "host", Labels: map[string]string{}}, audit.Entry{Action: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +95,7 @@ func TestRevokeEndsAgentAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	_, err = posts.New(database).Create(ctx, posts.Post{ID: "host-one", Name: "Host one", Kind: "host", Labels: map[string]string{}})
+	_, err = posts.New(database).Create(ctx, posts.Post{ID: "host-one", Name: "Host one", Kind: "host", Labels: map[string]string{}}, audit.Entry{Action: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +105,7 @@ func TestRevokeEndsAgentAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := New(database)
-	if err = service.Revoke(ctx, "install-1"); err != nil {
+	if err = service.Revoke(ctx, "install-1", audit.Entry{Action: "test"}); err != nil {
 		t.Fatal(err)
 	}
 	items, err := service.Connections(ctx, "host-one")
@@ -123,7 +124,7 @@ func TestPairingHandoffRecoversAfterLostCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	if _, err = posts.New(database).Create(ctx, posts.Post{ID: "host-one", Name: "Host one", Kind: "host", Labels: map[string]string{}}); err != nil {
+	if _, err = posts.New(database).Create(ctx, posts.Post{ID: "host-one", Name: "Host one", Kind: "host", Labels: map[string]string{}}, audit.Entry{Action: "test"}); err != nil {
 		t.Fatal(err)
 	}
 	service := New(database)
@@ -131,7 +132,7 @@ func TestPairingHandoffRecoversAfterLostCredential(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = service.Decide(ctx, request.ID, "host-one", true); err != nil {
+	if err = service.Decide(ctx, request.ID, "host-one", true, audit.Entry{Action: "test"}); err != nil {
 		t.Fatal(err)
 	}
 	first, err := service.Poll(ctx, request.ID, "request-secret-that-is-at-least-32-chars-long")
@@ -168,7 +169,7 @@ func TestPairingHandoffRefusesToRotateUsedCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	if _, err = posts.New(database).Create(ctx, posts.Post{ID: "host-one", Name: "Host one", Kind: "host", Labels: map[string]string{}}); err != nil {
+	if _, err = posts.New(database).Create(ctx, posts.Post{ID: "host-one", Name: "Host one", Kind: "host", Labels: map[string]string{}}, audit.Entry{Action: "test"}); err != nil {
 		t.Fatal(err)
 	}
 	service := New(database)
@@ -176,7 +177,7 @@ func TestPairingHandoffRefusesToRotateUsedCredential(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = service.Decide(ctx, request.ID, "host-one", true); err != nil {
+	if err = service.Decide(ctx, request.ID, "host-one", true, audit.Entry{Action: "test"}); err != nil {
 		t.Fatal(err)
 	}
 	first, err := service.Poll(ctx, request.ID, "request-secret-that-is-at-least-32-chars-long")
@@ -201,7 +202,7 @@ func TestAgentSelfUnpairRevokesConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	if _, err = posts.New(database).Create(ctx, posts.Post{ID: "host-one", Name: "Host one", Kind: "host", Labels: map[string]string{}}); err != nil {
+	if _, err = posts.New(database).Create(ctx, posts.Post{ID: "host-one", Name: "Host one", Kind: "host", Labels: map[string]string{}}, audit.Entry{Action: "test"}); err != nil {
 		t.Fatal(err)
 	}
 	secret := sha256.Sum256([]byte("active-credential"))
@@ -209,7 +210,7 @@ func TestAgentSelfUnpairRevokesConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := New(database)
-	if err = service.Unpair(ctx, "install-1", "active-credential"); err != nil {
+	if err = service.Unpair(ctx, "install-1", "active-credential", audit.Entry{Action: "test"}); err != nil {
 		t.Fatal(err)
 	}
 	items, err := service.Connections(ctx, "host-one")
@@ -217,7 +218,7 @@ func TestAgentSelfUnpairRevokesConnection(t *testing.T) {
 		t.Fatalf("connection after self-unpair: %#v %v", items, err)
 	}
 	// Wrong credential cannot self-unpair.
-	if err = service.Unpair(ctx, "install-1", "wrong-credential"); err == nil {
+	if err = service.Unpair(ctx, "install-1", "wrong-credential", audit.Entry{Action: "test"}); err == nil {
 		t.Fatal("self-unpair with wrong credential succeeded")
 	}
 }

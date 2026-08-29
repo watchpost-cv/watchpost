@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/watchpost-ops/watchpost/internal/auth"
+	"github.com/watchpost-ops/watchpost/internal/audit"
 	"github.com/watchpost-ops/watchpost/internal/store"
 	"testing"
 )
@@ -28,21 +29,21 @@ func TestApprovalSeparationIdempotencyAndExecution(t *testing.T) {
 	}, Execute: func(context.Context, string, map[string]any) (map[string]any, error) {
 		return map[string]any{"scheduled": true}, nil
 	}})
-	id, e := r.Request(ctx, "rerun_check", "", map[string]any{"check": "http"}, a.ID, "key-1")
+	id, e := r.Request(ctx, "rerun_check", "", map[string]any{"check": "http"}, a.ID, "key-1", audit.Entry{Action: "test"})
 	if e != nil {
 		t.Fatal(e)
 	}
-	if e = r.Approve(ctx, id, a.ID); e == nil {
+	if e = r.Approve(ctx, id, a.ID, audit.Entry{Action: "test"}); e == nil {
 		t.Fatal("self approval accepted")
 	}
-	if e = r.Approve(ctx, id, b); e != nil {
+	if e = r.Approve(ctx, id, b, audit.Entry{Action: "test"}); e != nil {
 		t.Fatal(e)
 	}
-	result, e := r.Execute(ctx, id)
+	result, e := r.Execute(ctx, id, audit.Entry{Action: "test"})
 	if e != nil || result["scheduled"] != true {
 		t.Fatalf("%#v %v", result, e)
 	}
-	if _, e = r.Request(ctx, "rerun_check", "", map[string]any{"check": "http"}, a.ID, "key-1"); e == nil {
+	if _, e = r.Request(ctx, "rerun_check", "", map[string]any{"check": "http"}, a.ID, "key-1", audit.Entry{Action: "test"}); e == nil {
 		t.Fatal("duplicate idempotency key accepted")
 	}
 }

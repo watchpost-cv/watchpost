@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"github.com/watchpost-ops/watchpost/internal/posts"
+	"github.com/watchpost-ops/watchpost/internal/audit"
 	"github.com/watchpost-ops/watchpost/internal/store"
 	"testing"
 	"time"
@@ -16,9 +17,9 @@ func TestPendingFiringAcknowledgedResolved(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer db.Close()
-	_, _ = posts.New(db).Create(ctx, posts.Post{ID: "host-a", Name: "A", Kind: "host"})
+	_, _ = posts.New(db).Create(ctx, posts.Post{ID: "host-a", Name: "A", Kind: "host"}, audit.Entry{Action: "test"})
 	engine := New(db)
-	if e = engine.Create(ctx, Rule{ID: "cpu-high", PostID: "host-a", Signal: "cpu", Operator: "gt", Threshold: 80, Duration: time.Minute, MissingPolicy: "unknown", Severity: "warning", Enabled: true}); e != nil {
+	if e = engine.Create(ctx, Rule{ID: "cpu-high", PostID: "host-a", Signal: "cpu", Operator: "gt", Threshold: 80, Duration: time.Minute, MissingPolicy: "unknown", Severity: "warning", Enabled: true}, audit.Entry{Action: "test"}); e != nil {
 		t.Fatal(e)
 	}
 	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -31,7 +32,7 @@ func TestPendingFiringAcknowledgedResolved(t *testing.T) {
 	if e != nil || a.State != "firing" {
 		t.Fatalf("%#v %v", a, e)
 	}
-	if e = engine.Acknowledge(ctx, a.ID, at.Add(2*time.Minute)); e != nil {
+	if e = engine.Acknowledge(ctx, a.ID, at.Add(2*time.Minute), audit.Entry{Action: "test"}); e != nil {
 		t.Fatal(e)
 	}
 	v = 20
@@ -45,9 +46,9 @@ func TestReplayDeterminism(t *testing.T) {
 		ctx := context.Background()
 		db, _ := store.Open(ctx, t.TempDir())
 		defer db.Close()
-		_, _ = posts.New(db).Create(ctx, posts.Post{ID: "p", Name: "P", Kind: "host"})
+		_, _ = posts.New(db).Create(ctx, posts.Post{ID: "p", Name: "P", Kind: "host"}, audit.Entry{Action: "test"})
 		e := New(db)
-		_ = e.Create(ctx, Rule{ID: "r", PostID: "p", Signal: "x", Operator: "gt", Threshold: 1, Duration: time.Second, MissingPolicy: "unknown", Severity: "warning", Enabled: true})
+		_ = e.Create(ctx, Rule{ID: "r", PostID: "p", Signal: "x", Operator: "gt", Threshold: 1, Duration: time.Second, MissingPolicy: "unknown", Severity: "warning", Enabled: true}, audit.Entry{Action: "test"})
 		at := time.Unix(100, 0).UTC()
 		states := []string{}
 		for i, v := range []float64{2, 2, 0} {
@@ -76,7 +77,7 @@ func TestLegacySignalAliasFiresRule(t *testing.T) {
 		t.Fatal(err)
 	}
 	engine := New(db)
-	if err = engine.Create(ctx, Rule{ID: "load-high", PostID: "p", Signal: "load.one", Operator: "gt", Threshold: 1, MissingPolicy: "unknown", Severity: "warning", Enabled: true}); err != nil {
+	if err = engine.Create(ctx, Rule{ID: "load-high", PostID: "p", Signal: "load.one", Operator: "gt", Threshold: 1, MissingPolicy: "unknown", Severity: "warning", Enabled: true}, audit.Entry{Action: "test"}); err != nil {
 		t.Fatal(err)
 	}
 	value := 2.0

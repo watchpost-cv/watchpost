@@ -2,6 +2,7 @@ package checks
 
 import (
 	"context"
+	"github.com/watchpost-ops/watchpost/internal/audit"
 	"github.com/watchpost-ops/watchpost/internal/store"
 	"path/filepath"
 	"testing"
@@ -21,7 +22,7 @@ func TestScheduledHTTPCheckPersistsResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := NewScheduleStore(db)
-	if err = s.Save(ctx, Schedule{ID: "web-http", PostID: "web", Kind: "http", Address: "http://127.0.0.1:1", IntervalSeconds: 60}); err != nil {
+	if err = s.Save(ctx, Schedule{ID: "web-http", PostID: "web", Kind: "http", Address: "http://127.0.0.1:1", IntervalSeconds: 60}, audit.Entry{Action: "test"}); err != nil {
 		t.Fatal(err)
 	}
 	if results, err := s.RunDue(ctx, New(time.Second), now.Add(time.Second), 4); err != nil || len(results) != 1 {

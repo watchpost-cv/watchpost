@@ -8,6 +8,7 @@ import (
 
 	"github.com/watchpost-ops/watchpost/internal/ingest"
 	"github.com/watchpost-ops/watchpost/internal/posts"
+	"github.com/watchpost-ops/watchpost/internal/audit"
 	"github.com/watchpost-ops/watchpost/internal/store"
 )
 
@@ -18,10 +19,10 @@ func TestSeriesAndRetention(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer db.Close()
-	_, _ = posts.New(db).Create(ctx, posts.Post{ID: "host-a", Name: "A", Kind: "host"})
+	_, _ = posts.New(db).Create(ctx, posts.Post{ID: "host-a", Name: "A", Kind: "host"}, audit.Entry{Action: "test"})
 	service := ingest.New(db)
 	now := time.Now().UTC()
-	secret, _ := service.Enroll(ctx, "collector", "host-a")
+	secret, _ := service.Enroll(ctx, "collector", "host-a", audit.Entry{Action: "test"})
 	v := 42.0
 	if e = service.Accept(ctx, secret, ingest.Observation{Version: 1, PostID: "host-a", CollectorID: "collector", ObservedAt: now, Sequence: 1, Signal: "cpu", Value: &v, Unit: "percent", Quality: "good"}); e != nil {
 		t.Fatal(e)
@@ -44,9 +45,9 @@ func TestSurveyGroupsStandardResourceSignals(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	_, _ = posts.New(db).Create(ctx, posts.Post{ID: "host-a", Name: "A", Kind: "host"})
+	_, _ = posts.New(db).Create(ctx, posts.Post{ID: "host-a", Name: "A", Kind: "host"}, audit.Entry{Action: "test"})
 	service := ingest.New(db)
-	secret, _ := service.Enroll(ctx, "collector", "host-a")
+	secret, _ := service.Enroll(ctx, "collector", "host-a", audit.Entry{Action: "test"})
 	now := time.Now().UTC()
 	for index, signal := range []string{"cpu.percent", "memory.percent", "disk.percent", "temperature.celsius"} {
 		value := float64(40 + index)

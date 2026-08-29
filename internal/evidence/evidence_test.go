@@ -3,6 +3,7 @@ package evidence
 import (
 	"context"
 	"github.com/watchpost-ops/watchpost/internal/posts"
+	"github.com/watchpost-ops/watchpost/internal/audit"
 	"github.com/watchpost-ops/watchpost/internal/store"
 	"strings"
 	"testing"
@@ -16,7 +17,7 @@ func TestLogBoundsRedactionSearchAndChange(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer db.Close()
-	_, _ = posts.New(db).Create(ctx, posts.Post{ID: "p", Name: "P", Kind: "host"})
+	_, _ = posts.New(db).Create(ctx, posts.Post{ID: "p", Name: "P", Kind: "host"}, audit.Entry{Action: "test"})
 	s := New(db)
 	now := time.Now().UTC()
 	l, e := s.IngestLog(ctx, Log{PostID: "p", Source: "app", ObservedAt: now, Severity: "error", Message: "failure token=secret " + strings.Repeat("x", 9000), Fields: map[string]string{}})

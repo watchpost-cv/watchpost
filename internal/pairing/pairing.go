@@ -8,6 +8,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/watchpost-ops/watchpost/internal/audit"
 	"github.com/watchpost-ops/watchpost/internal/store"
 )
 
@@ -28,7 +29,7 @@ type Enrollment struct {
 
 func New(s *store.Store) *Service { return &Service{s: s, now: time.Now} }
 
-func (s *Service) Create(ctx context.Context, postID string, lifetime time.Duration) (Token, error) {
+func (s *Service) Create(ctx context.Context, postID string, lifetime time.Duration, entry audit.Entry) (Token, error) {
 	if lifetime < time.Minute || lifetime > 30*time.Minute {
 		return Token{}, errors.New("invalid pairing lifetime")
 	}
@@ -38,13 +39,26 @@ func (s *Service) Create(ctx context.Context, postID string, lifetime time.Durat
 	}
 	hash := sha256.Sum256([]byte(raw))
 	expires := s.now().UTC().Add(lifetime)
-	result, err := s.s.DB.ExecContext(ctx, `INSERT INTO collector_pairing_tokens(token_hash,post_id,expires_at) SELECT ?,id,? FROM posts WHERE id=? AND archived=0`, hash[:], expires.Format(time.RFC3339Nano), postID)
+	tx, err := s.s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return Token{}, err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `INSERT INTO collector_pairing_tokens(token_hash,post_id,expires_at) SELECT ?,id,? FROM posts WHERE id=? AND archived=0`, hash[:], expires.Format(time.RFC3339Nano), postID)
 	if err != nil {
 		return Token{}, err
 	}
 	rows, _ := result.RowsAffected()
 	if rows != 1 {
 		return Token{}, errors.New("post unavailable for pairing")
+	}
+	entry.ObjectType = "post"
+	entry.ObjectID = postID
+	if err = audit.Insert(ctx, tx, entry); err != nil {
+		return Token{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return Token{}, err
 	}
 	return Token{Token: raw, ExpiresAt: expires}, nil
 }

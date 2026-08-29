@@ -20,6 +20,7 @@ import (
 	"github.com/watchpost-ops/watchpost/internal/devices"
 	"github.com/watchpost-ops/watchpost/internal/posts"
 	"github.com/watchpost-ops/watchpost/internal/rules"
+	"github.com/watchpost-ops/watchpost/internal/audit"
 	"github.com/watchpost-ops/watchpost/internal/store"
 )
 
@@ -175,13 +176,13 @@ func TestStorageEndpointReportsFootprint(t *testing.T) {
 
 func TestFailedCentralCheckFiresRuleAlert(t *testing.T) {
 	s := testServer(t)
-	if _, err := s.posts.Create(t.Context(), posts.Post{ID: "web", Name: "Web", Kind: "http_endpoint", Labels: map[string]string{}}); err != nil {
+	if _, err := s.posts.Create(t.Context(), posts.Post{ID: "web", Name: "Web", Kind: "http_endpoint", Labels: map[string]string{}}, audit.Entry{Action: "test"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.rules.Create(t.Context(), rules.Rule{ID: "web-http-down", PostID: "web", Signal: "http.ok", Operator: "lt", Threshold: 1, MissingPolicy: "unknown", Severity: "critical", Enabled: true}); err != nil {
+	if err := s.rules.Create(t.Context(), rules.Rule{ID: "web-http-down", PostID: "web", Signal: "http.ok", Operator: "lt", Threshold: 1, MissingPolicy: "unknown", Severity: "critical", Enabled: true}, audit.Entry{Action: "test"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.checks.Save(t.Context(), checks.Schedule{ID: "web-http", PostID: "web", Kind: "http", Address: "http://127.0.0.1:1", IntervalSeconds: 60}); err != nil {
+	if err := s.checks.Save(t.Context(), checks.Schedule{ID: "web-http", PostID: "web", Kind: "http", Address: "http://127.0.0.1:1", IntervalSeconds: 60}, audit.Entry{Action: "test"}); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
@@ -377,7 +378,7 @@ func TestDensePostInventory(t *testing.T) {
 	s := testServer(t)
 	for i := 0; i < 125; i++ {
 		id := fmt.Sprintf("dogfood-%03d", i)
-		if _, err := s.posts.Create(t.Context(), posts.Post{ID: id, Name: "Dogfood " + id, Kind: "host", Labels: map[string]string{}}); err != nil {
+		if _, err := s.posts.Create(t.Context(), posts.Post{ID: id, Name: "Dogfood " + id, Kind: "host", Labels: map[string]string{}}, audit.Entry{Action: "test"}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -427,22 +428,22 @@ func TestObservationDrivesRuleAndAlertAPI(t *testing.T) {
 
 func TestRerunCheckActionExecutesRealCheck(t *testing.T) {
 	s := testServer(t)
-	if _, err := s.posts.Create(t.Context(), posts.Post{ID: "web", Name: "Web", Kind: "http_endpoint", Labels: map[string]string{}}); err != nil {
+	if _, err := s.posts.Create(t.Context(), posts.Post{ID: "web", Name: "Web", Kind: "http_endpoint", Labels: map[string]string{}}, audit.Entry{Action: "test"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.checks.Save(t.Context(), checks.Schedule{ID: "web-http", PostID: "web", Kind: "http", Address: "http://127.0.0.1:1", IntervalSeconds: 60}); err != nil {
+	if err := s.checks.Save(t.Context(), checks.Schedule{ID: "web-http", PostID: "web", Kind: "http", Address: "http://127.0.0.1:1", IntervalSeconds: 60}, audit.Entry{Action: "test"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.rules.Create(t.Context(), rules.Rule{ID: "web-down", PostID: "web", Signal: "http.ok", Operator: "lt", Threshold: 1, MissingPolicy: "unknown", Severity: "critical", Enabled: true}); err != nil {
+	if err := s.rules.Create(t.Context(), rules.Rule{ID: "web-down", PostID: "web", Signal: "http.ok", Operator: "lt", Threshold: 1, MissingPolicy: "unknown", Severity: "critical", Enabled: true}, audit.Entry{Action: "test"}); err != nil {
 		t.Fatal(err)
 	}
 	params := map[string]any{"check": "web-http"}
 	user, _ := s.auth.Setup(t.Context(), "admin@example.com", "1234567", "")
-	id, err := s.actions.Request(t.Context(), "rerun_check", "web", params, user.ID, "idem-1")
+	id, err := s.actions.Request(t.Context(), "rerun_check", "web", params, user.ID, "idem-1", audit.Entry{Action: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := s.actions.Execute(t.Context(), id)
+	result, err := s.actions.Execute(t.Context(), id, audit.Entry{Action: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -467,21 +468,21 @@ func TestRerunCheckActionExecutesRealCheck(t *testing.T) {
 
 func TestRerunCheckActionRefusesForeignPost(t *testing.T) {
 	s := testServer(t)
-	if _, err := s.posts.Create(t.Context(), posts.Post{ID: "web", Name: "Web", Kind: "http_endpoint", Labels: map[string]string{}}); err != nil {
+	if _, err := s.posts.Create(t.Context(), posts.Post{ID: "web", Name: "Web", Kind: "http_endpoint", Labels: map[string]string{}}, audit.Entry{Action: "test"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.posts.Create(t.Context(), posts.Post{ID: "other", Name: "Other", Kind: "http_endpoint", Labels: map[string]string{}}); err != nil {
+	if _, err := s.posts.Create(t.Context(), posts.Post{ID: "other", Name: "Other", Kind: "http_endpoint", Labels: map[string]string{}}, audit.Entry{Action: "test"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.checks.Save(t.Context(), checks.Schedule{ID: "web-http", PostID: "web", Kind: "http", Address: "http://127.0.0.1:1", IntervalSeconds: 60}); err != nil {
+	if err := s.checks.Save(t.Context(), checks.Schedule{ID: "web-http", PostID: "web", Kind: "http", Address: "http://127.0.0.1:1", IntervalSeconds: 60}, audit.Entry{Action: "test"}); err != nil {
 		t.Fatal(err)
 	}
 	user, _ := s.auth.Setup(t.Context(), "admin@example.com", "1234567", "")
-	id, err := s.actions.Request(t.Context(), "rerun_check", "other", map[string]any{"check": "web-http"}, user.ID, "idem-2")
+	id, err := s.actions.Request(t.Context(), "rerun_check", "other", map[string]any{"check": "web-http"}, user.ID, "idem-2", audit.Entry{Action: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.actions.Execute(t.Context(), id); err == nil {
+	if _, err := s.actions.Execute(t.Context(), id, audit.Entry{Action: "test"}); err == nil {
 		t.Fatal("rerun_check executed a schedule belonging to another post")
 	}
 }
@@ -527,7 +528,7 @@ func TestPostsPaginationBoundsManyPostLoad(t *testing.T) {
 	s := testServer(t)
 	for i := 0; i < 520; i++ {
 		id := fmt.Sprintf("post-%03d", i)
-		if _, err := s.posts.Create(t.Context(), posts.Post{ID: id, Name: "Post " + id, Kind: "host", Labels: map[string]string{}}); err != nil {
+		if _, err := s.posts.Create(t.Context(), posts.Post{ID: id, Name: "Post " + id, Kind: "host", Labels: map[string]string{}}, audit.Entry{Action: "test"}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -561,10 +562,10 @@ func TestPostsPaginationBoundsManyPostLoad(t *testing.T) {
 
 func TestScheduledSNMPEmitsObservationsAndAlert(t *testing.T) {
 	s := testServer(t)
-	if _, err := s.posts.Create(t.Context(), posts.Post{ID: "ups-1", Name: "UPS", Kind: "ups", Labels: map[string]string{}}); err != nil {
+	if _, err := s.posts.Create(t.Context(), posts.Post{ID: "ups-1", Name: "UPS", Kind: "ups", Labels: map[string]string{}}, audit.Entry{Action: "test"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.rules.Create(t.Context(), rules.Rule{ID: "ups-down", PostID: "ups-1", Signal: "snmp.poll_ok", Operator: "lt", Threshold: 1, MissingPolicy: "unknown", Severity: "critical", Enabled: true}); err != nil {
+	if err := s.rules.Create(t.Context(), rules.Rule{ID: "ups-down", PostID: "ups-1", Signal: "snmp.poll_ok", Operator: "lt", Threshold: 1, MissingPolicy: "unknown", Severity: "critical", Enabled: true}, audit.Entry{Action: "test"}); err != nil {
 		t.Fatal(err)
 	}
 	marker := sha256.Sum256([]byte("device-snmp:ups-poll"))
@@ -597,5 +598,76 @@ func TestScheduledSNMPEmitsObservationsAndAlert(t *testing.T) {
 	}
 	if state != "firing" {
 		t.Fatalf("alert state=%s want firing", state)
+	}
+}
+
+func TestAuditFailurePreventsUserCreation(t *testing.T) {
+	s := testServer(t)
+	handler := s.Handler()
+	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
+	login := apiRequest(t, handler, "POST", "/api/v1/login", map[string]string{"email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
+	cookie := login.Result().Cookies()[0]
+	var session struct {
+		CSRF string `json:"csrf_token"`
+	}
+	_ = json.Unmarshal(login.Body.Bytes(), &session)
+	// Install an audit-write failure; any mutation that cannot be audited must
+	// not be committed or reported as successful.
+	if _, err := s.store.DB.Exec(`CREATE TRIGGER fail_audit BEFORE INSERT ON audit BEGIN SELECT RAISE(ABORT, 'injected audit failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	created := apiRequest(t, handler, "POST", "/api/v1/users", map[string]string{"email": "op@example.com", "password": "1234567", "role": "operator"}, cookie, session.CSRF)
+	if created.Code == http.StatusCreated {
+		t.Fatalf("user creation reported success while audit failed")
+	}
+	// The mutation must be rolled back: only the administrator exists.
+	list := apiRequest(t, handler, "GET", "/api/v1/users", nil, cookie, "")
+	if !bytes.Contains(list.Body.Bytes(), []byte(`"email":"admin@example.com"`)) || bytes.Contains(list.Body.Bytes(), []byte(`"email":"op@example.com"`)) {
+		t.Fatalf("unaudited user mutation committed: %s", list.Body.String())
+	}
+}
+
+func TestAdminPasswordResetRevokesSessions(t *testing.T) {
+	s := testServer(t)
+	handler := s.Handler()
+	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
+	adminLogin := apiRequest(t, handler, "POST", "/api/v1/login", map[string]string{"email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
+	adminCookie := adminLogin.Result().Cookies()[0]
+	var adminSession struct {
+		CSRF string `json:"csrf_token"`
+	}
+	_ = json.Unmarshal(adminLogin.Body.Bytes(), &adminSession)
+	if got := apiRequest(t, handler, "POST", "/api/v1/users", map[string]string{"email": "op@example.com", "password": "1234567", "role": "operator"}, adminCookie, adminSession.CSRF); got.Code != 201 {
+		t.Fatalf("create operator: %d", got.Code)
+	}
+	opLogin := apiRequest(t, handler, "POST", "/api/v1/login", map[string]string{"email": "op@example.com", "password": "1234567"}, nil, "")
+	opCookie := opLogin.Result().Cookies()[0]
+	var opSession struct {
+		CSRF string `json:"csrf_token"`
+	}
+	_ = json.Unmarshal(opLogin.Body.Bytes(), &opSession)
+	// The operator's session works before the reset.
+	if got := apiRequest(t, handler, "GET", "/api/v1/posts", nil, opCookie, ""); got.Code != 200 {
+		t.Fatalf("operator session pre-reset: %d", got.Code)
+	}
+	// Administrator resets the operator password.
+	var opID int64
+	if err := s.store.DB.QueryRow(`SELECT id FROM users WHERE email='op@example.com'`).Scan(&opID); err != nil {
+		t.Fatal(err)
+	}
+	if got := apiRequest(t, handler, "POST", fmt.Sprintf("/api/v1/users/%d/reset-password", opID), map[string]string{"password": "new-password-1"}, adminCookie, adminSession.CSRF); got.Code != 204 {
+		t.Fatalf("reset password: %d", got.Code)
+	}
+	// The previously issued session is immediately unauthorized.
+	if got := apiRequest(t, handler, "GET", "/api/v1/posts", nil, opCookie, ""); got.Code != http.StatusForbidden && got.Code != http.StatusUnauthorized {
+		t.Fatalf("operator session after reset=%d want 401/403", got.Code)
+	}
+	// The old password no longer works; the new one does.
+	if got := apiRequest(t, handler, "POST", "/api/v1/login", map[string]string{"email": "op@example.com", "password": "1234567"}, nil, ""); got.Code != 401 {
+		t.Fatalf("old password after reset: %d", got.Code)
+	}
+	newLogin := apiRequest(t, handler, "POST", "/api/v1/login", map[string]string{"email": "op@example.com", "password": "new-password-1"}, nil, "")
+	if newLogin.Code != 200 {
+		t.Fatalf("new password after reset: %d", newLogin.Code)
 	}
 }

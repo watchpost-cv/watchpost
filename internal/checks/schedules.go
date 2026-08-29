@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/watchpost-ops/watchpost/internal/audit"
 	"github.com/watchpost-ops/watchpost/internal/contract"
 	"github.com/watchpost-ops/watchpost/internal/store"
 )
@@ -46,7 +47,7 @@ func NewScheduleStore(s *store.Store) *ScheduleStore { return &ScheduleStore{s: 
 func NewScheduleStoreWithPolicy(s *store.Store, policy *Policy) *ScheduleStore {
 	return &ScheduleStore{s: s, policy: policy}
 }
-func (s *ScheduleStore) Save(ctx context.Context, v Schedule) error {
+func (s *ScheduleStore) Save(ctx context.Context, v Schedule, entry audit.Entry) error {
 	if v.ID == "" || v.PostID == "" || v.Address == "" || v.IntervalSeconds < 30 || v.IntervalSeconds > 86400 {
 		return errors.New("invalid check schedule")
 	}
@@ -72,6 +73,11 @@ func (s *ScheduleStore) Save(ctx context.Context, v Schedule) error {
 	// is a fixed marker: it is never a bearer credential and never exposed.
 	marker := sha256.Sum256([]byte("central-check:" + v.ID))
 	if _, err = tx.ExecContext(ctx, `INSERT INTO collector_keys(id,post_id,secret_hash,kind) VALUES(?,?,?,'central_check') ON CONFLICT(id) DO NOTHING`, v.ID, v.PostID, marker[:]); err != nil {
+		return err
+	}
+	entry.ObjectType = "check_schedule"
+	entry.ObjectID = v.ID
+	if err = audit.Insert(ctx, tx, entry); err != nil {
 		return err
 	}
 	return tx.Commit()

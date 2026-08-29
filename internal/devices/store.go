@@ -8,6 +8,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/watchpost-ops/watchpost/internal/audit"
 	"github.com/watchpost-ops/watchpost/internal/secrets"
 	"github.com/watchpost-ops/watchpost/internal/store"
 )
@@ -50,7 +51,7 @@ func NewProfileStoreWithKey(s *store.Store, box *secrets.Box) *ProfileStore {
 	return &ProfileStore{s: s, box: box}
 }
 
-func (p *ProfileStore) Save(ctx context.Context, v SavedProfile) error {
+func (p *ProfileStore) Save(ctx context.Context, v SavedProfile, entry audit.Entry) error {
 	if v.PostID == "" || v.Address == "" || v.Username == "" || v.Port == 0 {
 		return errors.New("invalid saved device profile")
 	}
@@ -96,6 +97,11 @@ func (p *ProfileStore) Save(ctx context.Context, v SavedProfile) error {
 		if _, err = tx.ExecContext(ctx, `INSERT INTO collector_keys(id,post_id,secret_hash,kind) VALUES(?,?,?,'device_snmp') ON CONFLICT(id) DO NOTHING`, v.ID, v.PostID, marker[:]); err != nil {
 			return err
 		}
+	}
+	entry.ObjectType = "device_profile"
+	entry.ObjectID = v.ID
+	if err = audit.Insert(ctx, tx, entry); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
@@ -193,8 +199,13 @@ func (p *ProfileStore) List(ctx context.Context) ([]SavedProfile, error) {
 	}
 	return items, nil
 }
-func (p *ProfileStore) Delete(ctx context.Context, id string) error {
-	result, err := p.s.DB.ExecContext(ctx, `DELETE FROM device_profiles WHERE id=?`, id)
+func (p *ProfileStore) Delete(ctx context.Context, id string, entry audit.Entry) error {
+	tx, err := p.s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `DELETE FROM device_profiles WHERE id=?`, id)
 	if err != nil {
 		return err
 	}
@@ -202,7 +213,12 @@ func (p *ProfileStore) Delete(ctx context.Context, id string) error {
 	if n != 1 {
 		return errors.New("device profile not found")
 	}
-	return nil
+	entry.ObjectType = "device_profile"
+	entry.ObjectID = id
+	if err = audit.Insert(ctx, tx, entry); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func nullableBlob(value []byte) any {

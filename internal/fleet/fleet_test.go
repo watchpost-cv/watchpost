@@ -3,6 +3,7 @@ package fleet
 import (
 	"context"
 	"encoding/json"
+	"github.com/watchpost-ops/watchpost/internal/audit"
 	"github.com/watchpost-ops/watchpost/internal/store"
 	"testing"
 	"time"
@@ -18,7 +19,7 @@ func TestSignedDeduplicatedRevocableDelivery(t *testing.T) {
 	s := New(db)
 	now := time.Now().UTC()
 	s.now = func() time.Time { return now }
-	secret, e := s.Enroll(ctx, "node-b")
+	secret, e := s.Enroll(ctx, "node-b", audit.Entry{Action: "test"})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -29,7 +30,7 @@ func TestSignedDeduplicatedRevocableDelivery(t *testing.T) {
 	if e = s.Receive(ctx, "node-b", secret, envelope); e == nil {
 		t.Fatal("duplicate accepted")
 	}
-	if e = s.Revoke(ctx, "node-b"); e != nil {
+	if e = s.Revoke(ctx, "node-b", audit.Entry{Action: "test"}); e != nil {
 		t.Fatal(e)
 	}
 	envelope.EventID = "event-2"

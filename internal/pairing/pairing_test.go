@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/watchpost-ops/watchpost/internal/posts"
+	"github.com/watchpost-ops/watchpost/internal/audit"
 	"github.com/watchpost-ops/watchpost/internal/store"
 )
 
@@ -16,11 +17,11 @@ func TestPairingTokenIsShortLivedAndSingleUse(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	_, _ = posts.New(db).Create(ctx, posts.Post{ID: "host-a", Name: "A", Kind: "host"})
+	_, _ = posts.New(db).Create(ctx, posts.Post{ID: "host-a", Name: "A", Kind: "host"}, audit.Entry{Action: "test"})
 	service := New(db)
 	now := time.Now().UTC()
 	service.now = func() time.Time { return now }
-	token, err := service.Create(ctx, "host-a", 5*time.Minute)
+	token, err := service.Create(ctx, "host-a", 5*time.Minute, audit.Entry{Action: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +32,7 @@ func TestPairingTokenIsShortLivedAndSingleUse(t *testing.T) {
 	if _, err = service.Consume(ctx, token.Token, "agent-b"); err == nil {
 		t.Fatal("reused token")
 	}
-	rotation, err := service.Create(ctx, "host-a", 5*time.Minute)
+	rotation, err := service.Create(ctx, "host-a", 5*time.Minute, audit.Entry{Action: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +40,7 @@ func TestPairingTokenIsShortLivedAndSingleUse(t *testing.T) {
 	if err != nil || rotated.Secret == enrollment.Secret {
 		t.Fatalf("collector credential was not rotated: %#v %v", rotated, err)
 	}
-	expired, _ := service.Create(ctx, "host-a", time.Minute)
+	expired, _ := service.Create(ctx, "host-a", time.Minute, audit.Entry{Action: "test"})
 	service.now = func() time.Time { return now.Add(2 * time.Minute) }
 	if _, err = service.Consume(ctx, expired.Token, "agent-c"); err == nil {
 		t.Fatal("accepted expired token")

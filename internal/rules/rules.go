@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
+	"github.com/watchpost-ops/watchpost/internal/audit"
 	"github.com/watchpost-ops/watchpost/internal/contract"
 	"github.com/watchpost-ops/watchpost/internal/store"
 	"time"
@@ -41,8 +43,13 @@ func (e *Engine) ListRules(ctx context.Context, limit int) ([]Rule, error) {
 	return items, rows.Err()
 }
 
-func (e *Engine) SetEnabled(ctx context.Context, id string, enabled bool) error {
-	result, err := e.s.DB.ExecContext(ctx, `UPDATE rules SET enabled=?,version=version+1 WHERE id=?`, enabled, id)
+func (e *Engine) SetEnabled(ctx context.Context, id string, enabled bool, entry audit.Entry) error {
+	tx, err := e.s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE rules SET enabled=?,version=version+1 WHERE id=?`, enabled, id)
 	if err != nil {
 		return err
 	}
@@ -50,7 +57,12 @@ func (e *Engine) SetEnabled(ctx context.Context, id string, enabled bool) error 
 	if n != 1 {
 		return errors.New("rule not found")
 	}
-	return nil
+	entry.ObjectType = "rule"
+	entry.ObjectID = id
+	if err = audit.Insert(ctx, tx, entry); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 type Alert struct {
@@ -68,12 +80,24 @@ type Engine struct {
 }
 
 func New(s *store.Store) *Engine { return &Engine{s: s, now: time.Now} }
-func (e *Engine) Create(ctx context.Context, r Rule) error {
+func (e *Engine) Create(ctx context.Context, r Rule, entry audit.Entry) error {
 	if r.ID == "" || r.PostID == "" || r.Signal == "" || !map[string]bool{"gt": true, "gte": true, "lt": true, "lte": true}[r.Operator] || !map[string]bool{"unknown": true, "healthy": true, "firing": true}[r.MissingPolicy] || r.Duration < 0 {
 		return errors.New("invalid rule")
 	}
-	_, err := e.s.DB.ExecContext(ctx, `INSERT INTO rules(id,post_id,signal,operator,threshold,duration_seconds,recovery_threshold,missing_policy,severity,enabled) VALUES(?,?,?,?,?,?,?,?,?,?)`, r.ID, r.PostID, r.Signal, r.Operator, r.Threshold, int64(r.Duration/time.Second), r.RecoveryThreshold, r.MissingPolicy, r.Severity, r.Enabled)
-	return err
+	tx, err := e.s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `INSERT INTO rules(id,post_id,signal,operator,threshold,duration_seconds,recovery_threshold,missing_policy,severity,enabled) VALUES(?,?,?,?,?,?,?,?,?,?)`, r.ID, r.PostID, r.Signal, r.Operator, r.Threshold, int64(r.Duration/time.Second), r.RecoveryThreshold, r.MissingPolicy, r.Severity, r.Enabled); err != nil {
+		return err
+	}
+	entry.ObjectType = "rule"
+	entry.ObjectID = r.ID
+	if err = audit.Insert(ctx, tx, entry); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func (e *Engine) Evaluate(ctx context.Context, ruleID string, at time.Time, value *float64, quality string) (Alert, error) {
 	tx, err := e.s.DB.BeginTx(ctx, nil)
@@ -150,8 +174,13 @@ func (e *Engine) Evaluate(ctx context.Context, ruleID string, at time.Time, valu
 	}
 	return Alert{ID: id, RuleID: r.ID, PostID: r.PostID, State: desired, Severity: r.Severity, OpenedAt: openedAt, UpdatedAt: at, Value: value}, nil
 }
-func (e *Engine) Acknowledge(ctx context.Context, id int64, at time.Time) error {
-	result, err := e.s.DB.ExecContext(ctx, `UPDATE alerts SET state='acknowledged',acknowledged_at=?,updated_at=? WHERE id=? AND state='firing'`, at.UTC().Format(time.RFC3339Nano), at.UTC().Format(time.RFC3339Nano), id)
+func (e *Engine) Acknowledge(ctx context.Context, id int64, at time.Time, entry audit.Entry) error {
+	tx, err := e.s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE alerts SET state='acknowledged',acknowledged_at=?,updated_at=? WHERE id=? AND state='firing'`, at.UTC().Format(time.RFC3339Nano), at.UTC().Format(time.RFC3339Nano), id)
 	if err != nil {
 		return err
 	}
@@ -159,7 +188,12 @@ func (e *Engine) Acknowledge(ctx context.Context, id int64, at time.Time) error 
 	if n != 1 {
 		return errors.New("alert is not firing")
 	}
-	return nil
+	entry.ObjectType = "alert"
+	entry.ObjectID = fmt.Sprint(id)
+	if err = audit.Insert(ctx, tx, entry); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func (e *Engine) EvaluateObservation(ctx context.Context, postID, signal string, at time.Time, value *float64, quality string) ([]Alert, error) {
 	signals := []string{signal}

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/watchpost-ops/watchpost/internal/audit"
 	"github.com/watchpost-ops/watchpost/internal/store"
 )
 
@@ -165,7 +166,7 @@ func (s *Service) Connections(ctx context.Context, postID string) ([]Connection,
 	return result, rows.Err()
 }
 
-func (s *Service) Revoke(ctx context.Context, installationID string) error {
+func (s *Service) Revoke(ctx context.Context, installationID string, entry audit.Entry) error {
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	tx, err := s.s.DB.BeginTx(ctx, nil)
 	if err != nil {
@@ -183,6 +184,11 @@ func (s *Service) Revoke(ctx context.Context, installationID string) error {
 	if _, err = tx.ExecContext(ctx, `UPDATE collector_keys SET revoked_at=? WHERE id=?`, now, installationID); err != nil {
 		return err
 	}
+	entry.ObjectType = "agent_connection"
+	entry.ObjectID = installationID
+	if err = audit.Insert(ctx, tx, entry); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 // PendingReplacementLifetime bounds how long an unconfirmed replacement
@@ -194,7 +200,7 @@ const PendingReplacementLifetime = 10 * time.Minute
 // and returned so the agent can persist it atomically. The new credential
 // becomes active only when the agent first uses it (see ingest promotion);
 // an unconfirmed replacement expires without invalidating the old credential.
-func (s *Service) Rotate(ctx context.Context, installationID, current string) (string, error) {
+func (s *Service) Rotate(ctx context.Context, installationID, current string, entry audit.Entry) (string, error) {
 	if installationID == "" || current == "" {
 		return "", errors.New("agent credential required")
 	}
@@ -205,7 +211,12 @@ func (s *Service) Rotate(ctx context.Context, installationID, current string) (s
 	}
 	next := sha256.Sum256([]byte(credential))
 	now := s.now().UTC()
-	result, err := s.s.DB.ExecContext(ctx, `UPDATE collector_keys SET pending_secret_hash=?,pending_expires_at=? WHERE id=? AND secret_hash=? AND revoked_at IS NULL`, next[:], now.Add(PendingReplacementLifetime).Format(time.RFC3339Nano), installationID, currentHash[:])
+	tx, err := s.s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE collector_keys SET pending_secret_hash=?,pending_expires_at=? WHERE id=? AND secret_hash=? AND revoked_at IS NULL`, next[:], now.Add(PendingReplacementLifetime).Format(time.RFC3339Nano), installationID, currentHash[:])
 	if err != nil {
 		return "", err
 	}
@@ -213,13 +224,21 @@ func (s *Service) Rotate(ctx context.Context, installationID, current string) (s
 	if n != 1 {
 		return "", errors.New("agent credential rejected")
 	}
+	entry.ObjectType = "agent_connection"
+	entry.ObjectID = installationID
+	if err = audit.Insert(ctx, tx, entry); err != nil {
+		return "", err
+	}
+	if err = tx.Commit(); err != nil {
+		return "", err
+	}
 	return credential, nil
 }
 
 // Unpair lets an agent revoke its own connection by presenting its current
 // credential. The agent connection and collector key are marked revoked, which
 // Watchpost treats as authority removed.
-func (s *Service) Unpair(ctx context.Context, installationID, current string) error {
+func (s *Service) Unpair(ctx context.Context, installationID, current string, entry audit.Entry) error {
 	if installationID == "" || current == "" {
 		return errors.New("agent credential required")
 	}
@@ -244,19 +263,28 @@ func (s *Service) Unpair(ctx context.Context, installationID, current string) er
 	if _, err = tx.ExecContext(ctx, `UPDATE collector_keys SET revoked_at=? WHERE id=? AND revoked_at IS NULL`, now, installationID); err != nil {
 		return err
 	}
+	entry.ObjectType = "agent_connection"
+	entry.ObjectID = installationID
+	if err = audit.Insert(ctx, tx, entry); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
-func (s *Service) Decide(ctx context.Context, id, postID string, approve bool) error {
+func (s *Service) Decide(ctx context.Context, id, postID string, approve bool, entry audit.Entry) error {
 	now := s.now().UTC()
 	state := "rejected"
+	tx, err := s.s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 	var result sql.Result
-	var err error
 	if approve {
 		state = "approved"
-		result, err = s.s.DB.ExecContext(ctx, `UPDATE agent_pairing_requests SET state=?,post_id=?,approved_at=? WHERE id=? AND state='pending' AND expires_at>? AND EXISTS(SELECT 1 FROM posts WHERE id=? AND archived=0)`, state, postID, now.Format(time.RFC3339Nano), id, now.Format(time.RFC3339Nano), postID)
+		result, err = tx.ExecContext(ctx, `UPDATE agent_pairing_requests SET state=?,post_id=?,approved_at=? WHERE id=? AND state='pending' AND expires_at>? AND EXISTS(SELECT 1 FROM posts WHERE id=? AND archived=0)`, state, postID, now.Format(time.RFC3339Nano), id, now.Format(time.RFC3339Nano), postID)
 	} else {
-		result, err = s.s.DB.ExecContext(ctx, `UPDATE agent_pairing_requests SET state=?,terminal_at=? WHERE id=? AND state='pending' AND expires_at>?`, state, now.Format(time.RFC3339Nano), id, now.Format(time.RFC3339Nano))
+		result, err = tx.ExecContext(ctx, `UPDATE agent_pairing_requests SET state=?,terminal_at=? WHERE id=? AND state='pending' AND expires_at>?`, state, now.Format(time.RFC3339Nano), id, now.Format(time.RFC3339Nano))
 	}
 	if err != nil {
 		return err
@@ -265,7 +293,12 @@ func (s *Service) Decide(ctx context.Context, id, postID string, approve bool) e
 	if count != 1 {
 		return errors.New("pairing request unavailable")
 	}
-	return nil
+	entry.ObjectType = "agent_pairing_request"
+	entry.ObjectID = id
+	if err = audit.Insert(ctx, tx, entry); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Service) Poll(ctx context.Context, id, secret string) (Enrollment, error) {
