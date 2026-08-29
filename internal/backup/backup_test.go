@@ -1,7 +1,15 @@
 package backup
 
 import (
+	"strings"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/pbkdf2"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/binary"
+	"hash"
 	"os"
 	"path/filepath"
 	"testing"
@@ -144,4 +152,133 @@ func TestRekeyReencryptsDeviceCredentials(t *testing.T) {
 	if err != nil || string(decrypted) != "auth-secret" {
 		t.Fatalf("new key decryption: %q %v", decrypted, err)
 	}
+}
+func TestEncryptedBackupsUseUniqueSalts(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	output := filepath.Join(t.TempDir(), "backup.wpbk")
+	if err := Create(ctx, db, output, "a-strong-backup-passphrase"); err != nil {
+		t.Fatal(err)
+	}
+	first, _ := os.ReadFile(output)
+	if err := Create(ctx, db, output, "a-strong-backup-passphrase"); err != nil {
+		t.Fatal(err)
+	}
+	second, _ := os.ReadFile(output)
+	if string(first) == string(second) {
+		t.Fatal("two backups with the same passphrase are identical (salt reused)")
+	}
+}
+
+func TestEncryptedBackupCorruptionFailsClosed(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	output := filepath.Join(t.TempDir(), "backup.wpbk")
+	if err := Create(ctx, db, output, "a-strong-backup-passphrase"); err != nil {
+		t.Fatal(err)
+	}
+	blob, _ := os.ReadFile(output)
+	restoredDir := filepath.Join(t.TempDir(), "restored")
+	// Corrupted ciphertext.
+	corruptCT := append([]byte{}, blob...)
+	corruptCT[len(corruptCT)-1] ^= 0x01
+	if err := os.WriteFile(output, corruptCT, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Restore(ctx, restoredDir, output, "a-strong-backup-passphrase", false); err == nil {
+		t.Fatal("corrupted ciphertext restored")
+	}
+	// Corrupted header (tampered metadata) is authenticated.
+	corruptHeader := append([]byte{}, blob...)
+	corruptHeader[5] ^= 0x01 // KDF identifier byte
+	if err := os.WriteFile(output, corruptHeader, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Restore(ctx, restoredDir, output, "a-strong-backup-passphrase", false); err == nil {
+		t.Fatal("tampered header restored")
+	}
+	// Truncated file.
+	truncated := blob[:len(blob)-10]
+	if err := os.WriteFile(output, truncated, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Restore(ctx, restoredDir, output, "a-strong-backup-passphrase", false); err == nil {
+		t.Fatal("truncated backup restored")
+	}
+	// Unsupported version.
+	unsupported := append([]byte{}, blob...)
+	unsupported[4] = 0x03
+	if err := os.WriteFile(output, unsupported, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Restore(ctx, restoredDir, output, "a-strong-backup-passphrase", false); err == nil {
+		t.Fatal("unsupported backup version restored")
+	}
+}
+
+func TestBackupCreateIsAtomic(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	dir := t.TempDir()
+	output := filepath.Join(dir, "backup.wpbk")
+	if err := Create(ctx, db, output, "a-strong-backup-passphrase"); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ := os.ReadDir(dir)
+	for _, entry := range entries {
+		if strings.Contains(entry.Name(), ".tmp") || strings.HasPrefix(entry.Name(), ".watchpost-backup-final") {
+			t.Fatalf("temporary file left behind: %s", entry.Name())
+		}
+	}
+	blob, err := os.ReadFile(output)
+	if err != nil || len(blob) == 0 {
+		t.Fatal("final backup missing or empty")
+	}
+	// A failed write (parent is a regular file, not a directory) leaves no
+	// partial archive and returns an error.
+	blocker := filepath.Join(dir, "not-a-dir")
+	if err := os.WriteFile(blocker, []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Create(ctx, db, filepath.Join(blocker, "backup.wpbk"), "a-strong-backup-passphrase"); err == nil {
+		t.Fatal("create under a regular file succeeded")
+	}
+}
+
+func TestVersionOneArchiveRemainsReadable(t *testing.T) {
+	plaintext := []byte("not-a-real-sqlite-db-but-decryptable")
+	container := v1Container(t, "a-strong-backup-passphrase", plaintext)
+	decrypted, err := decryptV1("a-strong-backup-passphrase", container)
+	if err != nil {
+		t.Fatalf("v1 archive unreadable: %v", err)
+	}
+	if string(decrypted) != string(plaintext) {
+		t.Fatal("v1 round-trip mismatch")
+	}
+	if _, err := decryptV1("wrong-passphrase-value", container); err == nil {
+		t.Fatal("v1 archive decrypted with wrong passphrase")
+	}
+	// A v2 reader must not accept the v1 container as v2.
+	if _, err := decryptV2("a-strong-backup-passphrase", container); err == nil {
+		t.Fatal("v1 container accepted by the v2 parser")
+	}
+}
+
+func v1Container(t *testing.T, passphrase string, plaintext []byte) []byte {
+	t.Helper()
+	key, err := pbkdf2.Key[hash.Hash](sha256.New, passphrase, saltPrefix, DefaultWorkFactor, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, _ := aes.NewCipher(key)
+	gcm, _ := cipher.NewGCM(block)
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		t.Fatal(err)
+	}
+	header := make([]byte, 4)
+	binary.BigEndian.PutUint32(header, uint32(len(plaintext)))
+	container := append(append([]byte{}, encryptedMagicV1...), header...)
+	container = append(container, nonce...)
+	return gcm.Seal(container, nonce, plaintext, encryptedMagicV1)
 }
