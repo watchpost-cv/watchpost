@@ -19,7 +19,12 @@ save leaves both in-memory and on-disk state unchanged), each operation emits
 exactly one audit entry attributed to the real acting identity, central logout
 reports failure rather than success when the transactional revocation cannot
 complete, and agent password-hash verification rejects malformed or excessively
-expensive encodings before running PBKDF2. Local agent accounts created by
+expensive encodings before running PBKDF2. Agent sessions are deliberately held
+in memory, so their security events (login, logout, session revocation) persist
+the attributed audit entry before the in-memory session mutation; a failed
+durable write creates no session, leaves a session valid, or leaves every
+targeted session valid and the endpoint reports failure. Local agent accounts
+created by
 older builds must be re-established with `reset` after upgrading because their
 password hashes used a now-unsupported construction.
 
