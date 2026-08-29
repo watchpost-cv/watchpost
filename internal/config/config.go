@@ -22,6 +22,16 @@ type Config struct {
 	SetupTokenTTL time.Duration
 	CheckPolicy   CheckPolicy
 	MasterKey     string
+	Backup        Backup
+}
+
+// Backup holds the scheduled online-backup configuration. A zero schedule
+// disables scheduling; backups are still available on demand.
+type Backup struct {
+	Dir               string
+	Schedule          time.Duration
+	PassphraseFile    string
+	Retain            int
 }
 
 // CheckPolicy restricts which targets central checks, on-demand checks and
@@ -98,7 +108,7 @@ type Overrides struct {
 }
 
 func Load(overrides Overrides) (Config, error) {
-	cfg := Config{Listen: DefaultListen, Retention: DefaultRetention(), Storage: DefaultStorage(), SetupTokenTTL: time.Hour}
+	cfg := Config{Listen: DefaultListen, Retention: DefaultRetention(), Storage: DefaultStorage(), SetupTokenTTL: time.Hour, Backup: Backup{Schedule: 24 * time.Hour, Retain: 7}}
 	if dir, err := os.UserConfigDir(); err == nil {
 		cfg.DataDir = filepath.Join(dir, "watchpost")
 	} else {
@@ -137,10 +147,38 @@ func Load(overrides Overrides) (Config, error) {
 	if err := applyMasterKeyEnv(&cfg); err != nil {
 		return Config{}, err
 	}
+	if err := applyBackupEnv(&cfg); err != nil {
+		return Config{}, err
+	}
 	if err := validate(cfg); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+func applyBackupEnv(cfg *Config) error {
+	backup := &cfg.Backup
+	if value := os.Getenv("WATCHPOST_BACKUP_DIR"); value != "" {
+		backup.Dir = value
+	}
+	if value := os.Getenv("WATCHPOST_BACKUP_SCHEDULE"); value != "" {
+		duration, err := ParseRetentionDuration(value)
+		if err != nil || duration <= 0 {
+			return fmt.Errorf("WATCHPOST_BACKUP_SCHEDULE: invalid value")
+		}
+		backup.Schedule = duration
+	}
+	if value := os.Getenv("WATCHPOST_BACKUP_PASSPHRASE_FILE"); value != "" {
+		backup.PassphraseFile = value
+	}
+	if value := os.Getenv("WATCHPOST_BACKUP_RETAIN"); value != "" {
+		retain, err := strconv.Atoi(value)
+		if err != nil || retain < 1 || retain > 100 {
+			return fmt.Errorf("WATCHPOST_BACKUP_RETAIN: invalid value")
+		}
+		backup.Retain = retain
+	}
+	return nil
 }
 
 func applyMasterKeyEnv(cfg *Config) error {

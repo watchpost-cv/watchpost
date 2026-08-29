@@ -8,9 +8,12 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/watchpost-ops/watchpost/internal/backup"
 	"github.com/watchpost-ops/watchpost/internal/checks"
 	"github.com/watchpost-ops/watchpost/internal/config"
 	"github.com/watchpost-ops/watchpost/internal/posts"
@@ -478,5 +481,42 @@ func TestRerunCheckActionRefusesForeignPost(t *testing.T) {
 	}
 	if _, err := s.actions.Execute(t.Context(), id); err == nil {
 		t.Fatal("rerun_check executed a schedule belonging to another post")
+	}
+}
+
+func TestScheduledBackupWritesAndPrunes(t *testing.T) {
+	backupDir := t.TempDir()
+	dataDir := t.TempDir()
+	database, err := store.Open(t.Context(), dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	cfg := config.Config{Listen: "127.0.0.1:0", DataDir: dataDir, Retention: config.DefaultRetention(), Storage: config.DefaultStorage(), Backup: config.Backup{Dir: backupDir, Schedule: time.Hour, Retain: 2}}
+	s := New(cfg, "test", slog.New(slog.NewTextHandler(io.Discard, nil)), database)
+	for i := 0; i < 3; i++ {
+		if err := backup.Create(t.Context(), database, filepath.Join(backupDir, fmt.Sprintf("watchpost-%d.wpbk", i)), ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.pruneBackups(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ := os.ReadDir(backupDir)
+	if len(entries) != 2 {
+		t.Fatalf("pruned backups=%d want 2", len(entries))
+	}
+	s.runScheduledBackup(t.Context())
+	entries, _ = os.ReadDir(backupDir)
+	if len(entries) != 2 {
+		t.Fatalf("post-schedule backups=%d want 2", len(entries))
+	}
+	handler := s.Handler()
+	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"email": "admin@example.com", "password": "1234567"}, nil, "")
+	login := apiRequest(t, handler, "POST", "/api/v1/login", map[string]string{"email": "admin@example.com", "password": "1234567"}, nil, "")
+	cookie := login.Result().Cookies()[0]
+	status := apiRequest(t, handler, "GET", "/api/v1/backup-status", nil, cookie, "")
+	if status.Code != 200 || !bytes.Contains(status.Body.Bytes(), []byte(`"last_backup_at"`)) {
+		t.Fatalf("backup status: %d %s", status.Code, status.Body.String())
 	}
 }

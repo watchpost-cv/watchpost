@@ -149,6 +149,13 @@ backups never embed the master key; restoring credential-storing profiles
 requires the matching master key; rotation either rekeys or re-enters
 credentials. Scheduled backup UX is R18b.
 
+R18b is complete: scheduled online backups run when `WATCHPOST_BACKUP_DIR` and a
+positive `WATCHPOST_BACKUP_SCHEDULE` are set, optionally encrypted via
+`WATCHPOST_BACKUP_PASSPHRASE_FILE` and bounded by `WATCHPOST_BACKUP_RETAIN`.
+`GET /api/v1/backup-status` exposes last/next run and last error to operators.
+The passphrase file is re-read each run so it can be rotated without a restart.
+Bounded check concurrency and ingestion budgets are R19.
+
 ## Agent architecture programme (WP-A01–WP-A18)
 
 WP-A01 accepted a separate `watchpost-agent` program with its own embedded

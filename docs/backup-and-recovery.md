@@ -30,3 +30,12 @@ restore.
   credentials. Rotation never silently keeps secrets under a discarded key.
 - Scheduled, remote and retention-managed backups are not implemented
   (R18b covers scheduling UX); this command is the online, verified core.
+
+## Scheduled backups (R18b)
+
+`WATCHPOST_BACKUP_DIR` plus a positive `WATCHPOST_BACKUP_SCHEDULE` enable
+automatic online backups written as `watchpost-<timestamp>.wpbk`; set
+`WATCHPOST_BACKUP_PASSPHRASE_FILE` to encrypt them and `WATCHPOST_BACKUP_RETAIN`
+(default 7) to bound how many are kept. Status is available to authenticated
+operators at `GET /api/v1/backup-status` (last/next run, last error). The
+passphrase file is re-read each run so it can be rotated without restarting.

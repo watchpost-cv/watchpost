@@ -207,6 +207,13 @@ contract in `docs/backup-and-recovery.md`: backups never embed the master key;
 restoring credential-storing device profiles requires the matching
 `WATCHPOST_MASTER_KEY`; rotation either rekeys or re-enters credentials.
 Scheduled backup UX is R18b.
+
+## Scheduled backups
+
+R18b adds scheduled online backups (`WATCHPOST_BACKUP_DIR`,
+`WATCHPOST_BACKUP_SCHEDULE`, optional `WATCHPOST_BACKUP_PASSPHRASE_FILE`,
+`WATCHPOST_BACKUP_RETAIN`), with operator status at `GET /api/v1/backup-status`.
+The passphrase file is re-read per run so rotation needs no restart.
 Host enrollment records an optional address or hostname, then pairs the
 separately installed Watchpost Agent through request/approval against an
 explicit Watchpost URL reachable from the post. The

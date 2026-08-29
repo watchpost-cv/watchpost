@@ -10,7 +10,10 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,6 +21,7 @@ import (
 	"github.com/watchpost-ops/watchpost/internal/agent"
 	"github.com/watchpost-ops/watchpost/internal/agentpairing"
 	"github.com/watchpost-ops/watchpost/internal/auth"
+	"github.com/watchpost-ops/watchpost/internal/backup"
 	"github.com/watchpost-ops/watchpost/internal/checks"
 	"github.com/watchpost-ops/watchpost/internal/collectorhealth"
 	"github.com/watchpost-ops/watchpost/internal/config"
@@ -65,6 +69,17 @@ type Server struct {
 	checkPolicy  *checks.Policy
 	checkLimiter *checkRateLimiter
 	secrets      *secrets.Box
+	backupStatus backupStatus
+}
+
+type backupStatus struct {
+	mu        sync.Mutex
+	lastAt    time.Time
+	nextAt    time.Time
+	lastError string
+	enabled   bool
+	dir       string
+	retain    int
 }
 
 type checkRateLimiter struct {
@@ -218,6 +233,7 @@ func (s *Server) Handler() http.Handler {
 	})
 	mux.HandleFunc("GET /api/v1/diagnostics", s.handleDiagnostics)
 	mux.HandleFunc("GET /api/v1/storage", s.require("viewer", s.handleStorage))
+	mux.HandleFunc("GET /api/v1/backup-status", s.require("viewer", s.handleBackupStatus))
 	s.registerAPI(mux)
 	assets, err := fs.Sub(web.Files, "dist")
 	if err != nil {
@@ -268,6 +284,7 @@ func (s *Server) Run(ctx context.Context) error {
 	go s.checkLoop(ctx)
 	go s.snmpLoop(ctx)
 	go s.retentionLoop(ctx)
+	go s.backupLoop(ctx)
 	errCh := make(chan error, 1)
 	go func() {
 		s.logger.Info("watchpost listening", "address", s.cfg.Listen, "version", s.version)
@@ -376,6 +393,106 @@ func (s *Server) retentionLoop(ctx context.Context) {
 		s.logger.Info("retention pass completed", "categories", report.Categories)
 	}
 	s.retention.RunLoop(ctx)
+}
+
+// backupLoop runs scheduled online backups. It is enabled only when a backup
+// directory and a positive schedule are configured.
+func (s *Server) backupLoop(ctx context.Context) {
+	if s.cfg.Backup.Dir == "" || s.cfg.Backup.Schedule <= 0 {
+		return
+	}
+	s.backupStatus.mu.Lock()
+	s.backupStatus.enabled = true
+	s.backupStatus.dir = s.cfg.Backup.Dir
+	s.backupStatus.retain = s.cfg.Backup.Retain
+	s.backupStatus.nextAt = time.Now().UTC()
+	s.backupStatus.mu.Unlock()
+	s.runScheduledBackup(ctx)
+	ticker := time.NewTicker(s.cfg.Backup.Schedule)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.runScheduledBackup(ctx)
+		}
+	}
+}
+
+func (s *Server) runScheduledBackup(ctx context.Context) {
+	now := time.Now().UTC()
+	passphrase := ""
+	if s.cfg.Backup.PassphraseFile != "" {
+		content, err := os.ReadFile(s.cfg.Backup.PassphraseFile)
+		if err != nil {
+			s.setBackupError(now, "read passphrase file: "+err.Error())
+			return
+		}
+		passphrase = strings.TrimRight(string(content), "\r\n")
+	}
+	output := filepath.Join(s.cfg.Backup.Dir, "watchpost-"+now.Format("20060102T150405Z")+".wpbk")
+	if err := backup.Create(ctx, s.store, output, passphrase); err != nil {
+		s.setBackupError(now, err.Error())
+		return
+	}
+	if s.cfg.Backup.Retain > 0 {
+		if err := s.pruneBackups(now); err != nil {
+			s.logger.Warn("backup pruning failed", "error", err)
+		}
+	}
+	s.backupStatus.mu.Lock()
+	s.backupStatus.lastAt = now
+	s.backupStatus.nextAt = now.Add(s.cfg.Backup.Schedule)
+	s.backupStatus.lastError = ""
+	s.backupStatus.mu.Unlock()
+	s.logger.Info("scheduled backup completed", "output", output)
+}
+
+func (s *Server) pruneBackups(now time.Time) error {
+	entries, err := os.ReadDir(s.cfg.Backup.Dir)
+	if err != nil {
+		return err
+	}
+	names := []string{}
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".wpbk") {
+			names = append(names, entry.Name())
+		}
+	}
+	sort.Strings(names)
+	for len(names) > s.cfg.Backup.Retain {
+		remove := names[0]
+		names = names[1:]
+		if err := os.Remove(filepath.Join(s.cfg.Backup.Dir, remove)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Server) setBackupError(at time.Time, message string) {
+	s.backupStatus.mu.Lock()
+	s.backupStatus.lastError = message
+	s.backupStatus.lastAt = at
+	s.backupStatus.mu.Unlock()
+	s.logger.Warn("scheduled backup failed", "error", message)
+}
+
+func (s *Server) handleBackupStatus(w http.ResponseWriter, _ *http.Request) {
+	s.backupStatus.mu.Lock()
+	defer s.backupStatus.mu.Unlock()
+	writeJSON(w, 200, map[string]any{
+		"enabled": s.backupStatus.enabled, "dir": s.backupStatus.dir, "retain": s.backupStatus.retain,
+		"last_backup_at": nullableTime(s.backupStatus.lastAt), "next_backup_at": nullableTime(s.backupStatus.nextAt), "last_error": s.backupStatus.lastError,
+	})
+}
+
+func nullableTime(value time.Time) any {
+	if value.IsZero() {
+		return nil
+	}
+	return value.Format(time.RFC3339)
 }
 
 // snmpLoop executes recurring read-only device polls and routes the results
