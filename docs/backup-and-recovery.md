@@ -1,16 +1,32 @@
-# Backup and recovery (WP02 baseline)
+# Backup and recovery (R18a)
 
-Stop Watchpost cleanly before copying its data directory. The WP02 baseline
-stores durable state in `watchpost.db`; SQLite WAL side files may exist while the
-process runs, so copying only the main file from a live node is not supported.
-Restore into an empty owner-only data directory, then start the same or a newer
-compatible binary. Startup refuses a schema newer than the binary supports.
+## Online backup
 
-Online, scheduled, encrypted, and externally segmented telemetry backups are
-not implemented. Do not claim crash-consistent live backups until Watchpost
-exposes a tested SQLite backup operation.
+`watchpost backup --output PATH [--passphrase-file FILE]` produces a consistent
+snapshot of a running node with SQLite `VACUUM INTO`; the node does not need to
+be stopped. Without a passphrase the output is a plain SQLite database. With a
+passphrase (minimum 10 characters) the snapshot is encrypted with AES-256-GCM
+under a PBKDF2-HMAC-SHA256 key (210,000 rounds). A backup never contains the
+passphrase or master key that protects it.
 
-Run `./hardening/recovery-drill.sh` from a source checkout. It creates durable
-state, cleanly stops the node, copies only the stopped database, restores into
-an empty directory, verifies the post through the API, and proves a deliberately
-corrupt database fails closed.
+## Restore
+
+`watchpost restore --input PATH [--passphrase-file FILE] --data-dir DIR [--force]`
+decrypts when required, validates the SQLite header and schema version (a
+database newer than the binary is refused), and atomically installs the
+database. The node must be stopped, and `--force` is required to replace an
+existing database. A wrong or missing passphrase fails closed with no partial
+restore.
+
+## Key and restore contract
+
+- Backups are protected by an operator-supplied passphrase or dedicated backup
+  key; the installation master key is never embedded in a backup.
+- Restoring a node whose device profiles store encrypted credentials also
+  requires the same `WATCHPOST_MASTER_KEY` used when those credentials were
+  stored, otherwise the profiles cannot be polled (metadata remains readable).
+- Master-key rotation either runs `watchpost rekey --old-key-file ... --new-key-file ...`
+  to re-encrypt existing stored device credentials, or the operator re-enters
+  credentials. Rotation never silently keeps secrets under a discarded key.
+- Scheduled, remote and retention-managed backups are not implemented
+  (R18b covers scheduling UX); this command is the online, verified core.

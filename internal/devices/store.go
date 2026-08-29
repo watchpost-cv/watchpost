@@ -3,6 +3,7 @@ package devices
 import (
 	"context"
 	"crypto/sha256"
+	"fmt"
 	"database/sql"
 	"errors"
 	"time"
@@ -209,4 +210,71 @@ func nullableBlob(value []byte) any {
 		return nil
 	}
 	return value
+}
+
+// RekeyCredentials re-encrypts stored device polling credentials with a new
+// master key. The node must be stopped. Rotation therefore either re-encrypts
+// existing secrets with this command or, if the old key is lost, requires the
+// operator to re-enter credentials; it never silently keeps secrets under a
+// discarded key.
+func RekeyCredentials(ctx context.Context, database *store.Store, oldKey, newKey string) (int, error) {
+	if oldKey == "" || newKey == "" || oldKey == newKey {
+		return 0, errors.New("old and new master keys are required and must differ")
+	}
+	oldBox := secrets.New(oldKey)
+	newBox := secrets.New(newKey)
+	if !oldBox.Enabled() || !newBox.Enabled() {
+		return 0, errors.New("master keys unavailable")
+	}
+	rows, err := database.DB.QueryContext(ctx, `SELECT id,encrypted_auth,encrypted_privacy FROM device_profiles WHERE encrypted_auth IS NOT NULL`)
+	if err != nil {
+		return 0, err
+	}
+	type row struct {
+		id            string
+		auth, privacy []byte
+	}
+	var items []row
+	for rows.Next() {
+		var item row
+		if err = rows.Scan(&item.id, &item.auth, &item.privacy); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		items = append(items, item)
+	}
+	rows.Close()
+	if err = rows.Err(); err != nil {
+		return 0, err
+	}
+	tx, err := database.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	for _, item := range items {
+		auth, err := oldBox.Decrypt(item.auth)
+		if err != nil {
+			return 0, fmt.Errorf("profile %s: %w", item.id, err)
+		}
+		privacy, err := oldBox.Decrypt(item.privacy)
+		if err != nil {
+			return 0, fmt.Errorf("profile %s: %w", item.id, err)
+		}
+		nextAuth, err := newBox.Encrypt(auth)
+		if err != nil {
+			return 0, err
+		}
+		nextPrivacy, err := newBox.Encrypt(privacy)
+		if err != nil {
+			return 0, err
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE device_profiles SET encrypted_auth=?,encrypted_privacy=? WHERE id=?`, nextAuth, nextPrivacy, item.id); err != nil {
+			return 0, err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return 0, err
+	}
+	return len(items), nil
 }

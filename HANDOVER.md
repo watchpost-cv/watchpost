@@ -195,6 +195,18 @@ diagnostics; the v1 batch endpoint remains because the agent delivers through
 it. The SPA's v1 pairing view is gone — host enrollment points to the agent
 install/pair/approve journey. `host-journey.sh` and `long-run.sh` now drive
 the v2 agent flow through the API.
+
+## Online backup and key/restore contract
+
+R18a adds `watchpost backup` (consistent online snapshot via `VACUUM INTO`,
+optional AES-256-GCM passphrase encryption under PBKDF2, 10-character
+minimum), `watchpost restore` (header/schema validation, newer-schema refusal,
+stopped-node + `--force`, fail-closed on wrong passphrase) and `watchpost
+rekey` (re-encrypts stored device credentials under a new master key). The
+contract in `docs/backup-and-recovery.md`: backups never embed the master key;
+restoring credential-storing device profiles requires the matching
+`WATCHPOST_MASTER_KEY`; rotation either rekeys or re-enters credentials.
+Scheduled backup UX is R18b.
 Host enrollment records an optional address or hostname, then pairs the
 separately installed Watchpost Agent through request/approval against an
 explicit Watchpost URL reachable from the post. The

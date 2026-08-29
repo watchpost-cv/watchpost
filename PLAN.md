@@ -136,8 +136,18 @@ R17 is complete: the bundled legacy collector lifecycle is removed.
 contract at `/api/collector/v1/observations` stays because the agent delivers
 through it. The SPA no longer has a v1 pairing view; host enrollment points to
 the agent install/pair/approve journey. The host-journey and long-run hardening
-gates were rewritten to drive the v2 agent flow through the API. Online backup
-and key/restore semantics are R18a.
+gates were rewritten to drive the v2 agent flow through the API.
+
+R18a is complete: `watchpost backup` produces a consistent online snapshot
+(`VACUUM INTO`) with optional passphrase encryption (AES-256-GCM under
+PBKDF2, minimum 10-character passphrase); `watchpost restore` validates the
+SQLite header and schema (refusing newer databases), requires a stopped node
+and `--force` to replace, and fails closed on a wrong passphrase.
+`watchpost rekey` re-encrypts stored device credentials under a new master
+key. The key/restore contract is documented in `docs/backup-and-recovery.md`:
+backups never embed the master key; restoring credential-storing profiles
+requires the matching master key; rotation either rekeys or re-enters
+credentials. Scheduled backup UX is R18b.
 
 ## Agent architecture programme (WP-A01–WP-A18)
 

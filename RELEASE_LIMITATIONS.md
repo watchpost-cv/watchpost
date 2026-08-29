@@ -17,8 +17,10 @@ candidate. It does not authorize a public production release.
   but several management and pairing journeys still need richer UI.
 - Federation does not yet prove sustained partition reconciliation between two
   independently deployed nodes.
-- Backups require a cleanly stopped node. Online backup, encryption, scheduling,
-  and remote retention are not implemented.
+- Backups are online and verified (`watchpost backup` / `watchpost restore`
+  with optional passphrase encryption and a documented key/restore contract).
+  Scheduled, encrypted-at-rest-by-default, remote and retention-managed backup
+  automation is not implemented.
 - The 500-post survey test proves a bounded query, not browser usability at
   production scale. The local soak is not multi-day. Accessibility has
   keyboard/focus, reduced-motion and forced-colour foundations but no external
