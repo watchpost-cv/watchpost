@@ -19,8 +19,11 @@ type Rule struct {
 	Enabled                      bool
 }
 
-func (e *Engine) ListRules(ctx context.Context) ([]Rule, error) {
-	rows, err := e.s.DB.QueryContext(ctx, `SELECT id,post_id,signal,operator,threshold,duration_seconds,recovery_threshold,missing_policy,severity,enabled FROM rules ORDER BY post_id,id`)
+func (e *Engine) ListRules(ctx context.Context, limit int) ([]Rule, error) {
+	if limit < 1 || limit > 1000 {
+		return nil, errors.New("invalid limit")
+	}
+	rows, err := e.s.DB.QueryContext(ctx, `SELECT id,post_id,signal,operator,threshold,duration_seconds,recovery_threshold,missing_policy,severity,enabled FROM rules ORDER BY post_id,id LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}

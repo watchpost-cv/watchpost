@@ -2,7 +2,7 @@
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
-const state = { csrf: "", user: null, posts: [], collectors: [], agentConnections: [], rules: [], checkSchedules: [], deviceProfiles: [], deviceAdapters: [], devicePresets: [], alerts: [], incidents: [], agentRequests: [], storage: null, postLimit: 50 };
+const state = { csrf: "", user: null, posts: [], collectors: [], agentConnections: [], rules: [], checkSchedules: [], deviceProfiles: [], deviceAdapters: [], devicePresets: [], alerts: [], incidents: [], agentRequests: [], storage: null, postTotal: 0, postLimit: 100 };
 const routes = new Set(["overview", "survey", "posts", "edit-post", "enroll", "checks", "history", "rules", "evidence", "investigate", "actions", "incidents", "devices", "fleet", "audit", "users", "account"]);
 
 async function request(path, options = {}) {
@@ -67,6 +67,7 @@ async function loadCore() {
   const results = await Promise.allSettled([request("/api/v1/posts"), request("/api/v1/alerts"), request("/api/v1/incidents"), request("/api/v1/collectors"), request("/api/v1/agent-pairing-requests"), request("/api/v1/agent-connections"), request("/api/v1/rules"), request("/api/v1/check-schedules"), request("/api/v1/device-profiles"), request("/api/v1/device-adapters"), request("/api/v1/device-presets"), request("/api/v1/storage")]);
   const failures = results.filter(result => result.status === "rejected");
   state.posts = results[0].status === "fulfilled" ? results[0].value.posts : [];
+  state.postTotal = results[0].status === "fulfilled" ? results[0].value.total || 0 : 0;
   state.alerts = results[1].status === "fulfilled" ? results[1].value.alerts : [];
   state.incidents = results[2].status === "fulfilled" ? results[2].value.incidents : [];
   state.collectors = results[3].status === "fulfilled" ? results[3].value.collectors : [];
@@ -199,9 +200,10 @@ function renderPosts() {
   const query = ($("#post-filter").value || "").trim().toLowerCase();
   const filtered = state.posts.filter(post => [post.id, post.name, post.address, post.kind].some(value => String(value || "").toLowerCase().includes(query)));
   const shown = filtered.slice(0, state.postLimit);
-  $("#post-count").textContent = `${filtered.length} post${filtered.length === 1 ? "" : "s"}`;
+  $("#post-count").textContent = `${state.postTotal || filtered.length} post${state.postTotal === 1 ? "" : "s"}`;
   $("#posts").innerHTML = shown.length ? shown.map(postRow).join("") : stateBox(query ? "No matching posts" : "No posts enrolled", query ? "Try a different name, ID, or kind." : "Enroll a post to build the monitored inventory.");
-  $("#more-posts").hidden = shown.length === filtered.length; $("#more-posts").textContent = `Show ${Math.min(50, filtered.length - shown.length)} more posts`;
+  $("#more-posts").hidden = state.posts.length >= state.postTotal || shown.length === filtered.length;
+  $("#more-posts").textContent = state.posts.length < state.postTotal ? `Load ${Math.min(100, state.postTotal - state.posts.length)} more posts` : `Show ${Math.min(50, filtered.length - shown.length)} more posts`;
 }
 
 async function updatePost(post, changes) {
@@ -323,8 +325,8 @@ $("#refresh-survey").addEventListener("click", renderSurvey);
 
 $("#overview-evidence").addEventListener("click", async event => { const button = event.target.closest("[data-ack-alert]"); if (!button) return; try { await request(`/api/v1/alerts/${button.dataset.ackAlert}/acknowledge`, { method: "POST", headers: { "X-Watchpost-CSRF": state.csrf } }); await loadCore(); showMessage("Alert acknowledged."); } catch (error) { showMessage(error.message, "error"); } });
 
-$("#post-filter").addEventListener("input", () => { state.postLimit = 50; renderPosts(); });
-$("#more-posts").addEventListener("click", () => { state.postLimit += 50; renderPosts(); });
+$("#post-filter").addEventListener("input", () => { state.postLimit = 100; renderPosts(); });
+$("#more-posts").addEventListener("click", async () => { try { const data = await request(`/api/v1/posts?limit=100&offset=${state.posts.length}`); const existing = new Set(state.posts.map(post => post.id)); for (const post of data.posts) { if (!existing.has(post.id)) state.posts.push(post); } state.postTotal = data.total || state.postTotal; renderPosts(); } catch (error) { showMessage(error.message, "error"); } });
 $("#posts").addEventListener("click", async event => { const button = event.target.closest("[data-post-action]"); if (!button) return; const post = state.posts.find(item => item.id === button.closest("[data-post-id]").dataset.postId), action = button.dataset.postAction; if (action === "edit") { location.hash = `#/edit-post?id=${encodeURIComponent(post.id)}`; return; } if (action === "connect") { location.hash = "#/enroll"; showMessage("Install the Watchpost Agent on this host and request pairing from its local interface or CLI, then approve it here."); return; } if(action==="revoke-agent"){if(!confirm(`Revoke ${button.dataset.agentId} from ${post.name}?`))return;try{await request(`/api/v1/agent-connections/${encodeURIComponent(button.dataset.agentId)}/revoke`,{method:"POST",headers:{"X-Watchpost-CSRF":state.csrf}});await loadCore();showMessage("Agent authority revoked. Unpair the local agent before pairing it again.")}catch(error){showMessage(error.message,"error")}return} try { button.disabled = true; await updatePost(post, action === "maintenance" ? { maintenance: !post.maintenance } : { archived: !post.archived }); } catch (error) { showMessage(error.message, "error"); } });
 
 $("#edit-post").addEventListener("submit", async event => { event.preventDefault(); const form = event.currentTarget, values = formJSON(form), post = state.posts.find(item => item.id === values.id); setBusy(form, true); try { await updatePost(post, { name: values.name, address: values.address, owner: values.owner, maintenance: form.elements.maintenance.checked, archived: form.elements.archived.checked }); location.hash = "#/posts"; showMessage(`${values.name} updated.`); } catch (error) { showMessage(error.message, "error"); } finally { setBusy(form, false); } });

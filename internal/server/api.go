@@ -325,12 +325,29 @@ func (s *Server) handleGetPost(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, post)
 }
 func (s *Server) handleListPosts(w http.ResponseWriter, r *http.Request) {
-	items, err := s.posts.List(r.Context())
+	limit := 100
+	if value := r.URL.Query().Get("limit"); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil && parsed > 0 && parsed <= 500 {
+			limit = parsed
+		}
+	}
+	offset := 0
+	if value := r.URL.Query().Get("offset"); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+	items, err := s.posts.List(r.Context(), limit, offset)
 	if err != nil {
 		writeJSON(w, 500, map[string]string{"error": "list posts failed"})
 		return
 	}
-	writeJSON(w, 200, map[string]any{"posts": items})
+	total, err := s.posts.Count(r.Context())
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": "list posts failed"})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"posts": items, "total": total, "offset": offset, "limit": limit})
 }
 
 func (s *Server) handleListCollectors(w http.ResponseWriter, r *http.Request) {
@@ -640,7 +657,13 @@ func (s *Server) handleCreateRule(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(201)
 }
 func (s *Server) handleListRules(w http.ResponseWriter, r *http.Request) {
-	items, err := s.rules.ListRules(r.Context())
+	limit := 500
+	if value := r.URL.Query().Get("limit"); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil && parsed > 0 && parsed <= 1000 {
+			limit = parsed
+		}
+	}
+	items, err := s.rules.ListRules(r.Context(), limit)
 	if err != nil {
 		writeJSON(w, 500, map[string]string{"error": "list rules failed"})
 		return

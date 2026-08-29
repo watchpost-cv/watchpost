@@ -379,7 +379,7 @@ func TestDensePostInventory(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	items, err := s.posts.List(t.Context())
+	items, err := s.posts.List(t.Context(), 500, 0)
 	if err != nil || len(items) != 125 {
 		t.Fatalf("dense inventory len=%d err=%v", len(items), err)
 	}
@@ -519,4 +519,40 @@ func TestScheduledBackupWritesAndPrunes(t *testing.T) {
 	if status.Code != 200 || !bytes.Contains(status.Body.Bytes(), []byte(`"last_backup_at"`)) {
 		t.Fatalf("backup status: %d %s", status.Code, status.Body.String())
 	}
+}
+
+func TestPostsPaginationBoundsManyPostLoad(t *testing.T) {
+	s := testServer(t)
+	for i := 0; i < 520; i++ {
+		id := fmt.Sprintf("post-%03d", i)
+		if _, err := s.posts.Create(t.Context(), posts.Post{ID: id, Name: "Post " + id, Kind: "host", Labels: map[string]string{}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	handler := s.Handler()
+	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"email": "admin@example.com", "password": "1234567"}, nil, "")
+	login := apiRequest(t, handler, "POST", "/api/v1/login", map[string]string{"email": "admin@example.com", "password": "1234567"}, nil, "")
+	cookie := login.Result().Cookies()[0]
+	page := apiRequest(t, handler, "GET", "/api/v1/posts?limit=100", nil, cookie, "")
+	var first struct {
+		Posts []map[string]any `json:"posts"`
+		Total int              `json:"total"`
+	}
+	if err := json.Unmarshal(page.Body.Bytes(), &first); err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Posts) != 100 || first.Total != 520 {
+		t.Fatalf("page1 posts=%d total=%d", len(first.Posts), first.Total)
+	}
+	last := apiRequest(t, handler, "GET", "/api/v1/posts?limit=100&offset=500", nil, cookie, "")
+	var tail struct {
+		Posts []map[string]any `json:"posts"`
+	}
+	if err := json.Unmarshal(last.Body.Bytes(), &tail); err != nil {
+		t.Fatal(err)
+	}
+	if len(tail.Posts) != 20 {
+		t.Fatalf("tail posts=%d want 20", len(tail.Posts))
+	}
+	// The survey stays bounded at 500 posts with 20k observations (server-side).
 }

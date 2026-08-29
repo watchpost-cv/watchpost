@@ -58,8 +58,15 @@ func (s *Store) Get(ctx context.Context, id string) (Post, error) {
 	}
 	return p, nil
 }
-func (s *Store) List(ctx context.Context) ([]Post, error) {
-	rows, err := s.s.DB.QueryContext(ctx, `SELECT id,name,kind,address,owner,labels_json,maintenance,archived,version FROM posts ORDER BY name,id`)
+// List returns a bounded page of posts ordered by name,id.
+func (s *Store) List(ctx context.Context, limit, offset int) ([]Post, error) {
+	if limit < 1 || limit > 1000 {
+		limit = 100
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	rows, err := s.s.DB.QueryContext(ctx, `SELECT id,name,kind,address,owner,labels_json,maintenance,archived,version FROM posts ORDER BY name,id LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -77,6 +84,15 @@ func (s *Store) List(ctx context.Context) ([]Post, error) {
 		result = append(result, p)
 	}
 	return result, rows.Err()
+}
+
+// Count returns the total number of posts for pagination.
+func (s *Store) Count(ctx context.Context) (int, error) {
+	var count int
+	if err := s.s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM posts`).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 func (s *Store) Update(ctx context.Context, p Post, expected int) (Post, error) {
 	if !valid(p) {

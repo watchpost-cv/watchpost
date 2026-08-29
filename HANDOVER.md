@@ -234,6 +234,13 @@ R22 adds alert acknowledgement from the overview, incident review with its
 durable timeline plus transition, attributed-note and assignment actions, and
 next-action hints on post rows for revoked, rejected, stale/offline and skewed
 agent connections (unpair before re-pair, rotate or re-pair, check delivery).
+
+## Many-post scale
+
+R23 paginates `GET /api/v1/posts` (`limit` ≤ 500, `offset`, `total`), bounds
+rules to 500 by default, and makes the SPA load posts a page at a time. A
+520-post inventory is served as bounded pages rather than one unbounded payload
+per render; the survey stays bounded to 30 points per series.
 Host enrollment records an optional address or hostname, then pairs the
 separately installed Watchpost Agent through request/approval against an
 explicit Watchpost URL reachable from the post. The

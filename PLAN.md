@@ -171,7 +171,14 @@ review an incident with its durable timeline, transition status, add
 attributed notes and assign an owner, and post rows show a next-action hint
 for revoked, rejected, stale/offline and skewed agent connections. Guided
 recovery states (unpair before re-pair, rotate or re-pair, check delivery)
-are visible in place. Many-post API and SPA scaling is R23.
+are visible in place.
+
+R23 is complete: `GET /api/v1/posts` is paginated (`limit` ≤ 500, `offset`,
+`total`) and rules are bounded to 500 by default; the SPA loads posts a page at
+a time and appends on demand instead of fetching the whole inventory every
+render. A 520-post load is verified as bounded pages
+(`TestPostsPaginationBoundsManyPostLoad`), and the survey remains bounded to 30
+points per series. The final programme verification runs next.
 
 ## Agent architecture programme (WP-A01–WP-A18)
 

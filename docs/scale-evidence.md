@@ -29,3 +29,11 @@ bounded; it is not a multi-day capacity result.
 
 The next scale campaign must include real browser rendering, mixed post kinds,
 active rules/alerts, slow disks, concurrent ingestion and retained history.
+
+## Paginated inventory (R23)
+
+`GET /api/v1/posts` is paginated (`limit` ≤ 500, `offset`) with a `total`
+count, and rules are bounded to 500 by default. The SPA loads posts one page at
+a time and appends on demand, so a 520-post inventory is served as bounded
+pages (verified by `TestPostsPaginationBoundsManyPostLoad`) rather than one
+unbounded payload on every render.
