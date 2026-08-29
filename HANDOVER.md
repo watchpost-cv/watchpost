@@ -154,6 +154,17 @@ a prominent warning. Forwarded scheme/host are trusted only when
 `WATCHPOST_AGENT_TRUSTED_PROXY=1` is set. Service install/upgrade/status/
 uninstall remain CLI-only; web and CLI offer equivalent pairing and
 configuration capability.
+
+## Scheduled SNMP through the canonical contract
+
+R6 makes recurring SNMPv3 authPriv polling a durable monitoring method.
+Credential storage is encrypted at rest with AES-256-GCM under an installation
+master key supplied outside the database (`WATCHPOST_MASTER_KEY`); without a
+key, credential storage and recurring polling are refused and profiles stay
+test-only. Each poll emits `snmp.poll_ok` reachability plus one observation per
+numeric OID through the canonical contract and rule engine. The devices
+`List` fix (nested query under a single connection) is part of R6. SNMP
+remains read-only.
 Host enrollment records an optional address or hostname, then pairs the
 bundled collector using an explicit Watchpost URL reachable from the post. The
 collector is outbound-only. Post editing is optimistic-concurrency protected;

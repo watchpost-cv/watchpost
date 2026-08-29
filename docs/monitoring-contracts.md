@@ -144,6 +144,19 @@ denied network is refused rather than probed. An unresolvable hostname is a
 check failure, not a policy denial. On-demand checks are rate-limited (60 per
 minute) and every on-demand check is audited.
 
+## Scheduled SNMP through the canonical contract
+
+SNMPv3 authPriv profiles become durable monitoring methods when they carry a
+poll interval. Polling credentials are encrypted at rest with AES-256-GCM
+under an installation master key supplied outside the database
+(`WATCHPOST_MASTER_KEY`); without a key, credential storage and recurring
+polling are refused and profiles remain test-only. Every poll emits a
+`snmp.poll_ok` reachability observation (0/1, good quality) plus one
+observation per numeric OID, all routed through the canonical observation
+contract and the rule engine, so a rule such as `snmp.poll_ok < 1` fires when
+a device stops answering. Profiles are read-only: no SNMP SET or write path
+exists.
+
 ## Storage capacity contract
 
 Watchpost measures its total SQLite footprint — `watchpost.db` plus the

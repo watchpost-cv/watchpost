@@ -5,9 +5,10 @@ candidate. It does not authorize a public production release.
 
 - The supplied remote host collector supports Linux. macOS and Windows binaries
   are cross-built but have not received equivalent real-runner collector smokes.
-- HTTP, TCP, DNS, ICMP and TLS have durable central schedules. SNMP profile
-  metadata is durable, but recurring secret-backed device polling remains
-  future work because polling passwords are deliberately not persisted.
+- HTTP, TCP, DNS, ICMP and TLS have durable central schedules. SNMPv3
+  authPriv polling is also durable and read-only; polling credentials are
+  stored encrypted at rest under an installation master key supplied outside
+  the database, and metadata-only profiles remain usable without a key.
 - SNMP is read-only. Cameras, arbitrary consumer IoT, PLC writes, and
   building-control commands are research scope, not implemented authority.
 - The built-in investigation provider is deliberately non-causal. Production

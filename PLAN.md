@@ -103,8 +103,17 @@ audited in a bounded local log. Non-loopback binding requires
 (`WATCHPOST_AGENT_SECURE_COOKIES`) and explicit proxy trust
 (`WATCHPOST_AGENT_TRUSTED_PROXY`) are opt-ins, forwarded headers are never
 trusted by default, and client CIDR allow/deny rules are optional. Service
-lifecycle remains CLI-only. Scheduled SNMP through the canonical contract is
-R6.
+lifecycle remains CLI-only.
+
+R6 is complete: recurring SNMPv3 authPriv polling is a durable monitoring
+method. Profiles with a poll interval store authentication/privacy passwords
+encrypted at rest (AES-256-GCM) under an installation master key supplied
+outside the database (`WATCHPOST_MASTER_KEY`); without a key, credential
+storage and recurring polling are refused. Each poll emits `snmp.poll_ok`
+reachability plus one observation per numeric OID through the canonical
+contract and the rule engine. The profile store's List was also fixed to avoid
+a single-connection nested-query deadlock. No SNMP write path exists. Action
+honesty is R15.
 
 ## Agent architecture programme (WP-A01–WP-A18)
 

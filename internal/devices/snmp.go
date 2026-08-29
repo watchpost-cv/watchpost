@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"github.com/gosnmp/gosnmp"
 	"time"
+
+	"github.com/watchpost-ops/watchpost/internal/contract"
 )
 
 type OID struct{ Name, OID, Unit string }
@@ -60,6 +62,82 @@ func Poll(ctx context.Context, getter Getter, profile Profile) ([]Reading, error
 		readings = append(readings, Reading{Name: item.Name, OID: item.OID, Unit: item.Unit, Value: variable.Value, Quality: quality, ObservedAt: now, FreshUntil: now.Add(5 * time.Minute)})
 	}
 	return readings, nil
+}
+
+// Observation converts a reading into the canonical observation envelope. Only
+// numeric readings carry a value; non-numeric SNMP values become nil-value
+// bad-quality observations rather than a fabricated number.
+func (r Reading) Observation(method contract.Method, observedAt time.Time) contract.Observation {
+	quality := contract.QualityBad
+	if r.Quality == "good" {
+		quality = contract.QualityGood
+	}
+	if r.Quality == "missing" {
+		quality = contract.QualityMissing
+	}
+	return contract.Observation{
+		Version: contract.ProtocolVersion, PostID: method.PostID,
+		Source:     contract.Source{Method: method, Identity: method.ID},
+		Signal:     r.Name, Value: floatValue(r.Value), Unit: r.Unit,
+		Quality:    quality,
+		ObservedAt: observedAt, IngestedAt: observedAt, FreshUntil: r.FreshUntil,
+	}
+}
+
+// PollOK builds the reachability observation a recurring poll always emits, so
+// a deterministic rule can fire when a device stops answering.
+func PollOK(method contract.Method, ok bool, observedAt time.Time) contract.Observation {
+	value := 0.0
+	if ok {
+		value = 1.0
+	}
+	return contract.Observation{
+		Version: contract.ProtocolVersion, PostID: method.PostID,
+		Source:     contract.Source{Method: method, Identity: method.ID},
+		Signal:     "snmp.poll_ok", Value: &value, Unit: "boolean", Quality: contract.QualityGood,
+		ObservedAt: observedAt, IngestedAt: observedAt, FreshUntil: observedAt.Add(5 * time.Minute),
+	}
+}
+
+func floatValue(value any) *float64 {
+	switch v := value.(type) {
+	case int:
+		f := float64(v)
+		return &f
+	case int8:
+		f := float64(v)
+		return &f
+	case int16:
+		f := float64(v)
+		return &f
+	case int32:
+		f := float64(v)
+		return &f
+	case int64:
+		f := float64(v)
+		return &f
+	case uint:
+		f := float64(v)
+		return &f
+	case uint8:
+		f := float64(v)
+		return &f
+	case uint16:
+		f := float64(v)
+		return &f
+	case uint32:
+		f := float64(v)
+		return &f
+	case uint64:
+		f := float64(v)
+		return &f
+	case float32:
+		f := float64(v)
+		return &f
+	case float64:
+		return &v
+	}
+	return nil
 }
 
 type Preset struct {

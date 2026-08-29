@@ -33,6 +33,7 @@ import (
 	"github.com/watchpost-ops/watchpost/internal/posts"
 	"github.com/watchpost-ops/watchpost/internal/retention"
 	"github.com/watchpost-ops/watchpost/internal/rules"
+	"github.com/watchpost-ops/watchpost/internal/secrets"
 	"github.com/watchpost-ops/watchpost/internal/storage"
 	"github.com/watchpost-ops/watchpost/internal/store"
 	"github.com/watchpost-ops/watchpost/web"
@@ -63,6 +64,7 @@ type Server struct {
 	storage      *storage.Checker
 	checkPolicy  *checks.Policy
 	checkLimiter *checkRateLimiter
+	secrets      *secrets.Box
 }
 
 type checkRateLimiter struct {
@@ -124,6 +126,8 @@ func New(cfg config.Config, version string, logger *slog.Logger, database *store
 	server.checkPolicy = checkPolicy
 	server.checks = checks.NewScheduleStoreWithPolicy(database, checkPolicy)
 	server.checkLimiter = &checkRateLimiter{}
+	server.secrets = secrets.New(cfg.MasterKey)
+	server.devices = devices.NewProfileStoreWithKey(database, server.secrets)
 	server.provisionBootstrap()
 	return server
 }
@@ -240,6 +244,7 @@ func (s *Server) Run(ctx context.Context) error {
 	httpServer := &http.Server{Addr: s.cfg.Listen, Handler: s.Handler(), ReadHeaderTimeout: 5 * time.Second}
 	go s.deliveryLoop(ctx)
 	go s.checkLoop(ctx)
+	go s.snmpLoop(ctx)
 	go s.retentionLoop(ctx)
 	errCh := make(chan error, 1)
 	go func() {
@@ -349,6 +354,118 @@ func (s *Server) retentionLoop(ctx context.Context) {
 		s.logger.Info("retention pass completed", "categories", report.Categories)
 	}
 	s.retention.RunLoop(ctx)
+}
+
+// snmpLoop executes recurring read-only device polls and routes the results
+// through the canonical observation and rule pipeline.
+func (s *Server) snmpLoop(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			if err := s.guardStorage(ctx); err != nil {
+				continue
+			}
+			if err := s.runDueSNMP(ctx, now); err != nil {
+				s.logger.Warn("scheduled SNMP failed", "error", err)
+			}
+		}
+	}
+}
+
+func (s *Server) runDueSNMP(ctx context.Context, now time.Time) error {
+	profiles, err := s.devices.Due(ctx, now, 16)
+	if err != nil {
+		return err
+	}
+	for _, profile := range profiles {
+		if err := s.pollDeviceProfile(ctx, profile, now); err != nil {
+			s.logger.Warn("scheduled SNMP poll failed", "profile", profile.ID, "error", err)
+		}
+	}
+	return nil
+}
+
+// pollDeviceProfile performs one read-only poll, stores its observations, runs
+// rule evaluation and reschedules the profile. A failed poll emits an explicit
+// snmp.poll_ok=0 observation so a deterministic rule can fire on reachability.
+func (s *Server) pollDeviceProfile(ctx context.Context, profile devices.SavedProfile, now time.Time) error {
+	_, config, err := s.devices.Credentials(ctx, profile.ID)
+	if err != nil {
+		s.devices.Advance(ctx, profile.ID, profile.IntervalSeconds, now)
+		return err
+	}
+	client, err := devices.NewV3(config)
+	if err != nil {
+		s.devices.Advance(ctx, profile.ID, profile.IntervalSeconds, now)
+		return err
+	}
+	if err := client.Connect(); err != nil {
+		client.Conn.Close()
+		s.devices.Advance(ctx, profile.ID, profile.IntervalSeconds, now)
+		return s.emitDevicePoll(ctx, profile, false, nil, now)
+	}
+	defer client.Conn.Close()
+	readings, err := devices.Poll(ctx, client, devices.Profile{ID: profile.ID, Kind: profile.Kind, OIDs: profile.OIDs})
+	if err != nil {
+		s.devices.Advance(ctx, profile.ID, profile.IntervalSeconds, now)
+		return s.emitDevicePoll(ctx, profile, false, nil, now)
+	}
+	if err := s.emitDevicePoll(ctx, profile, true, readings, now); err != nil {
+		return err
+	}
+	return s.devices.Advance(ctx, profile.ID, profile.IntervalSeconds, now)
+}
+
+func (s *Server) emitDevicePoll(ctx context.Context, profile devices.SavedProfile, ok bool, readings []devices.Reading, now time.Time) error {
+	method := contract.Method{ID: profile.ID, Kind: contract.MethodDeviceSNMP, PostID: profile.PostID}
+	observations := []contract.Observation{devices.PollOK(method, ok, now.UTC())}
+	for _, reading := range readings {
+		observations = append(observations, reading.Observation(method, now.UTC()))
+	}
+	return s.ingestContractObservations(ctx, profile.ID, profile.PostID, observations, now)
+}
+
+// ingestContractObservations assigns contiguous sequences and inserts
+// observations for a monitoring-method source, then evaluates rules exactly
+// like agent telemetry.
+func (s *Server) ingestContractObservations(ctx context.Context, sourceID, postID string, observations []contract.Observation, now time.Time) error {
+	ingested := now.UTC().Format(time.RFC3339Nano)
+	tx, err := s.store.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var last int64
+	if err = tx.QueryRowContext(ctx, `SELECT COALESCE(last_sequence,0) FROM collector_keys WHERE id=?`, sourceID).Scan(&last); err != nil {
+		return err
+	}
+	for index, observation := range observations {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO observations(post_id,collector_id,observed_at,ingested_at,sequence,signal,value,unit,quality,labels_json) VALUES(?,?,?,?,?,?,?,?,?,?)`, observation.PostID, sourceID, observation.ObservedAt.UTC().Format(time.RFC3339Nano), ingested, last+int64(index)+1, observation.Signal, observation.Value, observation.Unit, string(observation.Quality), "{}"); err != nil {
+			return err
+		}
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE collector_keys SET last_sequence=?,last_seen_at=?,last_observed_at=?,last_error='' WHERE id=?`, last+int64(len(observations)), ingested, ingested, sourceID); err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	for _, observation := range observations {
+		alerts, err := s.rules.EvaluateObservation(ctx, observation.PostID, observation.Signal, observation.ObservedAt, observation.Value, string(observation.Quality))
+		if err != nil {
+			return err
+		}
+		for _, alert := range alerts {
+			if alert.State == "firing" {
+				_ = s.notify.Queue(ctx, alert.ID)
+			}
+		}
+	}
+	return nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

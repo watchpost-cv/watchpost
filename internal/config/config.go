@@ -21,6 +21,7 @@ type Config struct {
 	SetupToken    string
 	SetupTokenTTL time.Duration
 	CheckPolicy   CheckPolicy
+	MasterKey     string
 }
 
 // CheckPolicy restricts which targets central checks, on-demand checks and
@@ -133,10 +134,28 @@ func Load(overrides Overrides) (Config, error) {
 	if err := applyCheckPolicyEnv(&cfg); err != nil {
 		return Config{}, err
 	}
+	if err := applyMasterKeyEnv(&cfg); err != nil {
+		return Config{}, err
+	}
 	if err := validate(cfg); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+func applyMasterKeyEnv(cfg *Config) error {
+	if value := os.Getenv("WATCHPOST_MASTER_KEY"); value != "" {
+		cfg.MasterKey = strings.TrimRight(value, "\r\n")
+		return nil
+	}
+	if path := os.Getenv("WATCHPOST_MASTER_KEY_FILE"); path != "" {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("WATCHPOST_MASTER_KEY_FILE: %w", err)
+		}
+		cfg.MasterKey = strings.TrimRight(string(content), "\r\n")
+	}
+	return nil
 }
 
 func applyCheckPolicyEnv(cfg *Config) error {
