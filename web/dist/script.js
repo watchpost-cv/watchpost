@@ -2,7 +2,7 @@
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
-const state = { csrf: "", user: null, posts: [], collectors: [], agentConnections: [], rules: [], checkSchedules: [], deviceProfiles: [], deviceAdapters: [], devicePresets: [], alerts: [], incidents: [], agentRequests: [], postLimit: 50 };
+const state = { csrf: "", user: null, posts: [], collectors: [], agentConnections: [], rules: [], checkSchedules: [], deviceProfiles: [], deviceAdapters: [], devicePresets: [], alerts: [], incidents: [], agentRequests: [], storage: null, postLimit: 50 };
 const routes = new Set(["overview", "survey", "posts", "edit-post", "enroll", "collectors", "checks", "history", "rules", "evidence", "investigate", "actions", "incidents", "devices", "fleet"]);
 
 async function request(path, options = {}) {
@@ -57,7 +57,7 @@ async function enterApp(session) {
 
 async function loadCore() {
   $("#summary").innerHTML = stateBox("Loading workspace", "Collecting the latest operational state.", "loading");
-  const results = await Promise.allSettled([request("/api/v1/posts"), request("/api/v1/alerts"), request("/api/v1/incidents"), request("/api/v1/collectors"), request("/api/v1/agent-pairing-requests"), request("/api/v1/agent-connections"), request("/api/v1/rules"), request("/api/v1/check-schedules"), request("/api/v1/device-profiles"), request("/api/v1/device-adapters"), request("/api/v1/device-presets")]);
+  const results = await Promise.allSettled([request("/api/v1/posts"), request("/api/v1/alerts"), request("/api/v1/incidents"), request("/api/v1/collectors"), request("/api/v1/agent-pairing-requests"), request("/api/v1/agent-connections"), request("/api/v1/rules"), request("/api/v1/check-schedules"), request("/api/v1/device-profiles"), request("/api/v1/device-adapters"), request("/api/v1/device-presets"), request("/api/v1/storage")]);
   const failures = results.filter(result => result.status === "rejected");
   state.posts = results[0].status === "fulfilled" ? results[0].value.posts : [];
   state.alerts = results[1].status === "fulfilled" ? results[1].value.alerts : [];
@@ -70,8 +70,26 @@ async function loadCore() {
   state.deviceProfiles = results[8].status === "fulfilled" ? results[8].value.profiles : [];
   state.deviceAdapters = results[9].status === "fulfilled" ? results[9].value.adapters : [];
   state.devicePresets = results[10].status === "fulfilled" ? results[10].value.presets : [];
-  updatePostSelects(); renderOverview(); renderPosts(); renderIncidents(); renderCollectorHealth(); renderAgentRequests(); renderRuleInventory(); renderCheckSchedules(); renderDeviceProfiles();
+  state.storage = results[11].status === "fulfilled" ? results[11].value : null;
+  updatePostSelects(); renderOverview(); renderPosts(); renderIncidents(); renderCollectorHealth(); renderAgentRequests(); renderRuleInventory(); renderCheckSchedules(); renderDeviceProfiles(); renderStorageWarning();
   if (failures.length) showMessage(`${failures.length} workspace section${failures.length === 1 ? "" : "s"} could not be loaded. Available data is still shown.`, "error");
+}
+
+function renderStorageWarning() {
+  const node = $("#storage-warning");
+  if (!node) return;
+  if (!state.storage || state.storage.full === undefined) { node.hidden = true; return; }
+  if (state.storage.full) {
+    node.hidden = false;
+    node.textContent = `Storage at capacity: ${state.storage.reason || "database footprint at capacity"}. Telemetry is paused until retention reclaims space; agents retry within their bounded queues.`;
+    node.className = "storage-warning critical";
+  } else if (state.storage.cap_bytes > 0 && state.storage.total_bytes >= 0.9 * state.storage.cap_bytes) {
+    node.hidden = false;
+    node.textContent = `Storage approaching capacity: ${Math.round(state.storage.total_bytes / 1048576)} MiB of ${Math.round(state.storage.cap_bytes / 1048576)} MiB.`;
+    node.className = "storage-warning warning";
+  } else {
+    node.hidden = true;
+  }
 }
 
 function renderAgentRequests() {

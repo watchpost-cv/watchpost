@@ -27,8 +27,20 @@ Pruning is bounded (1,000 rows per DELETE, capped per pass), state-aware for
 alerts (latest active row per rule/post preserved; superseded rows age out),
 and citation-aware through immutable `conversation_evidence` snapshots that
 let pruned evidence resolve as "purged by retention". `terminal_at` records
-when pairing requests reach a terminal state. Capacity protection (HTTP 507)
-is R2.
+when pairing requests reach a terminal state. Capacity protection is R2.
+
+## Storage capacity
+
+R2 adds `internal/storage`: the total SQLite footprint (database plus WAL and
+SHM sidecars) and free disk are measured against configurable caps
+(`WATCHPOST_MAX_DB_BYTES`, `WATCHPOST_MIN_FREE_BYTES`, `WATCHPOST_MIN_FREE_PERCENT`).
+Telemetry and log ingestion fail closed with HTTP 507 after collector
+authentication, an immediate retention pass runs when the node is over budget,
+and the SPA shows a storage warning. `GET /api/v1/storage` is an authenticated
+diagnostic; the footprint is also reported in `/api/v1/diagnostics`. The agent
+surfaces a 507 distinctly as "Watchpost storage is full". The guarantee is
+that no loss is silent: Watchpost rejects explicitly, agents retry within
+bounded storage, and any eventual queue loss is counted and displayed.
 Host enrollment records an optional address or hostname, then pairs the
 bundled collector using an explicit Watchpost URL reachable from the post. The
 collector is outbound-only. Post editing is optimistic-concurrency protected;

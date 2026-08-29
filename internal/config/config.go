@@ -17,6 +17,26 @@ type Config struct {
 	DataDir       string
 	SecureCookies bool
 	Retention     Retention
+	Storage       Storage
+}
+
+// Storage holds the capacity guardrails that fail telemetry ingestion closed
+// before the node can exhaust its disk. MaxDBBytes caps the total SQLite
+// footprint (main database plus write-ahead and shared-memory sidecars);
+// MinFreeBytes and MinFreePercent protect the filesystem hosting the data
+// directory.
+type Storage struct {
+	MaxDBBytes      int64
+	MinFreeBytes    int64
+	MinFreePercent  float64
+}
+
+func DefaultStorage() Storage {
+	return Storage{
+		MaxDBBytes:     2 << 30,
+		MinFreeBytes:   512 << 20,
+		MinFreePercent: 5.0,
+	}
 }
 
 // Retention holds the deterministic pruning policy applied by the retention
@@ -64,7 +84,7 @@ type Overrides struct {
 }
 
 func Load(overrides Overrides) (Config, error) {
-	cfg := Config{Listen: DefaultListen, Retention: DefaultRetention()}
+	cfg := Config{Listen: DefaultListen, Retention: DefaultRetention(), Storage: DefaultStorage()}
 	if dir, err := os.UserConfigDir(); err == nil {
 		cfg.DataDir = filepath.Join(dir, "watchpost")
 	} else {
@@ -91,10 +111,39 @@ func Load(overrides Overrides) (Config, error) {
 	if err := applyRetentionEnv(&cfg); err != nil {
 		return Config{}, err
 	}
+	if err := applyStorageEnv(&cfg); err != nil {
+		return Config{}, err
+	}
 	if err := validate(cfg); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+func applyStorageEnv(cfg *Config) error {
+	storage := &cfg.Storage
+	if value := os.Getenv("WATCHPOST_MAX_DB_BYTES"); value != "" {
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || parsed < 0 {
+			return fmt.Errorf("WATCHPOST_MAX_DB_BYTES: invalid value")
+		}
+		storage.MaxDBBytes = parsed
+	}
+	if value := os.Getenv("WATCHPOST_MIN_FREE_BYTES"); value != "" {
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || parsed < 0 {
+			return fmt.Errorf("WATCHPOST_MIN_FREE_BYTES: invalid value")
+		}
+		storage.MinFreeBytes = parsed
+	}
+	if value := os.Getenv("WATCHPOST_MIN_FREE_PERCENT"); value != "" {
+		parsed, err := strconv.ParseFloat(value, 64)
+		if err != nil || parsed < 0 || parsed > 100 {
+			return fmt.Errorf("WATCHPOST_MIN_FREE_PERCENT: invalid value")
+		}
+		storage.MinFreePercent = parsed
+	}
+	return nil
 }
 
 func applyRetentionEnv(cfg *Config) error {

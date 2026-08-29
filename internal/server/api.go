@@ -419,6 +419,14 @@ func (s *Server) handleObservation(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 401, map[string]string{"error": "collector authentication required"})
 		return
 	}
+	if err := s.ingest.Authenticate(r.Context(), observation.CollectorID, secret); err != nil {
+		writeJSON(w, 401, map[string]string{"error": "collector authentication failed"})
+		return
+	}
+	if err := s.guardStorage(r.Context()); err != nil {
+		writeJSON(w, http.StatusInsufficientStorage, map[string]string{"error": "storage full"})
+		return
+	}
 	if err := s.ingest.Accept(r.Context(), secret, observation); err != nil {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
@@ -449,6 +457,14 @@ func (s *Server) handleCollectorBatch(w http.ResponseWriter, r *http.Request) {
 	secret := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if secret == "" {
 		writeJSON(w, 401, map[string]string{"error": "collector authentication required"})
+		return
+	}
+	if err := s.ingest.Authenticate(r.Context(), batch.CollectorID, secret); err != nil {
+		writeJSON(w, 401, map[string]string{"error": "collector authentication failed"})
+		return
+	}
+	if err := s.guardStorage(r.Context()); err != nil {
+		writeJSON(w, http.StatusInsufficientStorage, map[string]string{"error": "storage full"})
 		return
 	}
 	items := make([]ingest.Observation, len(batch.Samples))
@@ -744,6 +760,10 @@ func currentUser(r *http.Request) auth.User {
 func (s *Server) handleLog(w http.ResponseWriter, r *http.Request) {
 	var log evidence.Log
 	if !decode(w, r, &log) {
+		return
+	}
+	if err := s.guardStorage(r.Context()); err != nil {
+		writeJSON(w, http.StatusInsufficientStorage, map[string]string{"error": "storage full"})
 		return
 	}
 	stored, err := s.evidence.IngestLog(r.Context(), log)

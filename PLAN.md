@@ -14,8 +14,16 @@ active alert per rule/post, exempts incident-linked and investigation-cited
 records, and resolves pruned citations through immutable
 `conversation_evidence` snapshots. `agent_pairing_requests.terminal_at`
 records terminal state; expired sessions are always pruned; a zero window
-keeps a category forever. Storage-capacity protection and HTTP 507 belong to
-R2.
+keeps a category forever.
+
+R2 is complete: `internal/storage` measures the full SQLite footprint
+(database plus WAL and SHM sidecars) and free disk against configurable caps.
+Telemetry and log ingestion fail closed with HTTP 507 after collector
+authentication, an immediate retention pass runs when the node is over budget,
+and the SPA shows a storage warning. `GET /api/v1/storage` is an authenticated
+diagnostic; the footprint is also reported in `/api/v1/diagnostics`. The agent
+surfaces a 507 distinctly as "Watchpost storage is full". Sustained capacity
+verification belongs to R3.
 
 ## Agent architecture programme (WP-A01–WP-A18)
 

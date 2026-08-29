@@ -95,6 +95,25 @@ func (s *Service) Enroll(ctx context.Context, id, postID string) (string, error)
 	_, e := s.s.DB.ExecContext(ctx, `INSERT INTO collector_keys(id,post_id,secret_hash) VALUES(?,?,?)`, id, postID, h[:])
 	return secret, e
 }
+
+// Authenticate verifies a collector credential without ingesting anything. It
+// lets handlers reject unknown identities before exposing storage state or
+// consuming work.
+func (s *Service) Authenticate(ctx context.Context, collectorID, secret string) error {
+	if collectorID == "" || secret == "" {
+		return errors.New("collector authentication failed")
+	}
+	h := sha256.Sum256([]byte(secret))
+	var revoked sql.NullString
+	err := s.s.DB.QueryRowContext(ctx, `SELECT revoked_at FROM collector_keys WHERE id=? AND secret_hash=?`, collectorID, h[:]).Scan(&revoked)
+	if err != nil {
+		return errors.New("collector authentication failed")
+	}
+	if revoked.Valid {
+		return errors.New("collector authentication failed")
+	}
+	return nil
+}
 func (s *Service) Accept(ctx context.Context, secret string, o Observation) error {
 	if o.Version != 1 || o.Sequence < 1 || len(o.Signal) < 1 || len(o.Signal) > 128 || len(o.Labels) > 32 || !quality[o.Quality] || (o.Value != nil && (math.IsNaN(*o.Value) || math.IsInf(*o.Value, 0))) {
 		return errors.New("invalid observation")

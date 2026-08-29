@@ -29,6 +29,7 @@ import (
 	"github.com/watchpost-ops/watchpost/internal/posts"
 	"github.com/watchpost-ops/watchpost/internal/retention"
 	"github.com/watchpost-ops/watchpost/internal/rules"
+	"github.com/watchpost-ops/watchpost/internal/storage"
 	"github.com/watchpost-ops/watchpost/internal/store"
 	"github.com/watchpost-ops/watchpost/web"
 )
@@ -55,6 +56,7 @@ type Server struct {
 	devices      *devices.ProfileStore
 	checks       *checks.ScheduleStore
 	retention    *retention.Store
+	storage      *storage.Checker
 }
 
 func New(cfg config.Config, version string, logger *slog.Logger, database *store.Store) *Server {
@@ -81,7 +83,7 @@ func New(cfg config.Config, version string, logger *slog.Logger, database *store
 		count, _ := result.RowsAffected()
 		return map[string]any{"disabled": count == 1}, nil
 	}})
-	return &Server{cfg: cfg, version: version, logger: logger, store: database, auth: auth.New(database), posts: posts.New(database), ingest: ingest.New(database), history: history.New(database), rules: rules.New(database), notify: notify.New(database, sender), incidents: incidents.New(database), evidence: evidence.New(database), agent: agent.New(database, agent.EvidenceProvider{}), agentPairing: agentpairing.New(database), actions: actionRegistry, fleet: fleet.New(database), pairing: pairing.New(database), health: collectorhealth.New(database), devices: devices.NewProfileStore(database), checks: checks.NewScheduleStore(database), retention: retention.New(database, cfg.Retention)}
+	return &Server{cfg: cfg, version: version, logger: logger, store: database, auth: auth.New(database), posts: posts.New(database), ingest: ingest.New(database), history: history.New(database), rules: rules.New(database), notify: notify.New(database, sender), incidents: incidents.New(database), evidence: evidence.New(database), agent: agent.New(database, agent.EvidenceProvider{}), agentPairing: agentpairing.New(database), actions: actionRegistry, fleet: fleet.New(database), pairing: pairing.New(database), health: collectorhealth.New(database), devices: devices.NewProfileStore(database), checks: checks.NewScheduleStore(database), retention: retention.New(database, cfg.Retention), storage: storage.New(cfg.DataDir, cfg.Storage.MaxDBBytes, cfg.Storage.MinFreeBytes, cfg.Storage.MinFreePercent)}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -99,15 +101,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/version", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"version": s.version})
 	})
-	mux.HandleFunc("GET /api/v1/diagnostics", func(w http.ResponseWriter, _ *http.Request) {
-		var memory runtime.MemStats
-		runtime.ReadMemStats(&memory)
-		openFDs := -1
-		if entries, readErr := os.ReadDir("/proc/self/fd"); readErr == nil {
-			openFDs = len(entries)
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"version": s.version, "schema_version": store.SchemaVersion, "persistence": true, "heap_alloc_bytes": memory.HeapAlloc, "goroutines": runtime.NumGoroutine(), "open_fds": openFDs})
-	})
+	mux.HandleFunc("GET /api/v1/diagnostics", s.handleDiagnostics)
+	mux.HandleFunc("GET /api/v1/storage", s.require("viewer", s.handleStorage))
 	s.registerAPI(mux)
 	assets, err := fs.Sub(web.Files, "dist")
 	if err != nil {
@@ -115,6 +110,41 @@ func (s *Server) Handler() http.Handler {
 	}
 	mux.Handle("/", http.FileServer(http.FS(assets)))
 	return securityHeaders(mux)
+}
+
+func (s *Server) handleDiagnostics(w http.ResponseWriter, _ *http.Request) {
+	var memory runtime.MemStats
+	runtime.ReadMemStats(&memory)
+	openFDs := -1
+	if entries, readErr := os.ReadDir("/proc/self/fd"); readErr == nil {
+		openFDs = len(entries)
+	}
+	storageReport, _ := s.storage.Report()
+	writeJSON(w, http.StatusOK, map[string]any{"version": s.version, "schema_version": store.SchemaVersion, "persistence": true, "heap_alloc_bytes": memory.HeapAlloc, "goroutines": runtime.NumGoroutine(), "open_fds": openFDs, "db_size_bytes": storageReport.TotalBytes, "storage_full": storageReport.Full, "storage_reason": storageReport.Reason})
+}
+
+func (s *Server) handleStorage(w http.ResponseWriter, r *http.Request) {
+	report, err := s.storage.Report()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "storage status unavailable"})
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
+}
+
+// guardStorage rejects writes before the node can exhaust disk, and kicks an
+// immediate retention pass when the node is over budget so space is reclaimed
+// without waiting for the next scheduled pass.
+func (s *Server) guardStorage(ctx context.Context) error {
+	if err := s.storage.Check(); err != nil {
+		go func() {
+			passCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			_, _ = s.retention.RunOnce(passCtx)
+		}()
+		return err
+	}
+	return nil
 }
 
 func (s *Server) Run(ctx context.Context) error {

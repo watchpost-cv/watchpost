@@ -58,3 +58,22 @@ status instead of a bare 404, so investigation citations degrade honestly.
 Pairing tokens and agent pairing requests are pruned only after a terminal
 state (`used_at`/`terminal_at`) or their expiry, so an in-flight request is
 never removed early.
+
+## Storage capacity contract
+
+Watchpost measures its total SQLite footprint — `watchpost.db` plus the
+`-wal` and `-shm` sidecars and any other `watchpost.db*` files — against a
+configurable cap (`WATCHPOST_MAX_DB_BYTES`, default 2 GiB) and protects the
+free space on the data filesystem (`WATCHPOST_MIN_FREE_BYTES`, default 512 MiB;
+`WATCHPOST_MIN_FREE_PERCENT`, default 5%). At capacity, telemetry and log
+ingestion fail closed with HTTP 507 after the collector identity has been
+verified, so storage state is never disclosed to unauthenticated callers.
+
+No loss is silent. Watchpost rejects writes explicitly with 507; collectors
+and agents retry within their bounded queues; any eventual queue overflow is
+counted (`collector.dropped_samples`, agent `dropped_collections`) and
+displayed. A 507 also triggers an immediate retention pass so space is
+reclaimed without waiting for the scheduled interval. The storage report is an
+authenticated operational diagnostic (`GET /api/v1/storage`) and a visible SPA
+warning; the database footprint is additionally reported in the existing
+diagnostics endpoint.
