@@ -164,8 +164,14 @@ R21 is complete: the SPA is agent-first for host monitoring. Host enrollment
 shows a visible agent guide (install → pair → approve), unconnected host posts
 display "No agent" and route Connect to the enrollment approval panel, and the
 v1 pairing UI is gone. The agent web and CLI remain equivalent pairing and
-configuration surfaces with the service lifecycle retained by the CLI. Guided
-recovery and alert/incident UX are R22.
+configuration surfaces with the service lifecycle retained by the CLI.
+
+R22 is complete: the SPA can acknowledge firing alerts from the overview,
+review an incident with its durable timeline, transition status, add
+attributed notes and assign an owner, and post rows show a next-action hint
+for revoked, rejected, stale/offline and skewed agent connections. Guided
+recovery states (unpair before re-pair, rotate or re-pair, check delivery)
+are visible in place. Many-post API and SPA scaling is R23.
 
 ## Agent architecture programme (WP-A01–WP-A18)
 

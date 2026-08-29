@@ -227,6 +227,13 @@ default 3600). Both are race-tested.
 R21 makes the SPA agent-first for hosts: enrollment shows an agent guide
 (install → pair → approve), unconnected host posts show "No agent" and Connect
 routes to the approval panel, and the v1 pairing UI is removed.
+
+## Guided recovery and alert/incident UX
+
+R22 adds alert acknowledgement from the overview, incident review with its
+durable timeline plus transition, attributed-note and assignment actions, and
+next-action hints on post rows for revoked, rejected, stale/offline and skewed
+agent connections (unpair before re-pair, rotate or re-pair, check delivery).
 Host enrollment records an optional address or hostname, then pairs the
 separately installed Watchpost Agent through request/approval against an
 explicit Watchpost URL reachable from the post. The
