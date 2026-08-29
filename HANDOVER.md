@@ -5,6 +5,16 @@ recovery programme is closed as a local Linux development candidate, not a
 public production release. `hardening/complete-gate.sh` is authoritative and
 `RELEASE_LIMITATIONS.md` must accompany release decisions. Do not regress the
 guided enrollment-to-confirmation flow.
+
+## Operational SPA canonical source
+
+R20 establishes canonical Nift source for the embedded operational SPA. The
+SPA lives in `web/content` and `web/templates`; `web/dist` is generated output
+that must be committed after every `nift build`. Never hand-edit `web/dist`.
+The application script is tracked as `script.js`: Nift requires unique tracked
+names, and `app.js`/`app.css` share the basename `app` so both cannot be
+tracked. `web/embed_test.go` enforces that committed dist matches the source
+in CI and `hardening/spa-gate.sh` proves a full regeneration produces no diff.
 Host enrollment records an optional address or hostname, then pairs the
 bundled collector using an explicit Watchpost URL reachable from the post. The
 collector is outbound-only. Post editing is optimistic-concurrency protected;

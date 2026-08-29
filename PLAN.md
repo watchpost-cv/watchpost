@@ -1,5 +1,14 @@
 # Watchpost development checkpoints
 
+## Active implementation programme (R checkpoints)
+
+R20 is complete: the operational SPA now has canonical Nift source in
+`web/content` and `web/templates` and `web/dist` is regenerated output. The
+application script is tracked as `script.js` because Nift requires unique
+tracked names. `web/embed_test.go` (CI) and `hardening/spa-gate.sh` (local)
+guard source/output agreement. Subsequent checkpoints are recorded here as
+they land.
+
 ## Agent architecture programme (WP-A01–WP-A18)
 
 WP-A01 accepted a separate `watchpost-agent` program with its own embedded

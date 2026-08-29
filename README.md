@@ -19,6 +19,18 @@ go build -o watchpost ./cmd/watchpost
 ./watchpost
 ```
 
+The operational SPA is built from canonical Nift source in `web/content` and
+`web/templates`. Edit the source, regenerate the embedded distribution, and
+commit both:
+
+```sh
+cd web && nift build && nift status && cd ..
+```
+
+`web/dist` is generated output. `web/embed_test.go` enforces in CI that the
+committed dist matches the canonical source, and `hardening/spa-gate.sh`
+proves a full regeneration produces no diff.
+
 On Linux, inspect the host signals produced by the bundled collector sampler:
 
 ```sh

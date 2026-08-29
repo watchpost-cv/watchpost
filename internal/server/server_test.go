@@ -82,7 +82,7 @@ func TestDashboardUXContracts(t *testing.T) {
 			t.Errorf("dense survey stylesheet missing %s", required)
 		}
 	}
-	js := read("/app.js")
+	js := read("/script.js")
 	for _, required := range []string{"policyHealth", "No policy configured", "/api/v1/rules", "data-rule-toggle"} {
 		if !strings.Contains(js, required) {
 			t.Errorf("policy-aware survey missing %s", required)
