@@ -239,6 +239,40 @@ func TestAuditRecordsStateChanges(t *testing.T) {
 	}
 }
 
+func TestExternalSetupRequiresBootstrapToken(t *testing.T) {
+	dataDir := t.TempDir()
+	database, err := store.Open(t.Context(), dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	cfg := config.Config{Listen: "0.0.0.0:0", DataDir: dataDir, Retention: config.DefaultRetention(), Storage: config.DefaultStorage(), SetupTokenTTL: time.Hour}
+	s := New(cfg, "test", slog.New(slog.NewTextHandler(io.Discard, nil)), database)
+	handler := s.Handler()
+	bootstrap := apiRequest(t, handler, "GET", "/api/v1/bootstrap", nil, nil, "")
+	if !bytes.Contains(bootstrap.Body.Bytes(), []byte(`"setup_token_required":true`)) {
+		t.Fatalf("bootstrap must report token required: %s", bootstrap.Body.String())
+	}
+	if got := apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"email": "admin@example.com", "password": "1234567"}, nil, ""); got.Code != 409 {
+		t.Fatalf("setup without token: %d", got.Code)
+	}
+	token, err := s.auth.GenerateBootstrapToken(t.Context(), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"email": "admin@example.com", "password": "1234567", "token": token}, nil, ""); got.Code != 201 {
+		t.Fatalf("setup with token: %d %s", got.Code, got.Body.String())
+	}
+	// The token is never disclosed through bootstrap or diagnostics.
+	if bytes.Contains(bootstrap.Body.Bytes(), []byte(token)) {
+		t.Fatal("bootstrap disclosed the setup token")
+	}
+	diag := apiRequest(t, handler, "GET", "/api/v1/diagnostics", nil, nil, "")
+	if bytes.Contains(diag.Body.Bytes(), []byte(token)) {
+		t.Fatal("diagnostics disclosed the setup token")
+	}
+}
+
 func TestSecureCookieBehindHTTPSProxy(t *testing.T) {
 	s := testServer(t)
 	s.cfg.SecureCookies = true

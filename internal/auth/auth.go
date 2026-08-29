@@ -32,11 +32,43 @@ type Manager struct {
 	store    *store.Store
 	mu       sync.Mutex
 	failures map[string][]time.Time
+	// bootstrapTokenRequired gates first-admin setup behind a short-lived
+	// bootstrap token when the node is externally reachable or the operator
+	// configured one. Loopback-only setup may remain direct.
+	bootstrapTokenRequired bool
 }
 
 func New(s *store.Store) *Manager { return &Manager{store: s, failures: map[string][]time.Time{}} }
 
-func (m *Manager) Setup(ctx context.Context, email, password string) (User, error) {
+func (m *Manager) SetBootstrapTokenRequired(required bool) { m.bootstrapTokenRequired = required }
+func (m *Manager) BootstrapTokenRequired() bool            { return m.bootstrapTokenRequired }
+
+// SetBootstrapToken persists only a hash of the bootstrap token, never the
+// raw value. Re-supplying a token resets its consumption so a restart prints a
+// fresh token without leaving a stale consumed record behind.
+func (m *Manager) SetBootstrapToken(ctx context.Context, raw string, expiresAt time.Time) error {
+	if raw == "" {
+		return errors.New("bootstrap token required")
+	}
+	hash := sha256.Sum256([]byte(raw))
+	_, err := m.store.DB.ExecContext(ctx, `INSERT INTO bootstrap_tokens(token_hash,expires_at) VALUES(?,?) ON CONFLICT(token_hash) DO UPDATE SET expires_at=excluded.expires_at,consumed_at=NULL`, hash[:], expiresAt.UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+// GenerateBootstrapToken issues a fresh short-lived token and returns the raw
+// value exactly once for console printing.
+func (m *Manager) GenerateBootstrapToken(ctx context.Context, lifetime time.Duration) (string, error) {
+	raw, err := randomToken(32)
+	if err != nil {
+		return "", err
+	}
+	if err := m.SetBootstrapToken(ctx, raw, time.Now().UTC().Add(lifetime)); err != nil {
+		return "", err
+	}
+	return raw, nil
+}
+
+func (m *Manager) Setup(ctx context.Context, email, password, token string) (User, error) {
 	if !strings.Contains(email, "@") || len(password) < MinimumPasswordLength {
 		return User{}, fmt.Errorf("valid email and password of at least %d characters required", MinimumPasswordLength)
 	}
@@ -57,6 +89,20 @@ func (m *Manager) Setup(ctx context.Context, email, password string) (User, erro
 		return User{}, errors.New("setup already completed")
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
+	// Bootstrap-token consumption and first-admin creation are one atomic
+	// transaction: replaying a consumed token or racing a concurrent second
+	// setup both fail closed.
+	if m.bootstrapTokenRequired {
+		tokenHash := sha256.Sum256([]byte(token))
+		result, err := tx.ExecContext(ctx, `UPDATE bootstrap_tokens SET consumed_at=? WHERE token_hash=? AND consumed_at IS NULL AND expires_at>?`, now, tokenHash[:], now)
+		if err != nil {
+			return User{}, err
+		}
+		consumed, _ := result.RowsAffected()
+		if consumed != 1 {
+			return User{}, errors.New("bootstrap token required or invalid")
+		}
+	}
 	result, err := tx.ExecContext(ctx, `INSERT INTO users(email,password_hash,role,created_at) VALUES(?,?,'admin',?)`, strings.TrimSpace(email), hash, now)
 	if err != nil {
 		return User{}, err

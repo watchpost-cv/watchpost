@@ -97,7 +97,7 @@ func TestBootstrapShowsOnlyRequiredAuthState(t *testing.T) {
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"setup_required":true`) {
 		t.Fatalf("initial bootstrap: %d %s", w.Code, w.Body.String())
 	}
-	if _, err := s.auth.Setup(t.Context(), "admin@example.com", "1234567"); err != nil {
+	if _, err := s.auth.Setup(t.Context(), "admin@example.com", "1234567", ""); err != nil {
 		t.Fatal(err)
 	}
 	w = httptest.NewRecorder()

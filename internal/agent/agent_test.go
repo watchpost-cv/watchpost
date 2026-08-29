@@ -24,7 +24,7 @@ func TestEvidenceCitationAndHostileContentBoundary(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer db.Close()
-	user, _ := auth.New(db).Setup(ctx, "admin@example.com", "correct-horse-battery")
+	user, _ := auth.New(db).Setup(ctx, "admin@example.com", "correct-horse-battery", "")
 	_, _ = posts.New(db).Create(ctx, posts.Post{ID: "p", Name: "P", Kind: "host"})
 	_, _ = db.DB.Exec(`INSERT INTO logs(id,post_id,source,observed_at,ingested_at,severity,message) VALUES(1,'p','app','now','now','error','restart')`)
 	provider := &fakeProvider{response: Response{Answer: "The service restarted.", Citations: []Citation{{Kind: "log", ID: "1"}}, Uncertainty: "Cause unknown"}}

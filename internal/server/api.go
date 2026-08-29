@@ -202,7 +202,7 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "bootstrap state unavailable"})
 		return
 	}
-	response := map[string]any{"setup_required": setupRequired, "authenticated": false}
+	response := map[string]any{"setup_required": setupRequired, "setup_token_required": s.auth.BootstrapTokenRequired(), "authenticated": false}
 	if cookie, cookieErr := r.Cookie(sessionCookie); cookieErr == nil {
 		if session, authErr := s.auth.Authenticate(r.Context(), cookie.Value); authErr == nil {
 			response["authenticated"] = true
@@ -224,11 +224,11 @@ func decode(w http.ResponseWriter, r *http.Request, value any) bool {
 	return true
 }
 func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
-	var in struct{ Email, Password string }
+	var in struct{ Email, Password, Token string }
 	if !decode(w, r, &in) {
 		return
 	}
-	user, err := s.auth.Setup(r.Context(), in.Email, in.Password)
+	user, err := s.auth.Setup(r.Context(), in.Email, in.Password, in.Token)
 	if err != nil {
 		writeJSON(w, 409, map[string]string{"error": err.Error()})
 		return

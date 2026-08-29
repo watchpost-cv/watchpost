@@ -18,6 +18,8 @@ type Config struct {
 	SecureCookies bool
 	Retention     Retention
 	Storage       Storage
+	SetupToken    string
+	SetupTokenTTL time.Duration
 }
 
 // Storage holds the capacity guardrails that fail telemetry ingestion closed
@@ -84,7 +86,7 @@ type Overrides struct {
 }
 
 func Load(overrides Overrides) (Config, error) {
-	cfg := Config{Listen: DefaultListen, Retention: DefaultRetention(), Storage: DefaultStorage()}
+	cfg := Config{Listen: DefaultListen, Retention: DefaultRetention(), Storage: DefaultStorage(), SetupTokenTTL: time.Hour}
 	if dir, err := os.UserConfigDir(); err == nil {
 		cfg.DataDir = filepath.Join(dir, "watchpost")
 	} else {
@@ -114,10 +116,34 @@ func Load(overrides Overrides) (Config, error) {
 	if err := applyStorageEnv(&cfg); err != nil {
 		return Config{}, err
 	}
+	if err := applySetupEnv(&cfg); err != nil {
+		return Config{}, err
+	}
 	if err := validate(cfg); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+func applySetupEnv(cfg *Config) error {
+	if value := os.Getenv("WATCHPOST_SETUP_TOKEN"); value != "" {
+		cfg.SetupToken = strings.TrimRight(value, "\r\n")
+	}
+	if path := os.Getenv("WATCHPOST_SETUP_TOKEN_FILE"); path != "" {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("WATCHPOST_SETUP_TOKEN_FILE: %w", err)
+		}
+		cfg.SetupToken = strings.TrimRight(string(content), "\r\n")
+	}
+	if value := os.Getenv("WATCHPOST_SETUP_TOKEN_TTL"); value != "" {
+		ttl, err := ParseRetentionDuration(value)
+		if err != nil || ttl <= 0 {
+			return fmt.Errorf("WATCHPOST_SETUP_TOKEN_TTL: invalid value")
+		}
+		cfg.SetupTokenTTL = ttl
+	}
+	return nil
 }
 
 func applyStorageEnv(cfg *Config) error {

@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"runtime"
@@ -84,7 +86,56 @@ func New(cfg config.Config, version string, logger *slog.Logger, database *store
 		count, _ := result.RowsAffected()
 		return map[string]any{"disabled": count == 1}, nil
 	}})
-	return &Server{cfg: cfg, version: version, logger: logger, store: database, auth: auth.New(database), posts: posts.New(database), ingest: ingest.New(database), history: history.New(database), rules: rules.New(database), notify: notify.New(database, sender), incidents: incidents.New(database), evidence: evidence.New(database), agent: agent.New(database, agent.EvidenceProvider{}), agentPairing: agentpairing.New(database), actions: actionRegistry, fleet: fleet.New(database), pairing: pairing.New(database), health: collectorhealth.New(database), devices: devices.NewProfileStore(database), checks: checks.NewScheduleStore(database), retention: retention.New(database, cfg.Retention), storage: storage.New(cfg.DataDir, cfg.Storage.MaxDBBytes, cfg.Storage.MinFreeBytes, cfg.Storage.MinFreePercent)}
+	server := &Server{cfg: cfg, version: version, logger: logger, store: database, auth: auth.New(database), posts: posts.New(database), ingest: ingest.New(database), history: history.New(database), rules: rules.New(database), notify: notify.New(database, sender), incidents: incidents.New(database), evidence: evidence.New(database), agent: agent.New(database, agent.EvidenceProvider{}), agentPairing: agentpairing.New(database), actions: actionRegistry, fleet: fleet.New(database), pairing: pairing.New(database), health: collectorhealth.New(database), devices: devices.NewProfileStore(database), checks: checks.NewScheduleStore(database), retention: retention.New(database, cfg.Retention), storage: storage.New(cfg.DataDir, cfg.Storage.MaxDBBytes, cfg.Storage.MinFreeBytes, cfg.Storage.MinFreePercent)}
+	server.provisionBootstrap()
+	return server
+}
+
+// provisionBootstrap decides whether first-admin setup requires a short-lived
+// bootstrap token. Loopback-only listeners may keep setup direct; a
+// non-loopback listener or an operator-supplied token requires one. Only the
+// token hash is persisted; the raw value is printed to the console once.
+func (s *Server) provisionBootstrap() {
+	ctx := context.Background()
+	required, err := s.auth.SetupRequired(ctx)
+	if err != nil {
+		s.logger.Warn("cannot determine first-run state", "error", err)
+		return
+	}
+	if !required {
+		s.auth.SetBootstrapTokenRequired(false)
+		return
+	}
+	operatorToken := s.cfg.SetupToken != ""
+	tokenRequired := operatorToken || !loopbackListener(s.cfg.Listen)
+	s.auth.SetBootstrapTokenRequired(tokenRequired)
+	if !tokenRequired {
+		return
+	}
+	if operatorToken {
+		if err := s.auth.SetBootstrapToken(ctx, s.cfg.SetupToken, time.Now().UTC().Add(s.cfg.SetupTokenTTL)); err != nil {
+			s.logger.Warn("bootstrap token could not be stored", "error", err)
+		}
+		return
+	}
+	raw, err := s.auth.GenerateBootstrapToken(ctx, s.cfg.SetupTokenTTL)
+	if err != nil {
+		s.logger.Warn("bootstrap token could not be generated", "error", err)
+		return
+	}
+	fmt.Fprintf(os.Stdout, "Watchpost first-run setup requires a bootstrap token.\nToken: %s (expires %s)\n", raw, time.Now().UTC().Add(s.cfg.SetupTokenTTL).Format(time.RFC3339))
+}
+
+func loopbackListener(listen string) bool {
+	host, _, err := net.SplitHostPort(listen)
+	if err != nil {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func (s *Server) Handler() http.Handler {

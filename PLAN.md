@@ -49,8 +49,16 @@ R7 is complete: every state-changing operation now writes an attributed audit
 row (logins, posts, rules, pairing, approvals, actions, incidents, schedules,
 profiles, peers, investigation), `GET /api/v1/audit` exposes the record to
 administrators, and the SPA has an admin-only Audit view. Audit rows are
-exempt from automatic retention. Multi-user/password/session administration
-is R8.
+exempt from automatic retention.
+
+R9 is complete: first-admin setup remains direct over a loopback listener, but
+an externally reachable listener or an operator-supplied
+`WATCHPOST_SETUP_TOKEN`/`WATCHPOST_SETUP_TOKEN_FILE` requires a short-lived
+bootstrap token. Only a SHA-256 hash of the token is persisted; the raw value
+is printed to the server console exactly once (or loaded from the protected
+file). Token consumption and first-admin creation happen in one transaction, so
+replay and concurrent second-winner setup fail closed. The token is never
+exposed through diagnostics or the SPA. General user administration is R8.
 
 ## Agent architecture programme (WP-A01–WP-A18)
 

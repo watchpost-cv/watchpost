@@ -15,7 +15,7 @@ func TestApprovalSeparationIdempotencyAndExecution(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer db.Close()
-	a, _ := auth.New(db).Setup(ctx, "a@example.com", "correct-horse-battery")
+	a, _ := auth.New(db).Setup(ctx, "a@example.com", "correct-horse-battery", "")
 	_, _ = db.DB.Exec(`INSERT INTO users(email,password_hash,role,created_at) VALUES('b@example.com',x'00','admin','now')`)
 	var b int64
 	_ = db.DB.QueryRow(`SELECT id FROM users WHERE email='b@example.com'`).Scan(&b)

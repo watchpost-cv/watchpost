@@ -80,6 +80,18 @@ profiles, peers, action request/approval/execute and investigation starts.
 `GET /api/v1/audit` is administrator-only and the SPA exposes an Audit view.
 Audit rows are exempt from automatic retention; audit write failures are
 logged, never fatal.
+
+## First-admin bootstrap protection
+
+R9 gates first-admin setup behind a short-lived bootstrap token whenever the
+listener is non-loopback or the operator supplies `WATCHPOST_SETUP_TOKEN` /
+`WATCHPOST_SETUP_TOKEN_FILE`. Loopback-only listeners keep setup direct.
+Only a SHA-256 hash is persisted; the raw token prints to the server console
+once (default TTL one hour, `WATCHPOST_SETUP_TOKEN_TTL`). Token consumption and
+first-admin creation are one transaction, so replay and concurrent second
+winners fail closed. The token is never returned by any API or shown in the
+SPA. The SPA shows a bootstrap-token field when `setup_token_required` is
+reported. General user administration is R8.
 Host enrollment records an optional address or hostname, then pairs the
 bundled collector using an explicit Watchpost URL reachable from the post. The
 collector is outbound-only. Post editing is optimistic-concurrency protected;

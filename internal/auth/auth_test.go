@@ -21,7 +21,7 @@ func TestConcurrentSetupCreatesOneAdministrator(t *testing.T) {
 		wg.Add(1)
 		go func(e string) {
 			defer wg.Done()
-			_, err := m.Setup(context.Background(), e, "correct-horse-battery")
+			_, err := m.Setup(context.Background(), e, "correct-horse-battery", "")
 			successes <- err == nil
 		}(email)
 	}
@@ -45,7 +45,7 @@ func TestLoginAndAuthenticate(t *testing.T) {
 	}
 	defer s.Close()
 	m := New(s)
-	if _, err = m.Setup(context.Background(), "admin@example.com", "correct-horse-battery"); err != nil {
+	if _, err = m.Setup(context.Background(), "admin@example.com", "correct-horse-battery", ""); err != nil {
 		t.Fatal(err)
 	}
 	session, err := m.Login(context.Background(), "admin@example.com", "correct-horse-battery")
@@ -65,13 +65,13 @@ func TestMinimumPasswordLengthIsSeven(t *testing.T) {
 	}
 	defer s.Close()
 	m := New(s)
-	if _, err = m.Setup(context.Background(), "admin@example.com", "123456"); err == nil {
+	if _, err = m.Setup(context.Background(), "admin@example.com", "123456", ""); err == nil {
 		t.Fatal("six-character password accepted")
 	}
 	if required, err := m.SetupRequired(context.Background()); err != nil || !required {
 		t.Fatalf("setup required=%v err=%v", required, err)
 	}
-	if _, err = m.Setup(context.Background(), "admin@example.com", "1234567"); err != nil {
+	if _, err = m.Setup(context.Background(), "admin@example.com", "1234567", ""); err != nil {
 		t.Fatalf("seven-character password rejected: %v", err)
 	}
 	if required, err := m.SetupRequired(context.Background()); err != nil || required {

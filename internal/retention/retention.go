@@ -74,6 +74,12 @@ func (r *Store) RunOnce(ctx context.Context) (Report, error) {
 			removed, err := r.deleteBounded(ctx, "DELETE FROM sessions WHERE token_hash IN (SELECT token_hash FROM sessions WHERE expires_at<? ORDER BY token_hash LIMIT ?)", cutoff)
 			return removed, false, err
 		}},
+		{"bootstrap_tokens", 0, true, func(cutoff string) (int64, bool, error) {
+			// Expired or already-consumed bootstrap tokens are inert after
+			// first-admin setup completes; an unexpired pending token stays.
+			removed, err := r.deleteBounded(ctx, "DELETE FROM bootstrap_tokens WHERE token_hash IN (SELECT token_hash FROM bootstrap_tokens WHERE COALESCE(consumed_at,expires_at)<? ORDER BY token_hash LIMIT ?)", cutoff)
+			return removed, false, err
+		}},
 		{"observations", r.policy.Observations, false, func(cutoff string) (int64, bool, error) {
 			return r.bounded(ctx, cutoff, func(ctx context.Context, cutoff string) (int64, error) {
 				cutoffTime, err := time.Parse(layout, cutoff)

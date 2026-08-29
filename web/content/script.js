@@ -33,19 +33,26 @@ async function bootstrap() {
   try {
     const boot = await request("/api/v1/bootstrap");
     if (boot.authenticated) return enterApp(boot);
-    showAuth(boot.setup_required ? "setup" : "login");
+    showAuth(boot.setup_required ? "setup" : "login", "", Boolean(boot.setup_token_required));
   } catch (error) {
     $("#auth-shell").hidden = false;
     $("#auth-message").textContent = error.message;
   }
 }
 
-function showAuth(mode, email = "") {
+function showAuth(mode, email = "", tokenRequired = false) {
   $("#app").hidden = true; $("#auth-shell").hidden = false;
   $("#setup-view").hidden = mode !== "setup"; $("#login-view").hidden = mode !== "login";
   $("#auth-message").textContent = "";
-  if (mode === "setup") $("#setup-email").focus();
-  else { $("#login-email").value = email; (email ? $("#login-password") : $("#login-email")).focus(); }
+  if (mode === "setup") {
+    const field = $("#setup-token-field");
+    if (field) {
+      field.hidden = !tokenRequired;
+      const input = $("input", field);
+      if (input) input.required = tokenRequired;
+    }
+    $("#setup-email").focus();
+  } else { $("#login-email").value = email; (email ? $("#login-password") : $("#login-email")).focus(); }
 }
 
 async function enterApp(session) {
