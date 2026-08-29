@@ -48,6 +48,7 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/collector/v1/pair", s.handlePairCollector)
 	mux.HandleFunc("POST /api/agent/v2/pairing-requests", s.handleAgentPairingRequest)
 	mux.HandleFunc("POST /api/agent/v2/rotate", s.handleRotateAgentCredential)
+	mux.HandleFunc("POST /api/agent/v2/unpair", s.handleAgentUnpair)
 	mux.HandleFunc("GET /api/agent/v2/pairing-requests/{id}", s.handleAgentPairingPoll)
 	mux.HandleFunc("GET /api/v1/agent-pairing-requests", s.require("viewer", s.handleListAgentPairingRequests))
 	mux.HandleFunc("GET /api/v1/agent-connections", s.require("viewer", s.handleListAgentConnections))
@@ -131,6 +132,16 @@ func (s *Server) handleRotateAgentCredential(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	writeJSON(w, 200, map[string]string{"credential": credential})
+}
+
+func (s *Server) handleAgentUnpair(w http.ResponseWriter, r *http.Request) {
+	installation := r.Header.Get("X-Watchpost-Installation")
+	if err := s.agentPairing.Unpair(r.Context(), installation, agentpairing.Bearer(r.Header.Get("Authorization"))); err != nil {
+		writeJSON(w, 401, map[string]string{"error": err.Error()})
+		return
+	}
+	s.audit(r, "agent_unpair", "agent_connection", installation, "agent self-unpaired")
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleAgentPairingPoll(w http.ResponseWriter, r *http.Request) {

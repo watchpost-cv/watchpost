@@ -80,8 +80,15 @@ active credential; the agent persists the replacement atomically and keeps the
 previous credential as a delivery fallback; the first delivery authenticated
 with the replacement promotes it and the old credential stops working.
 Unconfirmed replacements expire without invalidating the old credential, so a
-crash or outage mid-rotation never bricks the connection. Unpair/revocation
-lifecycle is R12.
+crash or outage mid-rotation never bricks the connection.
+
+R12 is complete: unpair is server-first. The agent requests revocation at
+Watchpost (`POST /api/agent/v2/unpair`) with its current credential and only
+clears local state once Watchpost confirms; when unreachable it persists
+`revocation_pending` and retries each delivery interval. Forced local reset is
+a separately named destructive path that warns the connection must be revoked
+centrally. Watchpost-side admin revocation and agent self-unpair are audited.
+Remote agent-management security is R14.
 
 ## Agent architecture programme (WP-A01–WP-A18)
 

@@ -121,6 +121,18 @@ credential, and the agent retains the previous credential as a delivery
 fallback until the server confirms the replacement, so a crash or network
 outage mid-rotation never bricks the connection.
 
+## Unpair and revocation lifecycle
+
+Unpairing is server-first: the agent requests revocation at Watchpost
+(`POST /api/agent/v2/unpair`) authenticated with its current credential, and
+only clears local state once Watchpost confirms. When Watchpost is
+unreachable, the agent persists a `revocation_pending` state and retries on
+every delivery interval; a credential whose revocation was never confirmed is
+never silently discarded. A separately named forced local reset clears local
+state without revoking centrally and explicitly warns that an administrator
+must revoke the connection in Watchpost (for a lost machine). Watchpost-side
+revocation remains an administrator operation too, and revoking is audited.
+
 ## Storage capacity contract
 
 Watchpost measures its total SQLite footprint — `watchpost.db` plus the

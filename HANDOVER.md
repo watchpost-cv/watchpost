@@ -122,6 +122,17 @@ delivery fallback; the first accepted delivery authenticated with the
 replacement promotes it and invalidates the old. An unconfirmed replacement
 expires without affecting the old credential, so a crash or outage during
 rotation cannot brick the connection. Promotion lives in `internal/ingest`.
+
+## Unpair and revocation lifecycle
+
+R12 makes unpair server-first. `POST /api/agent/v2/unpair` revokes the agent's
+connection at Watchpost using its current credential; the agent clears local
+state only after Watchpost confirms. If Watchpost is unreachable the agent
+persists `revocation_pending` and retries on every delivery interval; a
+credential whose revocation was never confirmed is never silently discarded.
+Forced local reset remains a separate destructive operation and now warns that
+the connection must be revoked centrally for a lost machine. Admin revocation
+and agent self-unpair are audited.
 Host enrollment records an optional address or hostname, then pairs the
 bundled collector using an explicit Watchpost URL reachable from the post. The
 collector is outbound-only. Post editing is optimistic-concurrency protected;

@@ -193,3 +193,31 @@ func TestPairingHandoffRefusesToRotateUsedCredential(t *testing.T) {
 	}
 	_ = first
 }
+
+func TestAgentSelfUnpairRevokesConnection(t *testing.T) {
+	ctx := context.Background()
+	database, err := store.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if _, err = posts.New(database).Create(ctx, posts.Post{ID: "host-one", Name: "Host one", Kind: "host", Labels: map[string]string{}}); err != nil {
+		t.Fatal(err)
+	}
+	secret := sha256.Sum256([]byte("active-credential"))
+	if _, err = database.DB.Exec(`INSERT INTO collector_keys(id,post_id,secret_hash) VALUES('install-1','host-one',?); INSERT INTO agent_connections(installation_id,post_id,hostname,platform,agent_version,created_at) VALUES('install-1','host-one','m','linux','test','2026-01-01T00:00:00Z')`, secret[:]); err != nil {
+		t.Fatal(err)
+	}
+	service := New(database)
+	if err = service.Unpair(ctx, "install-1", "active-credential"); err != nil {
+		t.Fatal(err)
+	}
+	items, err := service.Connections(ctx, "host-one")
+	if err != nil || len(items) != 1 || items[0].Status != "revoked" {
+		t.Fatalf("connection after self-unpair: %#v %v", items, err)
+	}
+	// Wrong credential cannot self-unpair.
+	if err = service.Unpair(ctx, "install-1", "wrong-credential"); err == nil {
+		t.Fatal("self-unpair with wrong credential succeeded")
+	}
+}

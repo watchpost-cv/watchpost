@@ -2,6 +2,7 @@ package agentpairing
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
@@ -213,6 +214,37 @@ func (s *Service) Rotate(ctx context.Context, installationID, current string) (s
 		return "", errors.New("agent credential rejected")
 	}
 	return credential, nil
+}
+
+// Unpair lets an agent revoke its own connection by presenting its current
+// credential. The agent connection and collector key are marked revoked, which
+// Watchpost treats as authority removed.
+func (s *Service) Unpair(ctx context.Context, installationID, current string) error {
+	if installationID == "" || current == "" {
+		return errors.New("agent credential required")
+	}
+	currentHash := sha256.Sum256([]byte(current))
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	tx, err := s.s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var active []byte
+	var revoked sql.NullString
+	if err = tx.QueryRowContext(ctx, `SELECT secret_hash,revoked_at FROM collector_keys WHERE id=?`, installationID).Scan(&active, &revoked); err != nil || revoked.Valid {
+		return errors.New("agent credential rejected")
+	}
+	if !hmac.Equal(active, currentHash[:]) {
+		return errors.New("agent credential rejected")
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE agent_connections SET revoked_at=? WHERE installation_id=? AND revoked_at IS NULL`, now, installationID); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE collector_keys SET revoked_at=? WHERE id=? AND revoked_at IS NULL`, now, installationID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Service) Decide(ctx context.Context, id, postID string, approve bool) error {
