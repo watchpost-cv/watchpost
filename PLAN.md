@@ -112,8 +112,16 @@ outside the database (`WATCHPOST_MASTER_KEY`); without a key, credential
 storage and recurring polling are refused. Each poll emits `snmp.poll_ok`
 reachability plus one observation per numeric OID through the canonical
 contract and the rule engine. The profile store's List was also fixed to avoid
-a single-connection nested-query deadlock. No SNMP write path exists. Action
-honesty is R15.
+a single-connection nested-query deadlock. No SNMP write path exists.
+
+R15 is complete: every registered action is honest. `rerun_check` reruns the
+named saved schedule for the action's post, routes the observed check evidence
+through the pipeline and records `ok`/`failure`/`latency_ms` as its
+verification outcome, refusing a schedule that belongs to another post;
+`silence_route` disables the named route and records `disabled`. No registered
+action is a no-op. The write-authority invariant is documented: read
+capability never grants write authority and no write operation travels through
+a generic untyped command path. Canonical host signal naming is R16.
 
 ## Agent architecture programme (WP-A01–WP-A18)
 

@@ -165,6 +165,17 @@ test-only. Each poll emits `snmp.poll_ok` reachability plus one observation per
 numeric OID through the canonical contract and rule engine. The devices
 `List` fix (nested query under a single connection) is part of R6. SNMP
 remains read-only.
+
+## Action honesty and write-authority invariant
+
+R15 removes the last no-op action. `rerun_check` reruns the named saved
+schedule for the action's post, routes the observed evidence through the
+pipeline and records `ok`/`failure`/`latency_ms` as verification; it refuses a
+schedule belonging to another post. `silence_route` disables the named route
+and records `disabled`. No registered action is a no-op. The invariant:
+read capability never grants write authority, and no write operation travels
+through a generic untyped command path. Write-capable industrial/building
+actions stay out of scope under a separate authority and safety model.
 Host enrollment records an optional address or hostname, then pairs the
 bundled collector using an explicit Watchpost URL reachable from the post. The
 collector is outbound-only. Post editing is optimistic-concurrency protected;

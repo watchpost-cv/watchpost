@@ -75,6 +75,16 @@ func (s *ScheduleStore) Save(ctx context.Context, v Schedule) error {
 	}
 	return tx.Commit()
 }
+// Get fetches a single schedule by id.
+func (s *ScheduleStore) Get(ctx context.Context, id string) (Schedule, error) {
+	var v Schedule
+	err := s.s.DB.QueryRowContext(ctx, `SELECT id,post_id,kind,address,server_name,interval_seconds,enabled FROM check_schedules WHERE id=?`, id).Scan(&v.ID, &v.PostID, &v.Kind, &v.Address, &v.ServerName, &v.IntervalSeconds, &v.Enabled)
+	if err != nil {
+		return Schedule{}, err
+	}
+	return v, nil
+}
+
 func (s *ScheduleStore) List(ctx context.Context) ([]Schedule, error) {
 	rows, err := s.s.DB.QueryContext(ctx, `SELECT c.id,c.post_id,c.kind,c.address,c.server_name,c.interval_seconds,c.enabled,c.next_run_at,r.checked_at,r.ok,r.latency_ms,r.status,r.expires_at,r.failure FROM check_schedules c LEFT JOIN check_results r ON r.id=(SELECT id FROM check_results WHERE schedule_id=c.id ORDER BY checked_at DESC LIMIT 1) ORDER BY c.post_id,c.id`)
 	if err != nil {

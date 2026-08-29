@@ -419,3 +419,64 @@ func TestObservationDrivesRuleAndAlertAPI(t *testing.T) {
 		t.Fatalf("alerts: %d %s", alerts.Code, alerts.Body.String())
 	}
 }
+
+func TestRerunCheckActionExecutesRealCheck(t *testing.T) {
+	s := testServer(t)
+	if _, err := s.posts.Create(t.Context(), posts.Post{ID: "web", Name: "Web", Kind: "http_endpoint", Labels: map[string]string{}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.checks.Save(t.Context(), checks.Schedule{ID: "web-http", PostID: "web", Kind: "http", Address: "http://127.0.0.1:1", IntervalSeconds: 60}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.rules.Create(t.Context(), rules.Rule{ID: "web-down", PostID: "web", Signal: "http.ok", Operator: "lt", Threshold: 1, MissingPolicy: "unknown", Severity: "critical", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	params := map[string]any{"check": "web-http"}
+	user, _ := s.auth.Setup(t.Context(), "admin@example.com", "1234567", "")
+	id, err := s.actions.Request(t.Context(), "rerun_check", "web", params, user.ID, "idem-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := s.actions.Execute(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := result["ok"].(bool); ok {
+		t.Fatalf("rerun of a down target reported ok: %#v", result)
+	}
+	var okValue float64
+	if err := s.store.DB.QueryRow(`SELECT value FROM observations WHERE signal='http.ok'`).Scan(&okValue); err != nil {
+		t.Fatal(err)
+	}
+	if okValue != 0 {
+		t.Fatalf("http.ok=%f want 0", okValue)
+	}
+	var state string
+	if err := s.store.DB.QueryRow(`SELECT state FROM alerts WHERE rule_id='web-down' ORDER BY id DESC LIMIT 1`).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != "firing" {
+		t.Fatalf("alert state=%s want firing", state)
+	}
+}
+
+func TestRerunCheckActionRefusesForeignPost(t *testing.T) {
+	s := testServer(t)
+	if _, err := s.posts.Create(t.Context(), posts.Post{ID: "web", Name: "Web", Kind: "http_endpoint", Labels: map[string]string{}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.posts.Create(t.Context(), posts.Post{ID: "other", Name: "Other", Kind: "http_endpoint", Labels: map[string]string{}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.checks.Save(t.Context(), checks.Schedule{ID: "web-http", PostID: "web", Kind: "http", Address: "http://127.0.0.1:1", IntervalSeconds: 60}); err != nil {
+		t.Fatal(err)
+	}
+	user, _ := s.auth.Setup(t.Context(), "admin@example.com", "1234567", "")
+	id, err := s.actions.Request(t.Context(), "rerun_check", "other", map[string]any{"check": "web-http"}, user.ID, "idem-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.actions.Execute(t.Context(), id); err == nil {
+		t.Fatal("rerun_check executed a schedule belonging to another post")
+	}
+}

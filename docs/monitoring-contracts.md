@@ -157,6 +157,19 @@ contract and the rule engine, so a rule such as `snmp.poll_ok < 1` fires when
 a device stops answering. Profiles are read-only: no SNMP SET or write path
 exists.
 
+## Action honesty and write-authority invariant
+
+Every registered action executes a real, typed operation and records the
+outcome as its verification result. `rerun_check` reruns the named saved
+schedule for the action's post, routes the observed check evidence through the
+pipeline, and records `ok`, `failure` and `latency_ms`; it refuses a schedule
+that belongs to another post. `silence_route` disables the named notification
+route and records `disabled`. No registered action is a no-op. The invariant
+is: read capability never grants write authority, and no write operation may
+travel through a generic untyped command path. Write-capable industrial or
+building-control actions remain out of scope under a separate authority and
+safety model.
+
 ## Storage capacity contract
 
 Watchpost measures its total SQLite footprint — `watchpost.db` plus the

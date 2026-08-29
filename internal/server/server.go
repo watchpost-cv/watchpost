@@ -97,27 +97,6 @@ func (l *checkRateLimiter) allow() bool {
 func New(cfg config.Config, version string, logger *slog.Logger, database *store.Store) *Server {
 	sender := notify.NetworkSender{Client: &http.Client{Timeout: 10 * time.Second}}
 	actionRegistry := actions.New(database)
-	_ = actionRegistry.Register(actions.Definition{Type: "rerun_check", NeedsApproval: false, Validate: func(parameters map[string]any) error {
-		if _, ok := parameters["check"].(string); !ok {
-			return errors.New("check required")
-		}
-		return nil
-	}, Execute: func(context.Context, string, map[string]any) (map[string]any, error) {
-		return map[string]any{"scheduled": true}, nil
-	}})
-	_ = actionRegistry.Register(actions.Definition{Type: "silence_route", NeedsApproval: true, Validate: func(parameters map[string]any) error {
-		if _, ok := parameters["route_id"].(string); !ok {
-			return errors.New("route_id required")
-		}
-		return nil
-	}, Execute: func(ctx context.Context, _ string, parameters map[string]any) (map[string]any, error) {
-		result, err := database.DB.ExecContext(ctx, `UPDATE notification_routes SET enabled=0 WHERE id=?`, parameters["route_id"])
-		if err != nil {
-			return nil, err
-		}
-		count, _ := result.RowsAffected()
-		return map[string]any{"disabled": count == 1}, nil
-	}})
 	server := &Server{cfg: cfg, version: version, logger: logger, store: database, auth: auth.New(database), posts: posts.New(database), ingest: ingest.New(database), history: history.New(database), rules: rules.New(database), notify: notify.New(database, sender), incidents: incidents.New(database), evidence: evidence.New(database), agent: agent.New(database, agent.EvidenceProvider{}), agentPairing: agentpairing.New(database), actions: actionRegistry, fleet: fleet.New(database), pairing: pairing.New(database), health: collectorhealth.New(database), devices: devices.NewProfileStore(database), checks: checks.NewScheduleStore(database), retention: retention.New(database, cfg.Retention), storage: storage.New(cfg.DataDir, cfg.Storage.MaxDBBytes, cfg.Storage.MinFreeBytes, cfg.Storage.MinFreePercent)}
 	checkPolicy, err := checks.NewPolicy(cfg.CheckPolicy.AllowCIDRs, cfg.CheckPolicy.DenyCIDRs, cfg.CheckPolicy.DenyPorts)
 	if err != nil {
@@ -128,8 +107,51 @@ func New(cfg config.Config, version string, logger *slog.Logger, database *store
 	server.checkLimiter = &checkRateLimiter{}
 	server.secrets = secrets.New(cfg.MasterKey)
 	server.devices = devices.NewProfileStoreWithKey(database, server.secrets)
+	server.registerActions()
 	server.provisionBootstrap()
 	return server
+}
+
+// registerActions binds the typed action definitions. No action may travel
+// through a generic untyped command path, and none grants write capability to
+// read-monitoring authority.
+func (s *Server) registerActions() {
+	_ = s.actions.Register(actions.Definition{Type: "rerun_check", NeedsApproval: false, Validate: func(parameters map[string]any) error {
+		if _, ok := parameters["check"].(string); !ok {
+			return errors.New("check required")
+		}
+		return nil
+	}, Execute: func(ctx context.Context, postID string, parameters map[string]any) (map[string]any, error) {
+		checkID, _ := parameters["check"].(string)
+		schedule, err := s.checks.Get(ctx, checkID)
+		if err != nil {
+			return nil, errors.New("check schedule not found")
+		}
+		if schedule.PostID != postID {
+			return nil, errors.New("check does not belong to this post")
+		}
+		runner := checks.New(10 * time.Second)
+		result := runner.Run(ctx, schedule.Kind, schedule.Address, schedule.ServerName)
+		if err := s.ingestCheckResult(ctx, checks.DueResult{Schedule: schedule, Result: result}, time.Now().UTC()); err != nil {
+			return nil, err
+		}
+		// The verification outcome records the observed check evidence.
+		latency := float64(result.Latency) / float64(time.Millisecond)
+		return map[string]any{"ok": result.OK, "failure": result.Failure, "latency_ms": latency}, nil
+	}})
+	_ = s.actions.Register(actions.Definition{Type: "silence_route", NeedsApproval: true, Validate: func(parameters map[string]any) error {
+		if _, ok := parameters["route_id"].(string); !ok {
+			return errors.New("route_id required")
+		}
+		return nil
+	}, Execute: func(ctx context.Context, _ string, parameters map[string]any) (map[string]any, error) {
+		result, err := s.store.DB.ExecContext(ctx, `UPDATE notification_routes SET enabled=0 WHERE id=?`, parameters["route_id"])
+		if err != nil {
+			return nil, err
+		}
+		count, _ := result.RowsAffected()
+		return map[string]any{"disabled": count == 1}, nil
+	}})
 }
 
 // provisionBootstrap decides whether first-admin setup requires a short-lived
