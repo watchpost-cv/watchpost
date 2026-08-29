@@ -671,3 +671,81 @@ func TestAdminPasswordResetRevokesSessions(t *testing.T) {
 		t.Fatalf("new password after reset: %d", newLogin.Code)
 	}
 }
+
+func TestFinalAdministratorCannotBeDemoted(t *testing.T) {
+	s := testServer(t)
+	handler := s.Handler()
+	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
+	adminLogin := apiRequest(t, handler, "POST", "/api/v1/login", map[string]string{"email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
+	adminCookie := adminLogin.Result().Cookies()[0]
+	var session struct {
+		CSRF string `json:"csrf_token"`
+	}
+	_ = json.Unmarshal(adminLogin.Body.Bytes(), &session)
+	users := apiRequest(t, handler, "GET", "/api/v1/users", nil, adminCookie, "")
+	var listing struct {
+		Users []struct {
+			ID    int64  `json:"id"`
+			Email string `json:"email"`
+			Role  string `json:"role"`
+		} `json:"users"`
+	}
+	_ = json.Unmarshal(users.Body.Bytes(), &listing)
+	if len(listing.Users) != 1 || listing.Users[0].Role != "admin" {
+		t.Fatalf("unexpected users: %s", users.Body.String())
+	}
+	// The only administrator cannot be demoted.
+	denied := apiRequest(t, handler, "PUT", fmt.Sprintf("/api/v1/users/%d/role", listing.Users[0].ID), map[string]string{"role": "viewer"}, adminCookie, session.CSRF)
+	if denied.Code != http.StatusConflict {
+		t.Fatalf("demote last admin=%d want 409", denied.Code)
+	}
+	// With a second administrator, one may be demoted.
+	if got := apiRequest(t, handler, "POST", "/api/v1/users", map[string]string{"email": "admin2@example.com", "password": "1234567", "role": "admin"}, adminCookie, session.CSRF); got.Code != 201 {
+		t.Fatalf("create second admin: %d", got.Code)
+	}
+	users = apiRequest(t, handler, "GET", "/api/v1/users", nil, adminCookie, "")
+	_ = json.Unmarshal(users.Body.Bytes(), &listing)
+	if len(listing.Users) != 2 || listing.Users[0].Role != "admin" || listing.Users[1].Role != "admin" {
+		t.Fatalf("second admin set: %s", users.Body.String())
+	}
+	// With two administrators, the acting admin may demote the other.
+	if got := apiRequest(t, handler, "PUT", fmt.Sprintf("/api/v1/users/%d/role", listing.Users[1].ID), map[string]string{"role": "viewer"}, adminCookie, session.CSRF); got.Code != 204 {
+		t.Fatalf("demote second admin=%d want 204", got.Code)
+	}
+}
+
+func TestRoleChangeTakesEffectForExistingSessions(t *testing.T) {
+	s := testServer(t)
+	handler := s.Handler()
+	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
+	adminLogin := apiRequest(t, handler, "POST", "/api/v1/login", map[string]string{"email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
+	adminCookie := adminLogin.Result().Cookies()[0]
+	var adminSession struct {
+		CSRF string `json:"csrf_token"`
+	}
+	_ = json.Unmarshal(adminLogin.Body.Bytes(), &adminSession)
+	if got := apiRequest(t, handler, "POST", "/api/v1/users", map[string]string{"email": "op@example.com", "password": "1234567", "role": "operator"}, adminCookie, adminSession.CSRF); got.Code != 201 {
+		t.Fatalf("create operator: %d", got.Code)
+	}
+	opLogin := apiRequest(t, handler, "POST", "/api/v1/login", map[string]string{"email": "op@example.com", "password": "1234567"}, nil, "")
+	opCookie := opLogin.Result().Cookies()[0]
+	var opSession struct {
+		CSRF string `json:"csrf_token"`
+	}
+	_ = json.Unmarshal(opLogin.Body.Bytes(), &opSession)
+	// Operator can currently update a post (operator role).
+	if got := apiRequest(t, handler, "POST", "/api/v1/posts", map[string]any{"id": "host-a", "name": "Host A", "kind": "host"}, adminCookie, adminSession.CSRF); got.Code != 201 {
+		t.Fatalf("create post: %d", got.Code)
+	}
+	var opID int64
+	if err := s.store.DB.QueryRow(`SELECT id FROM users WHERE email='op@example.com'`).Scan(&opID); err != nil {
+		t.Fatal(err)
+	}
+	// Demote the operator to viewer; the existing session must reflect it.
+	if got := apiRequest(t, handler, "PUT", fmt.Sprintf("/api/v1/users/%d/role", opID), map[string]string{"role": "viewer"}, adminCookie, adminSession.CSRF); got.Code != 204 {
+		t.Fatalf("demote operator: %d", got.Code)
+	}
+	if got := apiRequest(t, handler, "PUT", "/api/v1/posts/host-a", map[string]any{"id": "host-a", "name": "Host A", "kind": "host", "version": 1}, opCookie, opSession.CSRF); got.Code != http.StatusForbidden {
+		t.Fatalf("demoted operator updated a post with existing session: %d", got.Code)
+	}
+}

@@ -183,6 +183,21 @@ func (m *Manager) SetRole(ctx context.Context, id int64, role string, entry audi
 		return err
 	}
 	defer tx.Rollback()
+	// The final active administrator cannot be demoted: that would leave the
+	// installation without any administrator.
+	var currentRole string
+	if err = tx.QueryRowContext(ctx, `SELECT role FROM users WHERE id=?`, id).Scan(&currentRole); err != nil {
+		return sql.ErrNoRows
+	}
+	if currentRole == "admin" && role != "admin" {
+		var admins int
+		if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE role='admin'`).Scan(&admins); err != nil {
+			return err
+		}
+		if admins <= 1 {
+			return errors.New("cannot demote the last administrator")
+		}
+	}
 	result, err := tx.ExecContext(ctx, `UPDATE users SET role=? WHERE id=?`, role, id)
 	if err != nil {
 		return err
