@@ -50,6 +50,17 @@ the ingestion rate. Flat-growth is enforced only when the soak outlives twice
 the retention window, so the CI 15-second soak checks ceilings while the
 longer local run produces the flat-growth evidence (90s soak with 15s
 retention: db stable at 331,776 bytes). See `docs/scale-evidence.md`.
+
+## Canonical monitoring-method contract
+
+R4 freezes the single model every monitoring method converges on. The types
+live in `internal/contract` and the authority in
+`docs/monitoring-method-contract.md`: closed method kinds (`host_agent`,
+`central_check`, `device_snmp`), the canonical observation envelope with
+explicit quality and freshness, and lossless mapping from collector protocol
+v1. R4 changes no runtime behaviour; R5 routes central checks through this
+envelope and R6 routes recurring SNMP through it, both feeding the same
+observation/rule/survey pipeline.
 Host enrollment records an optional address or hostname, then pairs the
 bundled collector using an explicit Watchpost URL reachable from the post. The
 collector is outbound-only. Post editing is optimistic-concurrency protected;

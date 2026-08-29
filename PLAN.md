@@ -31,6 +31,13 @@ footprint stays flat once pruning catches the ingestion rate (90s local soak:
 hard ceilings; flat-growth evidence requires the longer local run. See
 `docs/scale-evidence.md`.
 
+R4 is complete: the canonical monitoring-method contract is frozen in
+`internal/contract` and `docs/monitoring-method-contract.md`. It pins the
+closed method kinds (`host_agent`, `central_check`, `device_snmp`), the
+canonical observation envelope with explicit quality and freshness, and the
+lossless mapping from collector protocol v1. No runtime behaviour changed;
+R5 and R6 route central checks and SNMP through this envelope.
+
 ## Agent architecture programme (WP-A01–WP-A18)
 
 WP-A01 accepted a separate `watchpost-agent` program with its own embedded

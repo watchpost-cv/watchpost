@@ -1,5 +1,11 @@
 # Monitoring contracts (WP02R)
 
+The canonical monitoring-method contract is documented separately in
+`docs/monitoring-method-contract.md` and typed in `internal/contract`. It
+defines the single envelope every method — host agents, central checks and
+device adapters — must produce before later checkpoints route them through the
+observation, rule and survey pipeline.
+
 Collectors submit an authenticated batch to
 `POST /api/collector/v1/observations`. A batch binds one collector to one post,
 contains 1–128 samples, uses contiguous monotonically increasing sequence
