@@ -264,10 +264,23 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	cookie, _ := r.Cookie(sessionCookie)
-	if cookie != nil && cookie.Value != "" {
-		_ = s.auth.Logout(r.Context(), cookie.Value, audit.Entry{ActorID: currentUser(r).ID, Action: "logout", ObjectType: "session", Detail: "logout"})
+	// Clearing the client cookie is always the safe browser behaviour: a
+	// failure to revoke the server-side session is still reported explicitly
+	// rather than claimed as a successful logout.
+	clear := func() {
+		http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: -1})
 	}
-	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: -1})
+	if cookie == nil || cookie.Value == "" {
+		clear()
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if err := s.auth.Logout(r.Context(), cookie.Value, audit.Entry{ActorID: currentUser(r).ID, Action: "logout", ObjectType: "session", Detail: "logout"}); err != nil {
+		clear()
+		writeJSON(w, 500, map[string]string{"error": "logout could not be recorded server-side; the session was not revoked"})
+		return
+	}
+	clear()
 	w.WriteHeader(http.StatusNoContent)
 }
 func (s *Server) require(role string, next http.HandlerFunc) http.HandlerFunc {

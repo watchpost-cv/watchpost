@@ -12,7 +12,14 @@ the mutation from being reported); encrypted backups use a versioned container
 with random salts and atomic writes; administrative password resets revoke the
 user's sessions; the final administrator cannot be demoted and role changes
 apply to existing sessions immediately; and the agent uses the central
-server's versioned PBKDF2-HMAC-SHA256 KDF. Local agent accounts created by
+server's versioned PBKDF2-HMAC-SHA256 KDF. A second agent-focused pass made
+local state/audit atomic: every persistent agent mutation appends its audit row
+in the same atomic `state.Update` (deep-cloned before the callback so a failed
+save leaves both in-memory and on-disk state unchanged), each operation emits
+exactly one audit entry attributed to the real acting identity, central logout
+reports failure rather than success when the transactional revocation cannot
+complete, and agent password-hash verification rejects malformed or excessively
+expensive encodings before running PBKDF2. Local agent accounts created by
 older builds must be re-established with `reset` after upgrading because their
 password hashes used a now-unsupported construction.
 

@@ -749,3 +749,38 @@ func TestRoleChangeTakesEffectForExistingSessions(t *testing.T) {
 		t.Fatalf("demoted operator updated a post with existing session: %d", got.Code)
 	}
 }
+
+func TestLogoutNeverClaimsSuccessWhileSessionRemainsActive(t *testing.T) {
+	s := testServer(t)
+	handler := s.Handler()
+	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
+	login := apiRequest(t, handler, "POST", "/api/v1/login", map[string]string{"email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
+	cookie := login.Result().Cookies()[0]
+	var session struct {
+		CSRF string `json:"csrf_token"`
+	}
+	_ = json.Unmarshal(login.Body.Bytes(), &session)
+	// The session authenticates before logout.
+	if got := apiRequest(t, handler, "GET", "/api/v1/posts", nil, cookie, ""); got.Code != 200 {
+		t.Fatalf("pre-logout session: %d", got.Code)
+	}
+	// Install an audit failure so the transactional logout rolls back.
+	if _, err := s.store.DB.Exec(`CREATE TRIGGER fail_logout_audit BEFORE INSERT ON audit BEGIN SELECT RAISE(ABORT, 'injected audit failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/logout", nil)
+	req.AddCookie(cookie)
+	req.Header.Set("X-Watchpost-CSRF", session.CSRF)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code == http.StatusNoContent {
+		t.Fatalf("logout reported success while server-side revocation failed")
+	}
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("logout failure status=%d want 500", rec.Code)
+	}
+	// The session must still be active server-side (transaction rolled back).
+	if got := apiRequest(t, handler, "GET", "/api/v1/posts", nil, cookie, ""); got.Code != 200 {
+		t.Fatalf("session not revoked after failed logout: %d", got.Code)
+	}
+}
