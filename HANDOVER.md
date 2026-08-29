@@ -58,9 +58,17 @@ live in `internal/contract` and the authority in
 `docs/monitoring-method-contract.md`: closed method kinds (`host_agent`,
 `central_check`, `device_snmp`), the canonical observation envelope with
 explicit quality and freshness, and lossless mapping from collector protocol
-v1. R4 changes no runtime behaviour; R5 routes central checks through this
-envelope and R6 routes recurring SNMP through it, both feeding the same
-observation/rule/survey pipeline.
+v1.
+
+## Central checks through the pipeline
+
+R5 routes central HTTP/TCP/TLS/DNS/ICMP results through the canonical envelope
+and the rule engine. Each run emits `<kind>.ok` (1.0/0.0, good quality — a
+failed check is a known fact), `<kind>.latency_ms` and `tls.expires_in_days`.
+Central-check source identities are post-scoped `collector_keys` rows with
+kind `central_check` and a fixed, non-credential secret marker; `collectorhealth`
+filters them out of the connection view. Rules such as `http.ok < 1` now fire
+when a target is down. Recurring SNMP routing is R6.
 Host enrollment records an optional address or hostname, then pairs the
 bundled collector using an explicit Watchpost URL reachable from the post. The
 collector is outbound-only. Post editing is optimistic-concurrency protected;

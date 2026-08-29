@@ -11,8 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/watchpost-ops/watchpost/internal/checks"
 	"github.com/watchpost-ops/watchpost/internal/config"
 	"github.com/watchpost-ops/watchpost/internal/posts"
+	"github.com/watchpost-ops/watchpost/internal/rules"
 	"github.com/watchpost-ops/watchpost/internal/store"
 )
 
@@ -163,6 +165,45 @@ func TestStorageEndpointReportsFootprint(t *testing.T) {
 	unauth := apiRequest(t, handler, "GET", "/api/v1/storage", nil, nil, "")
 	if unauth.Code != http.StatusUnauthorized {
 		t.Fatalf("storage endpoint must require auth, got %d", unauth.Code)
+	}
+}
+
+func TestFailedCentralCheckFiresRuleAlert(t *testing.T) {
+	s := testServer(t)
+	if _, err := s.posts.Create(t.Context(), posts.Post{ID: "web", Name: "Web", Kind: "http_endpoint", Labels: map[string]string{}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.rules.Create(t.Context(), rules.Rule{ID: "web-http-down", PostID: "web", Signal: "http.ok", Operator: "lt", Threshold: 1, MissingPolicy: "unknown", Severity: "critical", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.checks.Save(t.Context(), checks.Schedule{ID: "web-http", PostID: "web", Kind: "http", Address: "http://127.0.0.1:1", IntervalSeconds: 60}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	results, err := s.checks.RunDue(t.Context(), checks.New(time.Second), now)
+	if err != nil || len(results) != 1 {
+		t.Fatalf("run due: %d %v", len(results), err)
+	}
+	if err := s.ingestCheckResult(t.Context(), results[0], now); err != nil {
+		t.Fatal(err)
+	}
+	var okValue float64
+	if err := s.store.DB.QueryRow(`SELECT value FROM observations WHERE signal='http.ok'`).Scan(&okValue); err != nil {
+		t.Fatal(err)
+	}
+	if okValue != 0 {
+		t.Fatalf("http.ok=%f want 0", okValue)
+	}
+	var state string
+	if err := s.store.DB.QueryRow(`SELECT state FROM alerts WHERE rule_id='web-http-down' ORDER BY id DESC LIMIT 1`).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != "firing" {
+		t.Fatalf("alert state=%s want firing", state)
+	}
+	items, err := s.health.List(t.Context())
+	if err != nil || len(items) != 0 {
+		t.Fatalf("collector health must not list central-check source: %#v %v", items, err)
 	}
 }
 

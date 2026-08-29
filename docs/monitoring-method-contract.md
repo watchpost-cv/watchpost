@@ -55,7 +55,10 @@ labels, observed_at, ingested_at, fresh_until
 ## What later checkpoints build here
 
 - R5 routes central-check results through this envelope into the observation
-  store and rule engine, so a failed check can fire an alert.
+  store and rule engine, so a failed check can fire an alert (`.ok` is 1.0/0.0
+  with good quality: a failed check is a known fact). Central-check source
+  identities are post-scoped `collector_keys` rows with kind `central_check`,
+  filtered out of the collector-health view.
 - R6 routes recurring SNMP polling through this envelope with the same
   pipeline, using the same source identity per saved profile.
 - The survey and policy-aware status continue to consume observations, so the

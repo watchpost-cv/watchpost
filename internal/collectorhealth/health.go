@@ -25,7 +25,7 @@ type Store struct {
 func New(s *store.Store) *Store { return &Store{s: s, now: time.Now} }
 
 func (s *Store) List(ctx context.Context) ([]Health, error) {
-	rows, err := s.s.DB.QueryContext(ctx, `SELECT id,post_id,last_seen_at,last_observed_at,last_sent_at,last_error,last_rejected_at,rejected_count,partial,revoked_at FROM collector_keys ORDER BY post_id,id`)
+	rows, err := s.s.DB.QueryContext(ctx, `SELECT id,post_id,last_seen_at,last_observed_at,last_sent_at,last_error,last_rejected_at,rejected_count,partial,revoked_at FROM collector_keys WHERE kind='collector' ORDER BY post_id,id`)
 	if err != nil {
 		return nil, err
 	}

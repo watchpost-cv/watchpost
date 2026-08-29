@@ -18,6 +18,7 @@ import (
 	"github.com/watchpost-ops/watchpost/internal/checks"
 	"github.com/watchpost-ops/watchpost/internal/collectorhealth"
 	"github.com/watchpost-ops/watchpost/internal/config"
+	"github.com/watchpost-ops/watchpost/internal/contract"
 	"github.com/watchpost-ops/watchpost/internal/devices"
 	"github.com/watchpost-ops/watchpost/internal/evidence"
 	"github.com/watchpost-ops/watchpost/internal/fleet"
@@ -179,11 +180,63 @@ func (s *Server) checkLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case now := <-ticker.C:
-			if _, err := s.checks.RunDue(ctx, runner, now); err != nil {
+			if err := s.guardStorage(ctx); err != nil {
+				s.logger.Warn("scheduled checks paused; storage full", "error", err)
+				continue
+			}
+			results, err := s.checks.RunDue(ctx, runner, now)
+			if err != nil {
 				s.logger.Warn("scheduled checks failed", "error", err)
+				continue
+			}
+			for _, due := range results {
+				if err := s.ingestCheckResult(ctx, due, now); err != nil {
+					s.logger.Warn("check observation ingestion failed", "schedule", due.Schedule.ID, "error", err)
+				}
 			}
 		}
 	}
+}
+
+// ingestCheckResult routes a stored central-check result through the canonical
+// observation contract and the rule engine, so a failed check can fire an
+// alert exactly like agent telemetry.
+func (s *Server) ingestCheckResult(ctx context.Context, due checks.DueResult, now time.Time) error {
+	method := contract.Method{ID: due.Schedule.ID, Kind: contract.MethodCentralCheck, PostID: due.Schedule.PostID}
+	observations := due.Result.Observations(method, now.UTC())
+	ingested := now.UTC().Format(time.RFC3339Nano)
+	tx, err := s.store.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var last int64
+	if err = tx.QueryRowContext(ctx, `SELECT COALESCE(last_sequence,0) FROM collector_keys WHERE id=?`, due.Schedule.ID).Scan(&last); err != nil {
+		return err
+	}
+	for index, observation := range observations {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO observations(post_id,collector_id,observed_at,ingested_at,sequence,signal,value,unit,quality,labels_json) VALUES(?,?,?,?,?,?,?,?,?,?)`, observation.PostID, due.Schedule.ID, observation.ObservedAt.UTC().Format(time.RFC3339Nano), ingested, last+int64(index)+1, observation.Signal, observation.Value, observation.Unit, string(observation.Quality), "{}"); err != nil {
+			return err
+		}
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE collector_keys SET last_sequence=?,last_seen_at=?,last_observed_at=? WHERE id=?`, last+int64(len(observations)), ingested, ingested, due.Schedule.ID); err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	for _, observation := range observations {
+		alerts, err := s.rules.EvaluateObservation(ctx, observation.PostID, observation.Signal, observation.ObservedAt, observation.Value, string(observation.Quality))
+		if err != nil {
+			return err
+		}
+		for _, alert := range alerts {
+			if alert.State == "firing" {
+				_ = s.notify.Queue(ctx, alert.ID)
+			}
+		}
+	}
+	return nil
 }
 
 func (s *Server) deliveryLoop(ctx context.Context) {

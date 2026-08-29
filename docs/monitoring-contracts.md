@@ -65,6 +65,18 @@ Pairing tokens and agent pairing requests are pruned only after a terminal
 state (`used_at`/`terminal_at`) or their expiry, so an in-flight request is
 never removed early.
 
+## Central checks through the canonical contract
+
+Central HTTP, TCP, TLS, DNS and ICMP schedules now route their stored results
+through the canonical observation envelope and the rule engine, exactly like
+agent telemetry. Each check produces `<kind>.ok` (1.0/0.0 with good quality —
+a failed check is a known fact, not a missing one), `<kind>.latency_ms`, and
+for TLS a `tls.expires_in_days` horizon. The schedule's source identity is a
+post-scoped `collector_keys` row with kind `central_check` whose secret hash
+is a fixed marker, never a bearer credential; `collectorhealth` filters these
+rows out so central checks never appear as collectors in the connection view.
+A rule such as `http.ok < 1` now fires when the target is down.
+
 ## Storage capacity contract
 
 Watchpost measures its total SQLite footprint — `watchpost.db` plus the

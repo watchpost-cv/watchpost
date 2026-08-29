@@ -2,9 +2,11 @@ package checks
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"time"
 
+	"github.com/watchpost-ops/watchpost/internal/contract"
 	"github.com/watchpost-ops/watchpost/internal/store"
 )
 
@@ -23,6 +25,14 @@ type StoredResult struct {
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	Failure   string     `json:"failure,omitempty"`
 }
+
+// DueResult is one executed scheduled check plus its stored result, returned
+// so the server can route it into the canonical observation and rule pipeline.
+type DueResult struct {
+	Schedule Schedule
+	Result   Result
+}
+
 type ScheduleStore struct{ s *store.Store }
 
 func NewScheduleStore(s *store.Store) *ScheduleStore { return &ScheduleStore{s: s} }
@@ -34,8 +44,22 @@ func (s *ScheduleStore) Save(ctx context.Context, v Schedule) error {
 		return errors.New("unsupported check kind")
 	}
 	now := time.Now().UTC()
-	_, err := s.s.DB.ExecContext(ctx, `INSERT INTO check_schedules(id,post_id,kind,address,server_name,interval_seconds,enabled,next_run_at,created_at) VALUES(?,?,?,?,?,?,?,?,?)`, v.ID, v.PostID, v.Kind, v.Address, v.ServerName, v.IntervalSeconds, true, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
-	return err
+	tx, err := s.s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `INSERT INTO check_schedules(id,post_id,kind,address,server_name,interval_seconds,enabled,next_run_at,created_at) VALUES(?,?,?,?,?,?,?,?,?)`, v.ID, v.PostID, v.Kind, v.Address, v.ServerName, v.IntervalSeconds, true, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+		return err
+	}
+	// A central check owns a post-scoped source identity so its observations
+	// satisfy the observation FK and carry a canonical Source. The secret hash
+	// is a fixed marker: it is never a bearer credential and never exposed.
+	marker := sha256.Sum256([]byte("central-check:" + v.ID))
+	if _, err = tx.ExecContext(ctx, `INSERT INTO collector_keys(id,post_id,secret_hash,kind) VALUES(?,?,?,'central_check') ON CONFLICT(id) DO NOTHING`, v.ID, v.PostID, marker[:]); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func (s *ScheduleStore) List(ctx context.Context) ([]Schedule, error) {
 	rows, err := s.s.DB.QueryContext(ctx, `SELECT c.id,c.post_id,c.kind,c.address,c.server_name,c.interval_seconds,c.enabled,c.next_run_at,r.checked_at,r.ok,r.latency_ms,r.status,r.expires_at,r.failure FROM check_schedules c LEFT JOIN check_results r ON r.id=(SELECT id FROM check_results WHERE schedule_id=c.id ORDER BY checked_at DESC LIMIT 1) ORDER BY c.post_id,c.id`)
@@ -67,25 +91,29 @@ func (s *ScheduleStore) List(ctx context.Context) ([]Schedule, error) {
 	}
 	return items, rows.Err()
 }
-func (s *ScheduleStore) RunDue(ctx context.Context, runner *Runner, now time.Time) (int, error) {
-	rows, err := s.s.DB.QueryContext(ctx, `SELECT id,kind,address,server_name,interval_seconds FROM check_schedules WHERE enabled=1 AND next_run_at<=? ORDER BY next_run_at LIMIT 32`, now.UTC().Format(time.RFC3339Nano))
+
+// RunDue executes due schedules in bounded batches and returns the results so
+// callers can route them through the canonical observation and rule pipeline.
+func (s *ScheduleStore) RunDue(ctx context.Context, runner *Runner, now time.Time) ([]DueResult, error) {
+	rows, err := s.s.DB.QueryContext(ctx, `SELECT id,post_id,kind,address,server_name,interval_seconds FROM check_schedules WHERE enabled=1 AND next_run_at<=? ORDER BY next_run_at LIMIT 32`, now.UTC().Format(time.RFC3339Nano))
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	type due struct {
-		id, kind, address, server string
-		interval                  int64
+		id, post, kind, address, server string
+		interval                        int64
 	}
 	var work []due
 	for rows.Next() {
 		var v due
-		if err = rows.Scan(&v.id, &v.kind, &v.address, &v.server, &v.interval); err != nil {
+		if err = rows.Scan(&v.id, &v.post, &v.kind, &v.address, &v.server, &v.interval); err != nil {
 			rows.Close()
-			return 0, err
+			return nil, err
 		}
 		work = append(work, v)
 	}
 	rows.Close()
+	results := []DueResult{}
 	for _, v := range work {
 		result := runner.Run(ctx, v.kind, v.address, v.server)
 		var expires any
@@ -94,7 +122,7 @@ func (s *ScheduleStore) RunDue(ctx context.Context, runner *Runner, now time.Tim
 		}
 		tx, e := s.s.DB.BeginTx(ctx, nil)
 		if e != nil {
-			return 0, e
+			return nil, e
 		}
 		_, e = tx.ExecContext(ctx, `INSERT INTO check_results(schedule_id,checked_at,ok,latency_ms,status,expires_at,failure) VALUES(?,?,?,?,?,?,?)`, v.id, now.UTC().Format(time.RFC3339Nano), result.OK, float64(result.Latency)/float64(time.Millisecond), result.Status, expires, result.Failure)
 		if e == nil {
@@ -102,11 +130,44 @@ func (s *ScheduleStore) RunDue(ctx context.Context, runner *Runner, now time.Tim
 		}
 		if e != nil {
 			tx.Rollback()
-			return 0, e
+			return nil, e
 		}
 		if e = tx.Commit(); e != nil {
-			return 0, e
+			return nil, e
 		}
+		results = append(results, DueResult{Schedule: Schedule{ID: v.id, PostID: v.post, Kind: v.kind, Address: v.address, ServerName: v.server, IntervalSeconds: v.interval}, Result: result})
 	}
-	return len(work), nil
+	return results, nil
+}
+
+// Observations converts a stored check result into the canonical observation
+// envelope. A failed check is a known fact: the `<kind>.ok` observation is 0
+// with good quality so a deterministic rule can fire. Latency is measured in
+// all cases; a TLS certificate expiry horizon is emitted when present.
+func (r Result) Observations(method contract.Method, observedAt time.Time) []contract.Observation {
+	ok := 0.0
+	if r.OK {
+		ok = 1.0
+	}
+	source := contract.Source{Method: method, Identity: method.ID}
+	result := []contract.Observation{{
+		Version: contract.ProtocolVersion, PostID: method.PostID, Source: source,
+		Signal: r.Kind + ".ok", Value: &ok, Unit: "boolean", Quality: contract.QualityGood,
+		ObservedAt: observedAt, IngestedAt: observedAt, FreshUntil: observedAt.Add(time.Hour),
+	}}
+	latency := float64(r.Latency) / float64(time.Millisecond)
+	result = append(result, contract.Observation{
+		Version: contract.ProtocolVersion, PostID: method.PostID, Source: source,
+		Signal: r.Kind + ".latency_ms", Value: &latency, Unit: "ms", Quality: contract.QualityGood,
+		ObservedAt: observedAt, IngestedAt: observedAt, FreshUntil: observedAt.Add(time.Hour),
+	})
+	if r.Kind == "tls" && r.ExpiresAt != nil {
+		days := r.ExpiresAt.Sub(observedAt).Hours() / 24
+		result = append(result, contract.Observation{
+			Version: contract.ProtocolVersion, PostID: method.PostID, Source: source,
+			Signal: "tls.expires_in_days", Value: &days, Unit: "days", Quality: contract.QualityGood,
+			ObservedAt: observedAt, IngestedAt: observedAt, FreshUntil: observedAt.Add(time.Hour),
+		})
+	}
+	return result
 }

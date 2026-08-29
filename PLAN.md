@@ -35,8 +35,15 @@ R4 is complete: the canonical monitoring-method contract is frozen in
 `internal/contract` and `docs/monitoring-method-contract.md`. It pins the
 closed method kinds (`host_agent`, `central_check`, `device_snmp`), the
 canonical observation envelope with explicit quality and freshness, and the
-lossless mapping from collector protocol v1. No runtime behaviour changed;
-R5 and R6 route central checks and SNMP through this envelope.
+lossless mapping from collector protocol v1.
+
+R5 is complete: central HTTP, TCP, TLS, DNS and ICMP schedules now route their
+stored results through the canonical observation envelope and the rule engine.
+Each run emits `<kind>.ok` (1.0/0.0 with good quality), `<kind>.latency_ms`
+and, for TLS, `tls.expires_in_days`. Central-check source identities are
+post-scoped `collector_keys` rows with kind `central_check` whose secret hash
+is a fixed marker; `collectorhealth` filters them out. A rule such as
+`http.ok < 1` fires when the target is down. Recurring SNMP routing is R6.
 
 ## Agent architecture programme (WP-A01–WP-A18)
 
