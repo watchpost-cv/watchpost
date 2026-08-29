@@ -15,6 +15,20 @@ The application script is tracked as `script.js`: Nift requires unique tracked
 names, and `app.js`/`app.css` share the basename `app` so both cannot be
 tracked. `web/embed_test.go` enforces that committed dist matches the source
 in CI and `hardening/spa-gate.sh` proves a full regeneration produces no diff.
+
+## Retention
+
+R1 adds the deterministic retention worker (`internal/retention`). Per-category
+windows default to 30d observations, 90d check results, 30d logs, 2y changes,
+365d resolved alerts, 30d delivered notifications, 7d pairing tokens/requests,
+7d federation inbox, 30d outbox and 180d orphaned conversations; each is
+configurable via `WATCHPOST_RETENTION_<CATEGORY>` and zero keeps it forever.
+Pruning is bounded (1,000 rows per DELETE, capped per pass), state-aware for
+alerts (latest active row per rule/post preserved; superseded rows age out),
+and citation-aware through immutable `conversation_evidence` snapshots that
+let pruned evidence resolve as "purged by retention". `terminal_at` records
+when pairing requests reach a terminal state. Capacity protection (HTTP 507)
+is R2.
 Host enrollment records an optional address or hostname, then pairs the
 bundled collector using an explicit Watchpost URL reachable from the post. The
 collector is outbound-only. Post editing is optimistic-concurrency protected;

@@ -214,7 +214,7 @@ func (s *Service) Decide(ctx context.Context, id, postID string, approve bool) e
 		state = "approved"
 		result, err = s.s.DB.ExecContext(ctx, `UPDATE agent_pairing_requests SET state=?,post_id=?,approved_at=? WHERE id=? AND state='pending' AND expires_at>? AND EXISTS(SELECT 1 FROM posts WHERE id=? AND archived=0)`, state, postID, now.Format(time.RFC3339Nano), id, now.Format(time.RFC3339Nano), postID)
 	} else {
-		result, err = s.s.DB.ExecContext(ctx, `UPDATE agent_pairing_requests SET state=? WHERE id=? AND state='pending' AND expires_at>?`, state, id, now.Format(time.RFC3339Nano))
+		result, err = s.s.DB.ExecContext(ctx, `UPDATE agent_pairing_requests SET state=?,terminal_at=? WHERE id=? AND state='pending' AND expires_at>?`, state, now.Format(time.RFC3339Nano), id, now.Format(time.RFC3339Nano))
 	}
 	if err != nil {
 		return err
@@ -258,7 +258,7 @@ func (s *Service) Poll(ctx context.Context, id, secret string) (Enrollment, erro
 	if err != nil {
 		return Enrollment{}, err
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE agent_pairing_requests SET state='consumed' WHERE id=? AND state='approved'`, id)
+	result, err := tx.ExecContext(ctx, `UPDATE agent_pairing_requests SET state='consumed',terminal_at=? WHERE id=? AND state='approved'`, now.Format(time.RFC3339Nano), id)
 	if err != nil {
 		return Enrollment{}, err
 	}

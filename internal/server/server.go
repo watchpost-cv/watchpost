@@ -27,6 +27,7 @@ import (
 	"github.com/watchpost-ops/watchpost/internal/notify"
 	"github.com/watchpost-ops/watchpost/internal/pairing"
 	"github.com/watchpost-ops/watchpost/internal/posts"
+	"github.com/watchpost-ops/watchpost/internal/retention"
 	"github.com/watchpost-ops/watchpost/internal/rules"
 	"github.com/watchpost-ops/watchpost/internal/store"
 	"github.com/watchpost-ops/watchpost/web"
@@ -53,6 +54,7 @@ type Server struct {
 	health       *collectorhealth.Store
 	devices      *devices.ProfileStore
 	checks       *checks.ScheduleStore
+	retention    *retention.Store
 }
 
 func New(cfg config.Config, version string, logger *slog.Logger, database *store.Store) *Server {
@@ -79,7 +81,7 @@ func New(cfg config.Config, version string, logger *slog.Logger, database *store
 		count, _ := result.RowsAffected()
 		return map[string]any{"disabled": count == 1}, nil
 	}})
-	return &Server{cfg: cfg, version: version, logger: logger, store: database, auth: auth.New(database), posts: posts.New(database), ingest: ingest.New(database), history: history.New(database), rules: rules.New(database), notify: notify.New(database, sender), incidents: incidents.New(database), evidence: evidence.New(database), agent: agent.New(database, agent.EvidenceProvider{}), agentPairing: agentpairing.New(database), actions: actionRegistry, fleet: fleet.New(database), pairing: pairing.New(database), health: collectorhealth.New(database), devices: devices.NewProfileStore(database), checks: checks.NewScheduleStore(database)}
+	return &Server{cfg: cfg, version: version, logger: logger, store: database, auth: auth.New(database), posts: posts.New(database), ingest: ingest.New(database), history: history.New(database), rules: rules.New(database), notify: notify.New(database, sender), incidents: incidents.New(database), evidence: evidence.New(database), agent: agent.New(database, agent.EvidenceProvider{}), agentPairing: agentpairing.New(database), actions: actionRegistry, fleet: fleet.New(database), pairing: pairing.New(database), health: collectorhealth.New(database), devices: devices.NewProfileStore(database), checks: checks.NewScheduleStore(database), retention: retention.New(database, cfg.Retention)}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -119,6 +121,7 @@ func (s *Server) Run(ctx context.Context) error {
 	httpServer := &http.Server{Addr: s.cfg.Listen, Handler: s.Handler(), ReadHeaderTimeout: 5 * time.Second}
 	go s.deliveryLoop(ctx)
 	go s.checkLoop(ctx)
+	go s.retentionLoop(ctx)
 	errCh := make(chan error, 1)
 	go func() {
 		s.logger.Info("watchpost listening", "address", s.cfg.Listen, "version", s.version)
@@ -166,6 +169,15 @@ func (s *Server) deliveryLoop(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func (s *Server) retentionLoop(ctx context.Context) {
+	if report, err := s.retention.RunOnce(ctx); err != nil {
+		s.logger.Warn("initial retention pass failed", "error", err)
+	} else if report.Total() > 0 {
+		s.logger.Info("retention pass completed", "categories", report.Categories)
+	}
+	s.retention.RunLoop(ctx)
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

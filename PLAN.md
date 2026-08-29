@@ -6,8 +6,16 @@ R20 is complete: the operational SPA now has canonical Nift source in
 `web/content` and `web/templates` and `web/dist` is regenerated output. The
 application script is tracked as `script.js` because Nift requires unique
 tracked names. `web/embed_test.go` (CI) and `hardening/spa-gate.sh` (local)
-guard source/output agreement. Subsequent checkpoints are recorded here as
-they land.
+guard source/output agreement.
+
+R1 is complete: the retention worker (`internal/retention`) prunes every data
+category to a configurable window in bounded batches, preserves the latest
+active alert per rule/post, exempts incident-linked and investigation-cited
+records, and resolves pruned citations through immutable
+`conversation_evidence` snapshots. `agent_pairing_requests.terminal_at`
+records terminal state; expired sessions are always pruned; a zero window
+keeps a category forever. Storage-capacity protection and HTTP 507 belong to
+R2.
 
 ## Agent architecture programme (WP-A01–WP-A18)
 

@@ -792,23 +792,32 @@ func (s *Server) handleGetEvidence(w http.ResponseWriter, r *http.Request) {
 	switch r.PathValue("kind") {
 	case "log":
 		item, e := s.evidence.GetLog(r.Context(), id)
-		err = e
 		if e == nil {
 			writeJSON(w, 200, map[string]any{"kind": "log", "evidence": item})
 			return
 		}
+		if errors.Is(e, sql.ErrNoRows) {
+			if purged, refErr := s.evidence.FindPurgedReference(r.Context(), "log", id); refErr == nil {
+				writeJSON(w, 200, map[string]any{"kind": "log", "purged": true, "reference": purged})
+				return
+			}
+		}
 	case "change":
 		item, e := s.evidence.GetChange(r.Context(), id)
-		err = e
 		if e == nil {
 			writeJSON(w, 200, map[string]any{"kind": "change", "evidence": item})
 			return
+		}
+		if errors.Is(e, sql.ErrNoRows) {
+			if purged, refErr := s.evidence.FindPurgedReference(r.Context(), "change", id); refErr == nil {
+				writeJSON(w, 200, map[string]any{"kind": "change", "purged": true, "reference": purged})
+				return
+			}
 		}
 	default:
 		writeJSON(w, 400, map[string]string{"error": "unsupported evidence kind"})
 		return
 	}
-	_ = err
 	writeJSON(w, 404, map[string]string{"error": "evidence not found"})
 }
 func (s *Server) handleConversation(w http.ResponseWriter, r *http.Request) {

@@ -27,6 +27,17 @@ type Change struct {
 	Actor, Summary string
 	Detail         map[string]any
 }
+
+// PurgedReference is the immutable snapshot retention preserves for evidence
+// that has since been pruned. It lets investigation citations render honestly
+// after the raw record is gone.
+type PurgedReference struct {
+	Kind    string    `json:"kind"`
+	ID      int64     `json:"id"`
+	Summary string    `json:"summary"`
+	CitedAt time.Time `json:"cited_at"`
+	Reason  string    `json:"reason"`
+}
 type Store struct {
 	s   *store.Store
 	now func() time.Time
@@ -114,6 +125,20 @@ func (s *Store) RecordChange(ctx context.Context, c Change) (Change, error) {
 	}
 	c.ID, _ = result.LastInsertId()
 	return c, nil
+}
+
+// FindPurgedReference resolves a retention-pruned evidence citation to its
+// immutable snapshot. It returns sql.ErrNoRows when no snapshot exists.
+func (s *Store) FindPurgedReference(ctx context.Context, kind string, id int64) (PurgedReference, error) {
+	var reference PurgedReference
+	var at string
+	err := s.s.DB.QueryRowContext(ctx, `SELECT kind,evidence_id,summary,cited_at FROM conversation_evidence WHERE kind=? AND evidence_id=? ORDER BY cited_at DESC,id DESC LIMIT 1`, kind, id).Scan(&reference.Kind, &reference.ID, &reference.Summary, &at)
+	if err != nil {
+		return PurgedReference{}, err
+	}
+	reference.CitedAt, _ = time.Parse(time.RFC3339Nano, at)
+	reference.Reason = "raw evidence was pruned by retention; the immutable citation snapshot remains"
+	return reference, nil
 }
 func redact(value string) string {
 	words := strings.Fields(value)

@@ -2,8 +2,10 @@ package agent
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"github.com/watchpost-ops/watchpost/internal/evidence"
 	"github.com/watchpost-ops/watchpost/internal/history"
 	"github.com/watchpost-ops/watchpost/internal/incidents"
@@ -99,16 +101,41 @@ func (s *Service) Investigate(ctx context.Context, conversationID, userID int64,
 		return Response{}, err
 	}
 	defer tx.Rollback()
-	if _, err = tx.ExecContext(ctx, `INSERT INTO conversation_messages(conversation_id,at,role,body,evidence_json) VALUES(?,?,'user',?,?)`, conversationID, now, question, string(inputEvidence)); err != nil {
+	userResult, err := tx.ExecContext(ctx, `INSERT INTO conversation_messages(conversation_id,at,role,body,evidence_json) VALUES(?,?,'user',?,?)`, conversationID, now, question, string(inputEvidence))
+	if err != nil {
 		return Response{}, err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO conversation_messages(conversation_id,at,role,body,evidence_json) VALUES(?,?,'assistant',?,?)`, conversationID, now, response.Answer, string(outputEvidence)); err != nil {
+	userMessageID, _ := userResult.LastInsertId()
+	assistantResult, err := tx.ExecContext(ctx, `INSERT INTO conversation_messages(conversation_id,at,role,body,evidence_json) VALUES(?,?,'assistant',?,?)`, conversationID, now, response.Answer, string(outputEvidence))
+	if err != nil {
+		return Response{}, err
+	}
+	assistantMessageID, _ := assistantResult.LastInsertId()
+	// Immutable evidence snapshots let retention prune raw evidence while
+	// preserving the exact record an investigation cited.
+	if err = insertEvidenceSnapshot(ctx, tx, conversationID, userMessageID, now, citations); err != nil {
+		return Response{}, err
+	}
+	if err = insertEvidenceSnapshot(ctx, tx, conversationID, assistantMessageID, now, response.Citations); err != nil {
 		return Response{}, err
 	}
 	if err = tx.Commit(); err != nil {
 		return Response{}, err
 	}
 	return response, nil
+}
+
+func insertEvidenceSnapshot(ctx context.Context, tx *sql.Tx, conversationID, messageID int64, citedAt string, citations []Citation) error {
+	for _, citation := range citations {
+		id, err := strconv.ParseInt(citation.ID, 10, 64)
+		if err != nil {
+			return errors.New("unsupported citation id")
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO conversation_evidence(conversation_id,message_id,kind,evidence_id,summary,cited_at) VALUES(?,?,?,?,?,?)`, conversationID, messageID, citation.Kind, id, citation.Summary, citedAt); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 func (s *Service) verifyCitation(ctx context.Context, c Citation, postID *string) error {
 	var query string

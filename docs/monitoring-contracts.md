@@ -32,3 +32,29 @@ operator capability rather than an unauthenticated utility.
 History queries require one post, one signal, a bounded time window, and a row
 limit. Retention deletes bounded batches. Missing, stale, uncertain, and bad
 quality remain explicit observations rather than numeric zero.
+
+## Retention contract
+
+The retention worker prunes each data category to a configured window in
+bounded batches (default 1,000 rows, capped per pass) so a backlogged table
+cannot monopolise the single database connection or grow the WAL without limit.
+A zero policy window keeps a category forever. Expired sessions are always
+pruned. After pruning, an opportunistic `wal_checkpoint(TRUNCATE)` reclaims
+write-ahead space.
+
+Alert semantics are state-aware, not merely time-aware:
+
+- the latest pending/firing/acknowledged/suppressed row per rule/post is
+  preserved regardless of age;
+- superseded transition rows age out after the resolved window;
+- rows linked to an incident or cited by an investigation are exempt.
+
+Evidence cited by an investigation is written as an immutable snapshot in
+`conversation_evidence` at citation time. Retention never scans
+`conversation_messages.evidence_json`. When raw evidence is pruned, the
+evidence resolver returns the snapshot with an explicit purged-by-retention
+status instead of a bare 404, so investigation citations degrade honestly.
+
+Pairing tokens and agent pairing requests are pruned only after a terminal
+state (`used_at`/`terminal_at`) or their expiry, so an in-flight request is
+never removed early.
