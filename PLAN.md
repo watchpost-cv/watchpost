@@ -94,7 +94,17 @@ global disable. Optional `WATCHPOST_CHECK_ALLOW_CIDRS`/`DENY_CIDRS`/`DENY_PORTS`
 restrict targets, enforced at schedule creation, on on-demand checks, on SNMP
 targets and again at run time against the resolved address (DNS-rebinding
 defence). On-demand checks are rate-limited to 60 per minute and audited.
-Remote agent-management security is R14.
+
+R14 is complete: the agent hardens explicit remote use. Local `admin`,
+`technician` and `viewer` accounts are independent of Watchpost sessions; the
+first setup bootstraps the local admin; state-changing local operations are
+audited in a bounded local log. Non-loopback binding requires
+`WATCHPOST_AGENT_EXPOSE=1` with a prominent warning; secure cookies
+(`WATCHPOST_AGENT_SECURE_COOKIES`) and explicit proxy trust
+(`WATCHPOST_AGENT_TRUSTED_PROXY`) are opt-ins, forwarded headers are never
+trusted by default, and client CIDR allow/deny rules are optional. Service
+lifecycle remains CLI-only. Scheduled SNMP through the canonical contract is
+R6.
 
 ## Agent architecture programme (WP-A01–WP-A18)
 

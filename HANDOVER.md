@@ -142,6 +142,18 @@ adds optional `WATCHPOST_CHECK_ALLOW_CIDRS`, `WATCHPOST_CHECK_DENY_CIDRS` and
 on-demand checks, on SNMP targets and again at run time against the resolved
 address, so a rebinding hostname is refused rather than probed. On-demand
 checks are rate-limited to 60/minute and audited. See `internal/checks`.
+
+## Remote agent-management security
+
+R14 hardens the agent for explicit remote use. The agent now has local
+`admin`, `technician` and `viewer` accounts (independent of Watchpost
+sessions), a local first-admin bootstrap, a bounded local audit log, optional
+client CIDR restrictions, secure-cookie and trusted-proxy opt-ins, and a
+non-loopback binding that requires an explicit `WATCHPOST_AGENT_EXPOSE=1` with
+a prominent warning. Forwarded scheme/host are trusted only when
+`WATCHPOST_AGENT_TRUSTED_PROXY=1` is set. Service install/upgrade/status/
+uninstall remain CLI-only; web and CLI offer equivalent pairing and
+configuration capability.
 Host enrollment records an optional address or hostname, then pairs the
 bundled collector using an explicit Watchpost URL reachable from the post. The
 collector is outbound-only. Post editing is optimistic-concurrency protected;
