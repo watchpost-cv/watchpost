@@ -273,6 +273,53 @@ func TestExternalSetupRequiresBootstrapToken(t *testing.T) {
 	}
 }
 
+func TestRBACRoleEnforcement(t *testing.T) {
+	handler := testServer(t).Handler()
+	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
+	adminLogin := apiRequest(t, handler, "POST", "/api/v1/login", map[string]string{"email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
+	adminCookie := adminLogin.Result().Cookies()[0]
+	var adminSession struct {
+		CSRF string `json:"csrf_token"`
+	}
+	_ = json.Unmarshal(adminLogin.Body.Bytes(), &adminSession)
+	if got := apiRequest(t, handler, "POST", "/api/v1/users", map[string]string{"email": "op@example.com", "password": "1234567", "role": "operator"}, adminCookie, adminSession.CSRF); got.Code != 201 {
+		t.Fatalf("create operator: %d", got.Code)
+	}
+	if got := apiRequest(t, handler, "POST", "/api/v1/users", map[string]string{"email": "view@example.com", "password": "1234567", "role": "viewer"}, adminCookie, adminSession.CSRF); got.Code != 201 {
+		t.Fatalf("create viewer: %d", got.Code)
+	}
+	viewerLogin := apiRequest(t, handler, "POST", "/api/v1/login", map[string]string{"email": "view@example.com", "password": "1234567"}, nil, "")
+	viewerCookie := viewerLogin.Result().Cookies()[0]
+	var viewerSession struct {
+		CSRF string `json:"csrf_token"`
+	}
+	_ = json.Unmarshal(viewerLogin.Body.Bytes(), &viewerSession)
+	if got := apiRequest(t, handler, "GET", "/api/v1/posts", nil, viewerCookie, ""); got.Code != 200 {
+		t.Fatalf("viewer list posts: %d", got.Code)
+	}
+	if got := apiRequest(t, handler, "POST", "/api/v1/posts", map[string]any{"id": "host-a", "name": "A", "kind": "host"}, viewerCookie, viewerSession.CSRF); got.Code != 403 {
+		t.Fatalf("viewer create post: %d", got.Code)
+	}
+	if got := apiRequest(t, handler, "GET", "/api/v1/users", nil, viewerCookie, ""); got.Code != 403 {
+		t.Fatalf("viewer list users: %d", got.Code)
+	}
+	if got := apiRequest(t, handler, "GET", "/api/v1/audit", nil, viewerCookie, ""); got.Code != 403 {
+		t.Fatalf("viewer audit: %d", got.Code)
+	}
+	operatorLogin := apiRequest(t, handler, "POST", "/api/v1/login", map[string]string{"email": "op@example.com", "password": "1234567"}, nil, "")
+	operatorCookie := operatorLogin.Result().Cookies()[0]
+	var operatorSession struct {
+		CSRF string `json:"csrf_token"`
+	}
+	_ = json.Unmarshal(operatorLogin.Body.Bytes(), &operatorSession)
+	if got := apiRequest(t, handler, "POST", "/api/v1/users", map[string]string{"email": "x@example.com", "password": "1234567", "role": "viewer"}, operatorCookie, operatorSession.CSRF); got.Code != 403 {
+		t.Fatalf("operator create user: %d", got.Code)
+	}
+	if got := apiRequest(t, handler, "POST", "/api/v1/posts", map[string]any{"id": "host-b", "name": "B", "kind": "host"}, operatorCookie, operatorSession.CSRF); got.Code != 403 {
+		t.Fatalf("operator create post: %d", got.Code)
+	}
+}
+
 func TestSecureCookieBehindHTTPSProxy(t *testing.T) {
 	s := testServer(t)
 	s.cfg.SecureCookies = true

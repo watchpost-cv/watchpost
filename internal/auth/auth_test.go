@@ -78,3 +78,55 @@ func TestMinimumPasswordLengthIsSeven(t *testing.T) {
 		t.Fatalf("setup required=%v err=%v", required, err)
 	}
 }
+
+func TestChangePasswordRevokesOtherSessions(t *testing.T) {
+	ctx := context.Background()
+	m := New(testDB(t))
+	if _, err := m.Setup(ctx, "admin@example.com", "correct-horse-battery", ""); err != nil {
+		t.Fatal(err)
+	}
+	session1, err := m.Login(ctx, "admin@example.com", "correct-horse-battery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session2, err := m.Login(ctx, "admin@example.com", "correct-horse-battery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.ChangePassword(ctx, session1.User.ID, "correct-horse-battery", "new-password-1", session1.Token); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Authenticate(ctx, session2.Token); err == nil {
+		t.Fatal("session2 survived password change")
+	}
+	if _, err := m.Authenticate(ctx, session1.Token); err != nil {
+		t.Fatal("current session revoked")
+	}
+	if _, err := m.Login(ctx, "admin@example.com", "correct-horse-battery"); err == nil {
+		t.Fatal("old password accepted")
+	}
+	if _, err := m.Login(ctx, "admin@example.com", "new-password-1"); err != nil {
+		t.Fatal("new password rejected")
+	}
+}
+
+func TestUserManagementValidation(t *testing.T) {
+	ctx := context.Background()
+	m := New(testDB(t))
+	if _, err := m.CreateUser(ctx, "op@example.com", "1234567", "operator"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.CreateUser(ctx, "bad", "1234567", "operator"); err == nil {
+		t.Fatal("invalid email accepted")
+	}
+	if _, err := m.CreateUser(ctx, "v@example.com", "123", "viewer"); err == nil {
+		t.Fatal("short password accepted")
+	}
+	if _, err := m.CreateUser(ctx, "x@example.com", "1234567", "superuser"); err == nil {
+		t.Fatal("invalid role accepted")
+	}
+	items, err := m.ListUsers(ctx)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("users=%d err=%v", len(items), err)
+	}
+}

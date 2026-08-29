@@ -3,7 +3,7 @@
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const state = { csrf: "", user: null, posts: [], collectors: [], agentConnections: [], rules: [], checkSchedules: [], deviceProfiles: [], deviceAdapters: [], devicePresets: [], alerts: [], incidents: [], agentRequests: [], storage: null, postLimit: 50 };
-const routes = new Set(["overview", "survey", "posts", "edit-post", "enroll", "collectors", "checks", "history", "rules", "evidence", "investigate", "actions", "incidents", "devices", "fleet", "audit"]);
+const routes = new Set(["overview", "survey", "posts", "edit-post", "enroll", "collectors", "checks", "history", "rules", "evidence", "investigate", "actions", "incidents", "devices", "fleet", "audit", "users", "account"]);
 
 async function request(path, options = {}) {
   const config = { ...options, headers: { ...(options.body ? { "Content-Type": "application/json" } : {}), ...(options.headers || {}) } };
@@ -124,6 +124,7 @@ function route() {
   if (current === "checks") renderCheckSchedules();
   if (current === "devices") renderDeviceProfiles();
   if (current === "audit") renderAudit();
+  if (current === "users") renderUsers();
   if (current === "edit-post") renderPostEditor(new URLSearchParams(location.hash.split("?")[1] || "").get("id"));
   if (current === "collectors" && !$('#collector [name="server_url"]').value) $('#collector [name="server_url"]').value = location.origin;
 }
@@ -258,6 +259,20 @@ async function renderAudit() {
   }
 }
 
+async function renderUsers() {
+  const target = $("#user-list");
+  target.innerHTML = stateBox("Loading users", "Reading the global role inventory.", "loading");
+  try {
+    const data = await request("/api/v1/users");
+    target.innerHTML = data.users.length ? data.users.map(user => `<article class="rule-row"><div><h3>${escapeHTML(user.email)}</h3><p>Role ${escapeHTML(user.role)}</p></div><div class="actions"><select aria-label="Role for ${escapeHTML(user.email)}" data-user-role="${user.id}">${["viewer", "operator", "admin"].map(role => `<option value="${role}" ${role === user.role ? "selected" : ""}>${escapeHTML(role)}</option>`).join("")}</select><button type="button" class="quiet-button" data-user-password="${user.id}">Reset password</button><button type="button" class="quiet-button" data-user-revoke="${user.id}">Revoke sessions</button></div></article>`).join("") : stateBox("No users", "Create the first additional account above.");
+    $$("[data-user-role]", target).forEach(select => select.onchange = async () => { try { await request(`/api/v1/users/${select.dataset.userRole}/role`, { method: "PUT", headers: { "X-Watchpost-CSRF": state.csrf }, body: JSON.stringify({ role: select.value }) }); await loadCore(); showMessage("Role updated."); } catch (error) { showMessage(error.message, "error"); } });
+    $$("[data-user-password]", target).forEach(button => button.onclick = async () => { const password = prompt(`New password for user ${button.dataset.userPassword} (7+ characters)`); if (!password) return; try { await request(`/api/v1/users/${button.dataset.userPassword}/reset-password`, { method: "POST", headers: { "X-Watchpost-CSRF": state.csrf }, body: JSON.stringify({ password }) }); showMessage("Password reset."); } catch (error) { showMessage(error.message, "error"); } });
+    $$("[data-user-revoke]", target).forEach(button => button.onclick = async () => { if (!confirm(`Revoke all sessions for user ${button.dataset.userRevoke}?`)) return; try { await request(`/api/v1/users/${button.dataset.userRevoke}/revoke-sessions`, { method: "POST", headers: { "X-Watchpost-CSRF": state.csrf } }); showMessage("Sessions revoked."); } catch (error) { showMessage(error.message, "error"); } });
+  } catch (error) {
+    target.innerHTML = stateBox("Users unavailable", error.message, error.message.includes("permission") ? "permission" : "error");
+  }
+}
+
 function setupWizard(prefix, stepSelector, stepsSelector, backSelector, nextSelector, submitSelector, beforeFinal) {
   let step = 1; const panels = $$(stepSelector), indicators = $$(`${stepsSelector} li`), back = $(backSelector), next = $(nextSelector), submit = $(submitSelector);
   const draw = () => { panels.forEach(panel => { panel.hidden = Number(panel.dataset.step || panel.dataset.snmpStep) !== step; }); indicators.forEach((item, index) => item.classList.toggle("active", index + 1 === step)); back.hidden = step === 1; next.hidden = step === panels.length; submit.hidden = step !== panels.length; if (step === panels.length && beforeFinal) beforeFinal(); };
@@ -368,5 +383,8 @@ const snmpWizard = setupWizard("snmp", "[data-snmp-step]", "#snmp-steps", "#snmp
 $("#snmp").addEventListener("submit", async event => { event.preventDefault(); const form = event.currentTarget, values = formJSON(form), output = $("#snmp-result"), OIDs = $$(".oid-row").map(row => ({ Name: $('[data-oid="name"]', row).value, OID: $('[data-oid="oid"]', row).value, Unit: $('[data-oid="unit"]', row).value })); output.hidden = false; output.innerHTML = stateBox("Testing SNMP connection", "Authenticating and polling the bounded OID profile.", "loading"); setBusy(form, true); try { const result = await request("/api/v1/devices/snmp/poll", { method: "POST", headers: { "X-Watchpost-CSRF": state.csrf }, body: JSON.stringify({ config: { Address: values.address, Port: Number(values.port), Username: values.username, AuthPassword: values.auth_password, PrivacyPassword: values.privacy_password, Timeout: 5_000_000_000 }, profile: { ID: values.profile_id, Kind: values.device_kind, OIDs } }) }); await request("/api/v1/device-profiles", { method: "POST", headers: { "X-Watchpost-CSRF": state.csrf }, body: JSON.stringify({ id: values.profile_id, post_id: values.post_id, kind: values.device_kind, address: values.address, port: Number(values.port), username: values.username, oids: OIDs }) }); await loadCore(); output.innerHTML = `<h2>Connection successful</h2><p>${result.readings.length} reading${result.readings.length === 1 ? "" : "s"} returned.</p><dl class="review-list">${result.readings.map(reading => `<dt>${escapeHTML(reading.Name)}</dt><dd>${escapeHTML(reading.Value)} ${escapeHTML(reading.Unit)} · ${escapeHTML(reading.Quality)}</dd>`).join("")}</dl>`; } catch (error) { output.innerHTML = stateBox("Connection test failed", `${error.message} Check reachability, authPriv credentials, allowed source addresses, and OIDs.`, error.message.includes("permission") ? "permission" : "error"); } finally { setBusy(form, false); } });
 
 $("#fleet").addEventListener("submit", async event => { event.preventDefault(); const form = event.currentTarget, values = formJSON(form), output = $("#fleet-result"); output.hidden = false; output.innerHTML = stateBox("Creating pairing secret", "Enrolling the peer with a one-time credential.", "loading"); setBusy(form, true); try { const result = await request("/api/v1/peers", { method: "POST", headers: { "X-Watchpost-CSRF": state.csrf }, body: JSON.stringify(values) }); output.innerHTML = `<h2>Pairing ready</h2><ol><li>Copy the secret now; it will not be shown again.</li><li>On <strong>${escapeHTML(result.id)}</strong>, configure this Watchpost as its peer.</li><li>Send one signed test envelope and verify it is accepted before enabling event sharing.</li></ol><code class="secret">${escapeHTML(result.secret)}</code><button id="copy-secret" class="quiet-button" type="button">Copy secret</button><p class="callout">Each Watchpost remains independently useful. Pairing enables selective coordination, not continuous upstream dependence.</p>`; $("#copy-secret").onclick = async () => { await navigator.clipboard.writeText(result.secret); showMessage("Pairing secret copied."); }; form.reset(); } catch (error) { output.innerHTML = stateBox("Pairing failed", error.message, error.message.includes("permission") ? "permission" : "error"); } finally { setBusy(form, false); } });
+
+$("#create-user").addEventListener("submit", async event => { event.preventDefault(); const form = event.currentTarget; setBusy(form, true); try { await request("/api/v1/users", { method: "POST", headers: { "X-Watchpost-CSRF": state.csrf }, body: JSON.stringify(formJSON(form)) }); form.reset(); await loadCore(); renderUsers(); showMessage("User created."); } catch (error) { showMessage(error.message, "error"); } finally { setBusy(form, false); } });
+$("#change-password").addEventListener("submit", async event => { event.preventDefault(); const form = event.currentTarget, output = $("#password-result"); setBusy(form, true); output.hidden = false; output.innerHTML = stateBox("Rotating password", "Revoking other sessions for this account.", "loading"); try { await request("/api/v1/me/password", { method: "POST", headers: { "X-Watchpost-CSRF": state.csrf }, body: JSON.stringify(formJSON(form)) }); output.innerHTML = `<h2>Password changed</h2><p>Other sessions were revoked; this session remains active.</p>`; form.reset(); } catch (error) { output.innerHTML = stateBox("Password not changed", error.message, error.message.includes("permission") ? "permission" : "error"); } finally { setBusy(form, false); } });
 
 installResizeHandles(); bootstrap();

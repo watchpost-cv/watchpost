@@ -90,6 +90,16 @@ Audit writes never fail the operation they describe and are bounded to 400
 characters of detail. `GET /api/v1/audit` exposes the most recent records to
 administrators. Audit records are exempt from automatic retention.
 
+## Global roles and user administration
+
+Roles are `admin`, `operator` and `viewer` and are enforced by the server on
+every authenticated route. Administrators can create users, change roles, reset
+passwords and revoke a user's sessions; a user can rotate their own password,
+which revokes every other session for that account. An administrator cannot
+demote their own account. The post `owner` field is metadata only; evidence
+is not owner-isolated. Session administration and password rotation are
+audited.
+
 ## Storage capacity contract
 
 Watchpost measures its total SQLite footprint — `watchpost.db` plus the

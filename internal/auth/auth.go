@@ -125,6 +125,116 @@ func (m *Manager) SetupRequired(ctx context.Context) (bool, error) {
 	return count == 0, nil
 }
 
+func validRole(role string) bool { return role == "admin" || role == "operator" || role == "viewer" }
+
+func (m *Manager) ListUsers(ctx context.Context) ([]User, error) {
+	rows, err := m.store.DB.QueryContext(ctx, `SELECT id,email,role FROM users ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []User{}
+	for rows.Next() {
+		var u User
+		if err = rows.Scan(&u.ID, &u.Email, &u.Role); err != nil {
+			return nil, err
+		}
+		items = append(items, u)
+	}
+	return items, rows.Err()
+}
+
+func (m *Manager) CreateUser(ctx context.Context, email, password, role string) (User, error) {
+	if !strings.Contains(email, "@") || len(password) < MinimumPasswordLength || !validRole(role) {
+		return User{}, errors.New("valid email, password of at least 7 characters, and role required")
+	}
+	hash, err := passwordHash(password)
+	if err != nil {
+		return User{}, err
+	}
+	result, err := m.store.DB.ExecContext(ctx, `INSERT INTO users(email,password_hash,role,created_at) VALUES(?,?,?,?)`, strings.TrimSpace(email), hash, role, time.Now().UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return User{}, err
+	}
+	id, _ := result.LastInsertId()
+	return User{ID: id, Email: strings.TrimSpace(email), Role: role}, nil
+}
+
+func (m *Manager) SetRole(ctx context.Context, id int64, role string) error {
+	if !validRole(role) {
+		return errors.New("invalid role")
+	}
+	result, err := m.store.DB.ExecContext(ctx, `UPDATE users SET role=? WHERE id=?`, role, id)
+	if err != nil {
+		return err
+	}
+	n, _ := result.RowsAffected()
+	if n != 1 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (m *Manager) ResetPassword(ctx context.Context, id int64, newPassword string) error {
+	if len(newPassword) < MinimumPasswordLength {
+		return errors.New("password must be at least 7 characters")
+	}
+	hash, err := passwordHash(newPassword)
+	if err != nil {
+		return err
+	}
+	result, err := m.store.DB.ExecContext(ctx, `UPDATE users SET password_hash=? WHERE id=?`, hash, id)
+	if err != nil {
+		return err
+	}
+	n, _ := result.RowsAffected()
+	if n != 1 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (m *Manager) RevokeSessions(ctx context.Context, userID int64) (int64, error) {
+	result, err := m.store.DB.ExecContext(ctx, `DELETE FROM sessions WHERE user_id=?`, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+// ChangePassword verifies the current password and rotates it, revoking every
+// other session for the user while keeping the session identified by
+// keepToken.
+func (m *Manager) ChangePassword(ctx context.Context, userID int64, currentPassword, newPassword, keepToken string) error {
+	if len(newPassword) < MinimumPasswordLength {
+		return errors.New("password must be at least 7 characters")
+	}
+	var hash []byte
+	if err := m.store.DB.QueryRowContext(ctx, `SELECT password_hash FROM users WHERE id=?`, userID).Scan(&hash); err != nil {
+		return err
+	}
+	if !verifyPassword(currentPassword, hash) {
+		return errors.New("current password incorrect")
+	}
+	next, err := passwordHash(newPassword)
+	if err != nil {
+		return err
+	}
+	keep := tokenHash(keepToken)
+	tx, err := m.store.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id=? AND token_hash<>?`, userID, keep); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE users SET password_hash=? WHERE id=?`, next, userID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (m *Manager) Login(ctx context.Context, email, password string) (Session, error) {
 	key := strings.ToLower(strings.TrimSpace(email))
 	if !m.allow(key) {

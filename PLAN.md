@@ -58,7 +58,15 @@ bootstrap token. Only a SHA-256 hash of the token is persisted; the raw value
 is printed to the server console exactly once (or loaded from the protected
 file). Token consumption and first-admin creation happen in one transaction, so
 replay and concurrent second-winner setup fail closed. The token is never
-exposed through diagnostics or the SPA. General user administration is R8.
+exposed through diagnostics or the SPA.
+
+R8 is complete: global RBAC administration exists. Administrators can list and
+create users, change roles (never demoting their own account), reset passwords
+and revoke a user's sessions. Any user can rotate their own password, which
+revokes every other session for that account. The post `owner` field remains
+metadata only; no owner-isolated evidence model exists. User administration
+and password rotation are audited. The SPA exposes a Users view (admin) and an
+Account view (password rotation) for every role.
 
 ## Agent architecture programme (WP-A01–WP-A18)
 

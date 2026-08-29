@@ -91,7 +91,18 @@ once (default TTL one hour, `WATCHPOST_SETUP_TOKEN_TTL`). Token consumption and
 first-admin creation are one transaction, so replay and concurrent second
 winners fail closed. The token is never returned by any API or shown in the
 SPA. The SPA shows a bootstrap-token field when `setup_token_required` is
-reported. General user administration is R8.
+reported.
+
+## Global roles and user administration
+
+R8 adds administrator-managed global RBAC. `admin` can list and create users,
+change roles, reset passwords and revoke sessions; `operator` and `viewer`
+cannot administer users or the audit log. A user can rotate their own password
+(`POST /api/v1/me/password`), which revokes every other session for that
+account while keeping the current one. An administrator cannot demote their
+own account. The post `owner` field remains metadata; evidence is not
+owner-isolated. The SPA has a Users view (admin) and an Account view. All user
+administration is audited.
 Host enrollment records an optional address or hostname, then pairs the
 bundled collector using an explicit Watchpost URL reachable from the post. The
 collector is outbound-only. Post editing is optimistic-concurrency protected;

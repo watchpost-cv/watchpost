@@ -97,6 +97,12 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/device-adapters", s.require("viewer", s.handleListDeviceAdapters))
 	mux.HandleFunc("GET /api/v1/device-presets", s.require("viewer", s.handleListDevicePresets))
 	mux.HandleFunc("GET /api/v1/audit", s.require("admin", s.handleListAudit))
+	mux.HandleFunc("GET /api/v1/users", s.require("admin", s.handleListUsers))
+	mux.HandleFunc("POST /api/v1/users", s.require("admin", s.handleCreateUser))
+	mux.HandleFunc("PUT /api/v1/users/{id}/role", s.require("admin", s.handleSetUserRole))
+	mux.HandleFunc("POST /api/v1/users/{id}/reset-password", s.require("admin", s.handleResetUserPassword))
+	mux.HandleFunc("POST /api/v1/users/{id}/revoke-sessions", s.require("admin", s.handleRevokeUserSessions))
+	mux.HandleFunc("POST /api/v1/me/password", s.require("viewer", s.handleChangeOwnPassword))
 }
 
 func (s *Server) handleAgentPairingRequest(w http.ResponseWriter, r *http.Request) {
@@ -797,6 +803,112 @@ func (s *Server) auditActor(ctx context.Context, actorID int64, action, objectTy
 	if _, err := s.store.DB.ExecContext(ctx, `INSERT INTO audit(at,actor_user_id,action,object_type,object_id,detail) VALUES(?,?,?,?,?,?)`, time.Now().UTC().Format(time.RFC3339Nano), actor, action, objectType, objectID, detail); err != nil {
 		s.logger.Warn("audit write failed", "action", action, "error", err)
 	}
+}
+
+func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
+	items, err := s.auth.ListUsers(r.Context())
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": "users unavailable"})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"users": items})
+}
+
+func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Email, Password, Role string
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	user, err := s.auth.CreateUser(r.Context(), in.Email, in.Password, in.Role)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	s.audit(r, "user_create", "user", fmt.Sprint(user.ID), user.Email+" role="+user.Role)
+	writeJSON(w, 201, user)
+}
+
+func (s *Server) handleSetUserRole(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": "invalid user"})
+		return
+	}
+	var in struct {
+		Role string `json:"role"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	if id == currentUser(r).ID && in.Role != "admin" {
+		writeJSON(w, 409, map[string]string{"error": "cannot demote your own account"})
+		return
+	}
+	if err := s.auth.SetRole(r.Context(), id, in.Role); err != nil {
+		writeJSON(w, 409, map[string]string{"error": err.Error()})
+		return
+	}
+	s.audit(r, "user_set_role", "user", fmt.Sprint(id), "role="+in.Role)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleResetUserPassword(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": "invalid user"})
+		return
+	}
+	var in struct {
+		Password string `json:"password"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	if err := s.auth.ResetPassword(r.Context(), id, in.Password); err != nil {
+		writeJSON(w, 409, map[string]string{"error": err.Error()})
+		return
+	}
+	s.audit(r, "user_reset_password", "user", fmt.Sprint(id), "password reset")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleRevokeUserSessions(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": "invalid user"})
+		return
+	}
+	count, err := s.auth.RevokeSessions(r.Context(), id)
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": "sessions could not be revoked"})
+		return
+	}
+	s.audit(r, "user_revoke_sessions", "user", fmt.Sprint(id), fmt.Sprintf("revoked=%d", count))
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleChangeOwnPassword(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	cookie, err := r.Cookie(sessionCookie)
+	if err != nil {
+		writeJSON(w, 401, map[string]string{"error": "authentication required"})
+		return
+	}
+	user := currentUser(r)
+	if err := s.auth.ChangePassword(r.Context(), user.ID, in.CurrentPassword, in.NewPassword, cookie.Value); err != nil {
+		writeJSON(w, 409, map[string]string{"error": err.Error()})
+		return
+	}
+	s.audit(r, "user_change_password", "user", fmt.Sprint(user.ID), "password changed")
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleListAudit(w http.ResponseWriter, r *http.Request) {
