@@ -76,10 +76,15 @@ R7 records every state-changing operation in the `audit` table with the acting
 user's identity: logins/logouts, posts and dependencies, collector enrollment
 and pairing tokens, agent pairing approval/rejection/revocation, rules, alert
 acknowledgement, notification routes, incidents, check schedules, device
-profiles, peers, action request/approval/execute and investigation starts.
-`GET /api/v1/audit` is administrator-only and the SPA exposes an Audit view.
-Audit rows are exempt from automatic retention; audit write failures are
-logged, never fatal.
+profiles, peers, action request/approve/execute, user/role/password changes and
+investigation starts. A security repair batch makes the audit **transactional**:
+each privileged mutation and its audit row commit in the same database
+transaction, so an audit-write failure rolls back the mutation and the change
+is never reported as successful (fault-injected in tests). `GET /api/v1/audit`
+is administrator-only and the SPA exposes an Audit view. Audit rows are exempt
+from automatic retention. Administrative password resets revoke every session
+for that user atomically with the reset, and the final active administrator
+cannot be demoted.
 
 ## First-admin bootstrap protection
 
@@ -147,13 +152,23 @@ checks are rate-limited to 60/minute and audited. See `internal/checks`.
 
 R14 hardens the agent for explicit remote use. The agent now has local
 `admin`, `technician` and `viewer` accounts (independent of Watchpost
-sessions), a local first-admin bootstrap, a bounded local audit log, optional
-client CIDR restrictions, secure-cookie and trusted-proxy opt-ins, and a
-non-loopback binding that requires an explicit `WATCHPOST_AGENT_EXPOSE=1` with
-a prominent warning. Forwarded scheme/host are trusted only when
-`WATCHPOST_AGENT_TRUSTED_PROXY=1` is set. Service install/upgrade/status/
-uninstall remain CLI-only; web and CLI offer equivalent pairing and
-configuration capability.
+sessions), a local first-admin bootstrap with a chosen email address, a bounded
+local audit log, optional client CIDR restrictions, secure-cookie and
+trusted-proxy opt-ins, and a non-loopback binding that requires an explicit
+`WATCHPOST_AGENT_EXPOSE=1` with a prominent warning. A security repair batch
+replaces the boolean proxy-trust flag with `WATCHPOST_AGENT_TRUSTED_PROXIES`
+(CIDRs/addresses): forwarded scheme/host are believed only when the immediate
+peer is a trusted proxy, the client address is resolved defensively through the
+trusted chain, allow/deny CIDR rules apply to the verified client, and an
+unresolvable client fails closed while any address policy is active. First-run
+setup over a non-loopback interface or with an operator-supplied
+`WATCHPOST_AGENT_SETUP_TOKEN`/`_FILE` requires a short-lived single-use
+bootstrap token (hash-only storage, atomic consumption, never disclosed).
+Login is by email and password with normalized identities. Service
+install/upgrade/status/uninstall remain CLI-only; web and CLI offer equivalent
+pairing and configuration capability. Local password hashes now use the same
+versioned PBKDF2-HMAC-SHA256 derivation as the central server (older custom
+hashes require `reset`).
 
 ## Scheduled SNMP through the canonical contract
 
@@ -199,14 +214,18 @@ the v2 agent flow through the API.
 ## Online backup and key/restore contract
 
 R18a adds `watchpost backup` (consistent online snapshot via `VACUUM INTO`,
-optional AES-256-GCM passphrase encryption under PBKDF2, 10-character
-minimum), `watchpost restore` (header/schema validation, newer-schema refusal,
-stopped-node + `--force`, fail-closed on wrong passphrase) and `watchpost
-rekey` (re-encrypts stored device credentials under a new master key). The
-contract in `docs/backup-and-recovery.md`: backups never embed the master key;
-restoring credential-storing device profiles requires the matching
-`WATCHPOST_MASTER_KEY`; rotation either rekeys or re-enters credentials.
-Scheduled backup UX is R18b.
+optional AES-256-GCM passphrase encryption) and `watchpost restore` (header/
+schema validation, newer-schema refusal, stopped-node + `--force`,
+fail-closed on wrong passphrase). A security repair batch versioned the
+encrypted container: every encrypted backup uses a fresh random salt, a
+versioned header carrying the KDF identifier, work factor, salt, nonce and
+version, with the header authenticated as GCM additional data so tampered
+metadata fails decryption; the archive is flushed and atomically renamed into
+place. Version-1 archives remain readable for compatibility. `watchpost rekey`
+re-encrypts stored device credentials under a new master key. The contract in
+`docs/backup-and-recovery.md`: backups never embed the master key; restoring
+credential-storing device profiles requires the matching `WATCHPOST_MASTER_KEY`;
+rotation either rekeys or re-enters credentials. Scheduled backups are R18b.
 
 ## Scheduled backups
 

@@ -6,8 +6,14 @@
 snapshot of a running node with SQLite `VACUUM INTO`; the node does not need to
 be stopped. Without a passphrase the output is a plain SQLite database. With a
 passphrase (minimum 10 characters) the snapshot is encrypted with AES-256-GCM
-under a PBKDF2-HMAC-SHA256 key (210,000 rounds). A backup never contains the
-passphrase or master key that protects it.
+under a PBKDF2-HMAC-SHA256 key. Every encrypted backup uses a fresh random salt
+and a versioned container whose header carries the KDF identifier, work factor,
+salt, nonce and version, all authenticated as GCM additional data; tampered
+metadata or ciphertext fails decryption. The archive is flushed and atomically
+renamed into place, so an interrupted write never leaves a partial final
+backup. Version-1 archives (fixed salt) remain readable for compatibility; new
+backups are always version 2. A backup never contains the passphrase or master
+key that protects it.
 
 ## Restore
 

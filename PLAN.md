@@ -1,5 +1,21 @@
 # Watchpost development checkpoints
 
+## Security repair batch
+
+A review-driven repair batch (items 1–8) tightened the security model after the
+R-programme: the agent authenticates by email and password with normalized
+identities and a chosen setup email; remote first-admin setup is gated behind a
+short-lived single-use bootstrap token; boolean proxy trust was replaced by
+explicit trusted-proxy CIDRs with fail-closed client resolution; audit records
+are written atomically with their mutations (a failing audit rollback prevents
+the mutation from being reported); encrypted backups use a versioned container
+with random salts and atomic writes; administrative password resets revoke the
+user's sessions; the final administrator cannot be demoted and role changes
+apply to existing sessions immediately; and the agent uses the central
+server's versioned PBKDF2-HMAC-SHA256 KDF. Local agent accounts created by
+older builds must be re-established with `reset` after upgrading because their
+password hashes used a now-unsupported construction.
+
 ## Active implementation programme (R checkpoints)
 
 R20 is complete: the operational SPA now has canonical Nift source in
