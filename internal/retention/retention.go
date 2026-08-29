@@ -65,10 +65,10 @@ func (r *Store) RunOnce(ctx context.Context) (Report, error) {
 	now := r.now().UTC()
 
 	categories := []struct {
-		name    string
-		when    time.Duration
-		always  bool
-		prune   func(cutoff string) (int64, bool, error)
+		name   string
+		when   time.Duration
+		always bool
+		prune  func(cutoff string) (int64, bool, error)
 	}{
 		{"sessions", 0, true, func(cutoff string) (int64, bool, error) {
 			removed, err := r.deleteBounded(ctx, "DELETE FROM sessions WHERE token_hash IN (SELECT token_hash FROM sessions WHERE expires_at<? ORDER BY token_hash LIMIT ?)", cutoff)

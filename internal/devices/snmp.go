@@ -77,8 +77,8 @@ func (r Reading) Observation(method contract.Method, observedAt time.Time) contr
 	}
 	return contract.Observation{
 		Version: contract.ProtocolVersion, PostID: method.PostID,
-		Source:     contract.Source{Method: method, Identity: method.ID},
-		Signal:     r.Name, Value: floatValue(r.Value), Unit: r.Unit,
+		Source: contract.Source{Method: method, Identity: method.ID},
+		Signal: r.Name, Value: floatValue(r.Value), Unit: r.Unit,
 		Quality:    quality,
 		ObservedAt: observedAt, IngestedAt: observedAt, FreshUntil: r.FreshUntil,
 	}
@@ -93,8 +93,8 @@ func PollOK(method contract.Method, ok bool, observedAt time.Time) contract.Obse
 	}
 	return contract.Observation{
 		Version: contract.ProtocolVersion, PostID: method.PostID,
-		Source:     contract.Source{Method: method, Identity: method.ID},
-		Signal:     "snmp.poll_ok", Value: &value, Unit: "boolean", Quality: contract.QualityGood,
+		Source: contract.Source{Method: method, Identity: method.ID},
+		Signal: "snmp.poll_ok", Value: &value, Unit: "boolean", Quality: contract.QualityGood,
 		ObservedAt: observedAt, IngestedAt: observedAt, FreshUntil: observedAt.Add(5 * time.Minute),
 	}
 }

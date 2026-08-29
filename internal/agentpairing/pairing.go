@@ -191,6 +191,7 @@ func (s *Service) Revoke(ctx context.Context, installationID string, entry audit
 	}
 	return tx.Commit()
 }
+
 // PendingReplacementLifetime bounds how long an unconfirmed replacement
 // credential stays valid before the old credential remains authoritative.
 const PendingReplacementLifetime = 10 * time.Minute

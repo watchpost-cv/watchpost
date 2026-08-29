@@ -82,6 +82,7 @@ func (s *ScheduleStore) Save(ctx context.Context, v Schedule, entry audit.Entry)
 	}
 	return tx.Commit()
 }
+
 // Get fetches a single schedule by id.
 func (s *ScheduleStore) Get(ctx context.Context, id string) (Schedule, error) {
 	var v Schedule

@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/watchpost-ops/watchpost/internal/contract"
 	"github.com/watchpost-ops/watchpost/internal/audit"
+	"github.com/watchpost-ops/watchpost/internal/contract"
 	"github.com/watchpost-ops/watchpost/internal/store"
 )
 

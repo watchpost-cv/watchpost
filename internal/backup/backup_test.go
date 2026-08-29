@@ -1,7 +1,6 @@
 package backup
 
 import (
-	"strings"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -12,6 +11,7 @@ import (
 	"hash"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/watchpost-ops/watchpost/internal/devices"

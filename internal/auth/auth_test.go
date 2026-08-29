@@ -49,7 +49,7 @@ func TestLoginAndAuthenticate(t *testing.T) {
 	if _, err = m.Setup(context.Background(), "admin@example.com", "correct-horse-battery", ""); err != nil {
 		t.Fatal(err)
 	}
-	session, err := m.Login(context.Background(), "admin@example.com", "correct-horse-battery", audit.Entry{Action:"test"})
+	session, err := m.Login(context.Background(), "admin@example.com", "correct-horse-battery", audit.Entry{Action: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,15 +86,15 @@ func TestChangePasswordRevokesOtherSessions(t *testing.T) {
 	if _, err := m.Setup(ctx, "admin@example.com", "correct-horse-battery", ""); err != nil {
 		t.Fatal(err)
 	}
-	session1, err := m.Login(ctx, "admin@example.com", "correct-horse-battery", audit.Entry{Action:"test"})
+	session1, err := m.Login(ctx, "admin@example.com", "correct-horse-battery", audit.Entry{Action: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	session2, err := m.Login(ctx, "admin@example.com", "correct-horse-battery", audit.Entry{Action:"test"})
+	session2, err := m.Login(ctx, "admin@example.com", "correct-horse-battery", audit.Entry{Action: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := m.ChangePassword(ctx, session1.User.ID, "correct-horse-battery", "new-password-1", session1.Token, audit.Entry{Action:"test"}); err != nil {
+	if err := m.ChangePassword(ctx, session1.User.ID, "correct-horse-battery", "new-password-1", session1.Token, audit.Entry{Action: "test"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := m.Authenticate(ctx, session2.Token); err == nil {
@@ -103,10 +103,10 @@ func TestChangePasswordRevokesOtherSessions(t *testing.T) {
 	if _, err := m.Authenticate(ctx, session1.Token); err != nil {
 		t.Fatal("current session revoked")
 	}
-	if _, err := m.Login(ctx, "admin@example.com", "correct-horse-battery", audit.Entry{Action:"test"}); err == nil {
+	if _, err := m.Login(ctx, "admin@example.com", "correct-horse-battery", audit.Entry{Action: "test"}); err == nil {
 		t.Fatal("old password accepted")
 	}
-	if _, err := m.Login(ctx, "admin@example.com", "new-password-1", audit.Entry{Action:"test"}); err != nil {
+	if _, err := m.Login(ctx, "admin@example.com", "new-password-1", audit.Entry{Action: "test"}); err != nil {
 		t.Fatal("new password rejected")
 	}
 }
@@ -114,16 +114,16 @@ func TestChangePasswordRevokesOtherSessions(t *testing.T) {
 func TestUserManagementValidation(t *testing.T) {
 	ctx := context.Background()
 	m := New(testDB(t))
-	if _, err := m.CreateUser(ctx, "op@example.com", "1234567", "operator", audit.Entry{Action:"test"}); err != nil {
+	if _, err := m.CreateUser(ctx, "op@example.com", "1234567", "operator", audit.Entry{Action: "test"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.CreateUser(ctx, "bad", "1234567", "operator", audit.Entry{Action:"test"}); err == nil {
+	if _, err := m.CreateUser(ctx, "bad", "1234567", "operator", audit.Entry{Action: "test"}); err == nil {
 		t.Fatal("invalid email accepted")
 	}
-	if _, err := m.CreateUser(ctx, "v@example.com", "123", "viewer", audit.Entry{Action:"test"}); err == nil {
+	if _, err := m.CreateUser(ctx, "v@example.com", "123", "viewer", audit.Entry{Action: "test"}); err == nil {
 		t.Fatal("short password accepted")
 	}
-	if _, err := m.CreateUser(ctx, "x@example.com", "1234567", "superuser", audit.Entry{Action:"test"}); err == nil {
+	if _, err := m.CreateUser(ctx, "x@example.com", "1234567", "superuser", audit.Entry{Action: "test"}); err == nil {
 		t.Fatal("invalid role accepted")
 	}
 	items, err := m.ListUsers(ctx)

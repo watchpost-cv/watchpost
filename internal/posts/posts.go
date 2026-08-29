@@ -71,6 +71,7 @@ func (s *Store) Get(ctx context.Context, id string) (Post, error) {
 	}
 	return p, nil
 }
+
 // List returns a bounded page of posts ordered by name,id.
 func (s *Store) List(ctx context.Context, limit, offset int) ([]Post, error) {
 	if limit < 1 || limit > 1000 {

@@ -2,10 +2,10 @@ package rules
 
 import (
 	"context"
-	"path/filepath"
-	"github.com/watchpost-ops/watchpost/internal/posts"
 	"github.com/watchpost-ops/watchpost/internal/audit"
+	"github.com/watchpost-ops/watchpost/internal/posts"
 	"github.com/watchpost-ops/watchpost/internal/store"
+	"path/filepath"
 	"testing"
 	"time"
 )

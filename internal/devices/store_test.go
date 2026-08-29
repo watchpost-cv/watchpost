@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/watchpost-ops/watchpost/internal/secrets"
 	"github.com/watchpost-ops/watchpost/internal/audit"
+	"github.com/watchpost-ops/watchpost/internal/secrets"
 	"github.com/watchpost-ops/watchpost/internal/store"
 )
 

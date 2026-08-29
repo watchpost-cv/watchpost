@@ -3,9 +3,9 @@ package history
 import (
 	"context"
 	"errors"
-	"strings"
 	"github.com/watchpost-ops/watchpost/internal/contract"
 	"github.com/watchpost-ops/watchpost/internal/store"
+	"strings"
 	"time"
 )
 

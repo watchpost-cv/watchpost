@@ -101,7 +101,9 @@ type rateWindow struct {
 	samples     int
 }
 
-func New(s *store.Store) *Service { return &Service{s: s, now: time.Now, rate: map[string]*rateWindow{}, limit: 3600} }
+func New(s *store.Store) *Service {
+	return &Service{s: s, now: time.Now, rate: map[string]*rateWindow{}, limit: 3600}
+}
 
 // SetIngestRate bounds accepted samples per collector per minute. Zero or a
 // negative value disables the budget.

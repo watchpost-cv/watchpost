@@ -3,9 +3,9 @@ package devices
 import (
 	"context"
 	"crypto/sha256"
-	"fmt"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/watchpost-ops/watchpost/internal/audit"
@@ -23,10 +23,10 @@ type SavedProfile struct {
 	OIDs     []OID  `json:"oids"`
 	// Credentials are accepted once at save time and stored only encrypted with
 	// the installation master key. They are never returned.
-	AuthPassword    string `json:"auth_password,omitempty"`
-	PrivacyPassword string `json:"privacy_password,omitempty"`
-	IntervalSeconds int64  `json:"interval_seconds,omitempty"`
-	Enabled         bool   `json:"enabled"`
+	AuthPassword    string     `json:"auth_password,omitempty"`
+	PrivacyPassword string     `json:"privacy_password,omitempty"`
+	IntervalSeconds int64      `json:"interval_seconds,omitempty"`
+	Enabled         bool       `json:"enabled"`
 	NextRunAt       *time.Time `json:"next_run_at,omitempty"`
 }
 

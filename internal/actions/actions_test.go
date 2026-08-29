@@ -3,8 +3,8 @@ package actions
 import (
 	"context"
 	"errors"
-	"github.com/watchpost-ops/watchpost/internal/auth"
 	"github.com/watchpost-ops/watchpost/internal/audit"
+	"github.com/watchpost-ops/watchpost/internal/auth"
 	"github.com/watchpost-ops/watchpost/internal/store"
 	"testing"
 )

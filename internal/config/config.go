@@ -30,10 +30,10 @@ type Config struct {
 // Backup holds the scheduled online-backup configuration. A zero schedule
 // disables scheduling; backups are still available on demand.
 type Backup struct {
-	Dir               string
-	Schedule          time.Duration
-	PassphraseFile    string
-	Retain            int
+	Dir            string
+	Schedule       time.Duration
+	PassphraseFile string
+	Retain         int
 }
 
 // CheckPolicy restricts which targets central checks, on-demand checks and
@@ -52,9 +52,9 @@ type CheckPolicy struct {
 // MinFreeBytes and MinFreePercent protect the filesystem hosting the data
 // directory.
 type Storage struct {
-	MaxDBBytes      int64
-	MinFreeBytes    int64
-	MinFreePercent  float64
+	MaxDBBytes     int64
+	MinFreeBytes   int64
+	MinFreePercent float64
 }
 
 func DefaultStorage() Storage {

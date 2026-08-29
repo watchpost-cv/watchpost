@@ -12,19 +12,19 @@ import (
 // and shared-memory sidecars) and the free space on the filesystem hosting the
 // data directory.
 type Report struct {
-	DBBytes     int64   `json:"db_bytes"`
-	WALBytes    int64   `json:"wal_bytes"`
-	SHMBytes    int64   `json:"shm_bytes"`
-	OtherBytes  int64   `json:"other_bytes"`
-	TotalBytes  int64   `json:"total_bytes"`
-	CapBytes    int64   `json:"cap_bytes"`
-	FreeBytes   int64   `json:"free_bytes"`
-	FreePercent float64 `json:"free_percent"`
-	MinFreeBytes int64   `json:"min_free_bytes"`
+	DBBytes        int64   `json:"db_bytes"`
+	WALBytes       int64   `json:"wal_bytes"`
+	SHMBytes       int64   `json:"shm_bytes"`
+	OtherBytes     int64   `json:"other_bytes"`
+	TotalBytes     int64   `json:"total_bytes"`
+	CapBytes       int64   `json:"cap_bytes"`
+	FreeBytes      int64   `json:"free_bytes"`
+	FreePercent    float64 `json:"free_percent"`
+	MinFreeBytes   int64   `json:"min_free_bytes"`
 	MinFreePercent float64 `json:"min_free_percent"`
-	Full        bool    `json:"full"`
-	Reason      string  `json:"reason,omitempty"`
-	Files       []File  `json:"files"`
+	Full           bool    `json:"full"`
+	Reason         string  `json:"reason,omitempty"`
+	Files          []File  `json:"files"`
 }
 
 type File struct {
@@ -33,10 +33,10 @@ type File struct {
 }
 
 type Checker struct {
-	dataDir         string
-	maxDBBytes      int64
-	minFreeBytes    int64
-	minFreePercent  float64
+	dataDir        string
+	maxDBBytes     int64
+	minFreeBytes   int64
+	minFreePercent float64
 }
 
 func New(dataDir string, maxDBBytes, minFreeBytes int64, minFreePercent float64) *Checker {
