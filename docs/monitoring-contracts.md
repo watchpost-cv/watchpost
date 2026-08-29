@@ -77,6 +77,19 @@ is a fixed marker, never a bearer credential; `collectorhealth` filters these
 rows out so central checks never appear as collectors in the connection view.
 A rule such as `http.ok < 1` now fires when the target is down.
 
+## Audit completeness
+
+Every state-changing operation is written to the `audit` table with the acting
+user's identity: logins and logouts, post create/update/dependency,
+collector enrollment and pairing-token issue, agent pairing approval/rejection
+and connection revocation, rule create and enable/disable, alert
+acknowledgement, notification-route creation, incident create/transition/
+note/assignment, check-schedule creation, device-profile save/delete, peer
+enroll/revoke, action request/approval/execute, and investigation starts.
+Audit writes never fail the operation they describe and are bounded to 400
+characters of detail. `GET /api/v1/audit` exposes the most recent records to
+administrators. Audit records are exempt from automatic retention.
+
 ## Storage capacity contract
 
 Watchpost measures its total SQLite footprint — `watchpost.db` plus the

@@ -207,6 +207,38 @@ func TestFailedCentralCheckFiresRuleAlert(t *testing.T) {
 	}
 }
 
+func TestAuditRecordsStateChanges(t *testing.T) {
+	handler := testServer(t).Handler()
+	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
+	login := apiRequest(t, handler, "POST", "/api/v1/login", map[string]string{"email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
+	cookie := login.Result().Cookies()[0]
+	var session struct {
+		CSRF string `json:"csrf_token"`
+	}
+	_ = json.Unmarshal(login.Body.Bytes(), &session)
+	if got := apiRequest(t, handler, "POST", "/api/v1/posts", map[string]any{"id": "host-a", "name": "Host A", "kind": "host", "labels": map[string]string{}}, cookie, session.CSRF); got.Code != 201 {
+		t.Fatalf("post: %d", got.Code)
+	}
+	if got := apiRequest(t, handler, "POST", "/api/v1/rules", map[string]any{"ID": "cpu-high", "PostID": "host-a", "Signal": "cpu.percent", "Operator": "gt", "MissingPolicy": "unknown", "Severity": "warning", "Threshold": 90, "DurationSeconds": 0}, cookie, session.CSRF); got.Code != 201 {
+		t.Fatalf("rule: %d", got.Code)
+	}
+	if got := apiRequest(t, handler, "POST", "/api/v1/incidents", map[string]any{"title": "Incident one", "severity": "warning", "alert_ids": []int64{}}, cookie, session.CSRF); got.Code != 201 {
+		t.Fatalf("incident: %d", got.Code)
+	}
+	audit := apiRequest(t, handler, "GET", "/api/v1/audit", nil, cookie, "")
+	if audit.Code != 200 {
+		t.Fatalf("audit: %d", audit.Code)
+	}
+	for _, action := range []string{"login", "post_create", "rule_create", "incident_create"} {
+		if !bytes.Contains(audit.Body.Bytes(), []byte(action)) {
+			t.Errorf("audit log missing %s: %s", action, audit.Body.String())
+		}
+	}
+	if got := apiRequest(t, handler, "GET", "/api/v1/audit", nil, nil, ""); got.Code != http.StatusUnauthorized {
+		t.Fatalf("audit endpoint must require auth, got %d", got.Code)
+	}
+}
+
 func TestSecureCookieBehindHTTPSProxy(t *testing.T) {
 	s := testServer(t)
 	s.cfg.SecureCookies = true

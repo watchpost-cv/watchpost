@@ -3,7 +3,7 @@
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const state = { csrf: "", user: null, posts: [], collectors: [], agentConnections: [], rules: [], checkSchedules: [], deviceProfiles: [], deviceAdapters: [], devicePresets: [], alerts: [], incidents: [], agentRequests: [], storage: null, postLimit: 50 };
-const routes = new Set(["overview", "survey", "posts", "edit-post", "enroll", "collectors", "checks", "history", "rules", "evidence", "investigate", "actions", "incidents", "devices", "fleet"]);
+const routes = new Set(["overview", "survey", "posts", "edit-post", "enroll", "collectors", "checks", "history", "rules", "evidence", "investigate", "actions", "incidents", "devices", "fleet", "audit"]);
 
 async function request(path, options = {}) {
   const config = { ...options, headers: { ...(options.body ? { "Content-Type": "application/json" } : {}), ...(options.headers || {}) } };
@@ -116,6 +116,7 @@ function route() {
   if (current === "rules") renderRuleInventory();
   if (current === "checks") renderCheckSchedules();
   if (current === "devices") renderDeviceProfiles();
+  if (current === "audit") renderAudit();
   if (current === "edit-post") renderPostEditor(new URLSearchParams(location.hash.split("?")[1] || "").get("id"));
   if (current === "collectors" && !$('#collector [name="server_url"]').value) $('#collector [name="server_url"]').value = location.origin;
 }
@@ -237,6 +238,17 @@ function renderIncidents() {
 
 function renderCollectorHealth() {
   $("#collector-health").innerHTML = state.collectors.length ? state.collectors.map(item => `<article class="post-row"><div><h3>Collector ${escapeHTML(item.collector_id)}</h3><p>Post <code>${escapeHTML(item.post_id)}</code> · ${item.last_seen_at ? `last received ${escapeHTML(new Date(item.last_seen_at).toLocaleString())}` : "no observations received"}</p>${item.last_error ? `<p>${escapeHTML(item.last_error)}</p>` : ""}</div><span class="badge ${["offline", "rejected"].includes(item.status) ? "danger" : item.status === "healthy" ? "" : "warning"}">${escapeHTML(title(item.status))}</span></article>`).join("") : stateBox("No collectors paired", "Pair a collector to begin receiving host telemetry.");
+}
+
+async function renderAudit() {
+  const target = $("#audit-log");
+  target.innerHTML = stateBox("Loading audit log", "Reading the attributed operation record.", "loading");
+  try {
+    const data = await request("/api/v1/audit");
+    target.innerHTML = data.audit.length ? data.audit.map(entry => `<article class="rule-row"><div><h3>${escapeHTML(entry.action)}</h3><p>${escapeHTML(entry.at)} · ${escapeHTML(entry.actor_email || "system")} · ${escapeHTML(entry.object_type)} <code>${escapeHTML(entry.object_id)}</code></p>${entry.detail ? `<p>${escapeHTML(entry.detail)}</p>` : ""}</div></article>`).join("") : stateBox("No audit records", "State-changing operations will be recorded here.");
+  } catch (error) {
+    target.innerHTML = stateBox("Audit unavailable", error.message, error.message.includes("permission") ? "permission" : "error");
+  }
 }
 
 function setupWizard(prefix, stepSelector, stepsSelector, backSelector, nextSelector, submitSelector, beforeFinal) {

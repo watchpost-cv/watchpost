@@ -6,6 +6,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -95,6 +96,7 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/device-profiles/{id}", s.require("operator", s.handleDeleteDeviceProfile))
 	mux.HandleFunc("GET /api/v1/device-adapters", s.require("viewer", s.handleListDeviceAdapters))
 	mux.HandleFunc("GET /api/v1/device-presets", s.require("viewer", s.handleListDevicePresets))
+	mux.HandleFunc("GET /api/v1/audit", s.require("admin", s.handleListAudit))
 }
 
 func (s *Server) handleAgentPairingRequest(w http.ResponseWriter, r *http.Request) {
@@ -168,6 +170,7 @@ func (s *Server) handleRevokeAgentConnection(w http.ResponseWriter, r *http.Requ
 		writeJSON(w, 409, map[string]string{"error": err.Error()})
 		return
 	}
+	s.audit(r, "agent_connection_revoke", "agent_connection", r.PathValue("id"), "revoked")
 	w.WriteHeader(http.StatusNoContent)
 }
 func (s *Server) handleApproveAgentPairingRequest(w http.ResponseWriter, r *http.Request) {
@@ -181,6 +184,7 @@ func (s *Server) handleApproveAgentPairingRequest(w http.ResponseWriter, r *http
 		writeJSON(w, 409, map[string]string{"error": err.Error()})
 		return
 	}
+	s.audit(r, "agent_pairing_approve", "agent_pairing_request", r.PathValue("id"), "post="+input.PostID)
 	w.WriteHeader(http.StatusNoContent)
 }
 func (s *Server) handleRejectAgentPairingRequest(w http.ResponseWriter, r *http.Request) {
@@ -188,6 +192,7 @@ func (s *Server) handleRejectAgentPairingRequest(w http.ResponseWriter, r *http.
 		writeJSON(w, 409, map[string]string{"error": err.Error()})
 		return
 	}
+	s.audit(r, "agent_pairing_reject", "agent_pairing_request", r.PathValue("id"), "rejected")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -240,12 +245,14 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 401, map[string]string{"error": "invalid credentials"})
 		return
 	}
+	s.auditActor(r.Context(), session.User.ID, "login", "session", "", "login")
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: session.Token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil || s.cfg.SecureCookies, MaxAge: 86400})
 	writeJSON(w, 200, map[string]any{"user": session.User, "csrf_token": session.CSRF})
 }
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	cookie, _ := r.Cookie(sessionCookie)
 	_ = s.auth.Logout(r.Context(), cookie.Value)
+	s.audit(r, "logout", "session", "", "logout")
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: -1})
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -289,6 +296,7 @@ func (s *Server) handleCreatePost(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
+	s.audit(r, "post_create", "post", post.ID, post.Name)
 	writeJSON(w, 201, post)
 }
 func (s *Server) handleGetPost(w http.ResponseWriter, r *http.Request) {
@@ -332,6 +340,7 @@ func (s *Server) handleUpdatePost(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 409, map[string]string{"error": err.Error()})
 		return
 	}
+	s.audit(r, "post_update", "post", post.ID, fmt.Sprintf("name=%s maintenance=%t archived=%t", post.Name, post.Maintenance, post.Archived))
 	writeJSON(w, 200, post)
 }
 func (s *Server) handleDeletePost(w http.ResponseWriter, r *http.Request) {
@@ -368,6 +377,7 @@ func (s *Server) handleAddDependency(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 409, map[string]string{"error": err.Error()})
 		return
 	}
+	s.audit(r, "dependency_add", "post", r.PathValue("id"), "depends_on="+in.DependsOn)
 	w.WriteHeader(http.StatusNoContent)
 }
 func (s *Server) handleEnrollCollector(w http.ResponseWriter, r *http.Request) {
@@ -382,6 +392,7 @@ func (s *Server) handleEnrollCollector(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
+	s.audit(r, "collector_enroll", "collector", in.ID, "post="+r.PathValue("id"))
 	writeJSON(w, 201, map[string]string{"id": in.ID, "secret": secret})
 }
 
@@ -391,6 +402,7 @@ func (s *Server) handleCreatePairingToken(w http.ResponseWriter, r *http.Request
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
+	s.audit(r, "pairing_token_create", "post", r.PathValue("id"), "pairing token issued")
 	writeJSON(w, 201, token)
 }
 
@@ -531,6 +543,7 @@ func (s *Server) handleCreateCheckSchedule(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
+	s.audit(r, "check_schedule_create", "check_schedule", in.ID, in.Kind+" "+in.Address)
 	w.WriteHeader(http.StatusCreated)
 }
 func (s *Server) handleListCheckSchedules(w http.ResponseWriter, r *http.Request) {
@@ -597,6 +610,7 @@ func (s *Server) handleCreateRule(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
+	s.audit(r, "rule_create", "rule", in.ID, "post="+in.PostID+" signal="+in.Signal)
 	w.WriteHeader(201)
 }
 func (s *Server) handleListRules(w http.ResponseWriter, r *http.Request) {
@@ -618,6 +632,7 @@ func (s *Server) handleSetRuleEnabled(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 404, map[string]string{"error": err.Error()})
 		return
 	}
+	s.audit(r, "rule_set_enabled", "rule", r.PathValue("id"), fmt.Sprintf("enabled=%t", in.Enabled))
 	w.WriteHeader(http.StatusNoContent)
 }
 func (s *Server) handleCreateRoute(w http.ResponseWriter, r *http.Request) {
@@ -630,6 +645,7 @@ func (s *Server) handleCreateRoute(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
+	s.audit(r, "notification_route_create", "notification_route", route.ID, route.Kind)
 	w.WriteHeader(201)
 }
 func (s *Server) handleListRoutes(w http.ResponseWriter, r *http.Request) {
@@ -658,6 +674,7 @@ func (s *Server) handleAcknowledge(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 409, map[string]string{"error": err.Error()})
 		return
 	}
+	s.audit(r, "alert_acknowledge", "alert", fmt.Sprint(id), "acknowledged")
 	w.WriteHeader(http.StatusNoContent)
 }
 func (s *Server) handleCreateIncident(w http.ResponseWriter, r *http.Request) {
@@ -673,6 +690,7 @@ func (s *Server) handleCreateIncident(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
+	s.audit(r, "incident_create", "incident", fmt.Sprint(incident.ID), in.Title)
 	writeJSON(w, 201, incident)
 }
 func (s *Server) handleGetIncident(w http.ResponseWriter, r *http.Request) {
@@ -716,6 +734,7 @@ func (s *Server) handleTransitionIncident(w http.ResponseWriter, r *http.Request
 		writeJSON(w, 409, map[string]string{"error": err.Error()})
 		return
 	}
+	s.audit(r, "incident_transition", "incident", fmt.Sprint(id), in.Status)
 	writeJSON(w, 200, incident)
 }
 func (s *Server) handleIncidentNote(w http.ResponseWriter, r *http.Request) {
@@ -732,6 +751,7 @@ func (s *Server) handleIncidentNote(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
+	s.audit(r, "incident_note", "incident", fmt.Sprint(id), "note added")
 	w.WriteHeader(http.StatusNoContent)
 }
 func (s *Server) handleAssignIncident(w http.ResponseWriter, r *http.Request) {
@@ -751,11 +771,68 @@ func (s *Server) handleAssignIncident(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 409, map[string]string{"error": err.Error()})
 		return
 	}
+	s.audit(r, "incident_assign", "incident", fmt.Sprint(id), "owner="+in.Owner)
 	writeJSON(w, 200, item)
 }
 func currentUser(r *http.Request) auth.User {
 	user, _ := r.Context().Value(userContextKey{}).(auth.User)
 	return user
+}
+
+// audit records an attributable operational state change. Failures are logged
+// but never fail the operation they describe.
+func (s *Server) audit(r *http.Request, action, objectType, objectID, detail string) {
+	user := currentUser(r)
+	s.auditActor(r.Context(), user.ID, action, objectType, objectID, detail)
+}
+
+func (s *Server) auditActor(ctx context.Context, actorID int64, action, objectType, objectID, detail string) {
+	if len(detail) > 400 {
+		detail = detail[:400]
+	}
+	var actor any
+	if actorID != 0 {
+		actor = actorID
+	}
+	if _, err := s.store.DB.ExecContext(ctx, `INSERT INTO audit(at,actor_user_id,action,object_type,object_id,detail) VALUES(?,?,?,?,?,?)`, time.Now().UTC().Format(time.RFC3339Nano), actor, action, objectType, objectID, detail); err != nil {
+		s.logger.Warn("audit write failed", "action", action, "error", err)
+	}
+}
+
+func (s *Server) handleListAudit(w http.ResponseWriter, r *http.Request) {
+	limit := 200
+	if value := r.URL.Query().Get("limit"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 1 || parsed > 1000 {
+			writeJSON(w, 400, map[string]string{"error": "invalid limit"})
+			return
+		}
+		limit = parsed
+	}
+	rows, err := s.store.DB.QueryContext(r.Context(), `SELECT a.at,COALESCE(u.email,''),a.action,a.object_type,a.object_id,a.detail FROM audit a LEFT JOIN users u ON u.id=a.actor_user_id ORDER BY a.id DESC LIMIT ?`, limit)
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": "audit log unavailable"})
+		return
+	}
+	defer rows.Close()
+	type entry struct {
+		At         string `json:"at"`
+		ActorEmail string `json:"actor_email"`
+		Action     string `json:"action"`
+		ObjectType string `json:"object_type"`
+		ObjectID   string `json:"object_id"`
+		Detail     string `json:"detail"`
+	}
+	items := []entry{}
+	for rows.Next() {
+		var item entry
+		if err = rows.Scan(&item.At, &item.ActorEmail, &item.Action, &item.ObjectType, &item.ObjectID, &item.Detail); err != nil {
+			writeJSON(w, 500, map[string]string{"error": "audit log unavailable"})
+			return
+		}
+		items = append(items, item)
+	}
+	writeJSON(w, 200, map[string]any{"audit": items})
 }
 func (s *Server) handleLog(w http.ResponseWriter, r *http.Request) {
 	var log evidence.Log
@@ -853,6 +930,7 @@ func (s *Server) handleConversation(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
+	s.audit(r, "conversation_start", "conversation", fmt.Sprint(id), "post="+in.PostID)
 	writeJSON(w, 201, map[string]int64{"id": id})
 }
 func (s *Server) handleInvestigate(w http.ResponseWriter, r *http.Request) {
@@ -873,6 +951,7 @@ func (s *Server) handleInvestigate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
+	s.audit(r, "investigate", "conversation", fmt.Sprint(id), "question asked")
 	writeJSON(w, 200, response)
 }
 func (s *Server) handleRequestAction(w http.ResponseWriter, r *http.Request) {
@@ -888,6 +967,7 @@ func (s *Server) handleRequestAction(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
+	s.audit(r, "action_request", "action", fmt.Sprint(id), in.Type)
 	writeJSON(w, 201, map[string]int64{"id": id})
 }
 func (s *Server) handleListActions(w http.ResponseWriter, r *http.Request) {
@@ -908,6 +988,7 @@ func (s *Server) handleApproveAction(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 409, map[string]string{"error": err.Error()})
 		return
 	}
+	s.audit(r, "action_approve", "action", fmt.Sprint(id), "approved")
 	w.WriteHeader(204)
 }
 func (s *Server) handleExecuteAction(w http.ResponseWriter, r *http.Request) {
@@ -921,6 +1002,7 @@ func (s *Server) handleExecuteAction(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 409, map[string]string{"error": err.Error()})
 		return
 	}
+	s.audit(r, "action_execute", "action", fmt.Sprint(id), "executed")
 	writeJSON(w, 200, result)
 }
 func (s *Server) handleEnrollPeer(w http.ResponseWriter, r *http.Request) {
@@ -935,6 +1017,7 @@ func (s *Server) handleEnrollPeer(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
+	s.audit(r, "peer_enroll", "peer", in.ID, "enrolled")
 	writeJSON(w, 201, map[string]string{"id": in.ID, "secret": secret})
 }
 func (s *Server) handleListPeers(w http.ResponseWriter, r *http.Request) {
@@ -950,6 +1033,7 @@ func (s *Server) handleRevokePeer(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 409, map[string]string{"error": err.Error()})
 		return
 	}
+	s.audit(r, "peer_revoke", "peer", r.PathValue("id"), "revoked")
 	w.WriteHeader(http.StatusNoContent)
 }
 func (s *Server) handleFederation(w http.ResponseWriter, r *http.Request) {
@@ -977,6 +1061,7 @@ func (s *Server) handleSaveDeviceProfile(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
+	s.audit(r, "device_profile_save", "device_profile", in.ID, in.Kind+" "+in.Address)
 	w.WriteHeader(201)
 }
 func (s *Server) handleListDeviceProfiles(w http.ResponseWriter, r *http.Request) {
@@ -992,6 +1077,7 @@ func (s *Server) handleDeleteDeviceProfile(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, 404, map[string]string{"error": err.Error()})
 		return
 	}
+	s.audit(r, "device_profile_delete", "device_profile", r.PathValue("id"), "removed")
 	w.WriteHeader(http.StatusNoContent)
 }
 func (s *Server) handleListDeviceAdapters(w http.ResponseWriter, r *http.Request) {

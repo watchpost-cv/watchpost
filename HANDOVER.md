@@ -69,6 +69,17 @@ Central-check source identities are post-scoped `collector_keys` rows with
 kind `central_check` and a fixed, non-credential secret marker; `collectorhealth`
 filters them out of the connection view. Rules such as `http.ok < 1` now fire
 when a target is down. Recurring SNMP routing is R6.
+
+## Audit completeness
+
+R7 records every state-changing operation in the `audit` table with the acting
+user's identity: logins/logouts, posts and dependencies, collector enrollment
+and pairing tokens, agent pairing approval/rejection/revocation, rules, alert
+acknowledgement, notification routes, incidents, check schedules, device
+profiles, peers, action request/approval/execute and investigation starts.
+`GET /api/v1/audit` is administrator-only and the SPA exposes an Audit view.
+Audit rows are exempt from automatic retention; audit write failures are
+logged, never fatal.
 Host enrollment records an optional address or hostname, then pairs the
 bundled collector using an explicit Watchpost URL reachable from the post. The
 collector is outbound-only. Post editing is optimistic-concurrency protected;

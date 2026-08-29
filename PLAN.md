@@ -45,6 +45,13 @@ post-scoped `collector_keys` rows with kind `central_check` whose secret hash
 is a fixed marker; `collectorhealth` filters them out. A rule such as
 `http.ok < 1` fires when the target is down. Recurring SNMP routing is R6.
 
+R7 is complete: every state-changing operation now writes an attributed audit
+row (logins, posts, rules, pairing, approvals, actions, incidents, schedules,
+profiles, peers, investigation), `GET /api/v1/audit` exposes the record to
+administrators, and the SPA has an admin-only Audit view. Audit rows are
+exempt from automatic retention. Multi-user/password/session administration
+is R8.
+
 ## Agent architecture programme (WP-A01–WP-A18)
 
 WP-A01 accepted a separate `watchpost-agent` program with its own embedded
