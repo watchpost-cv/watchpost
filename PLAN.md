@@ -724,3 +724,430 @@ separate threat model and must never imply that Watchpost is a safety system.
 - Public release remains intentionally unperformed. Real runner smokes,
   multi-hour campaigns, external security review, and upgrade/rollback rehearsal
   must pass before a tag can honestly be called the first public release.
+
+## Proposed remaining product-level work (dogfooding and battle-hardening)
+
+Status: proposed for review only. None of these checkpoints is implemented.
+They are grouped under phase headings for orientation, but each checkpoint is a
+concrete unit that can be implemented, tested, documented, committed, and
+independently reviewed on its own. Ordering is dependency-aware: every
+checkpoint lists its explicit prerequisites, and no hidden prerequisite is
+left inside a later entry.
+
+Each checkpoint carries one or more execution classes. `AUTOMATABLE` can be
+completed with automated tooling inside an isolated coding environment.
+`HUMAN`, `REAL-ENV`, `REAL-DEVICE`, `ASSISTIVE-TECH`, and `SECURITY-REVIEW`
+require participants, hardware, real networks, assistive technology, or an
+external reviewer and cannot be honestly completed by an isolated coding agent.
+No checkpoint may be claimed complete without its required execution classes
+having actually run.
+
+Every implementation checkpoint requires: one focused commit per affected
+application repository; synchronized Nift source and generated website commits
+where documentation changes; README/plan/handover maintenance; focused tests
+plus relevant full gates; and clean repositories. No checkpoint is pushed
+until separately authorized.
+
+## Batch 1 — instrumentation and foundation
+
+### C1. Journey reset and evidence harness  `AUTOMATABLE`
+
+- Goal: any journey can be started from a clean, reproducible state in one
+  command and leaves a retained evidence record.
+- User problem: without a reset harness, observed issues cannot be attributed
+  to the product rather than to the harness.
+- Scope: reset and seed scripts, journey runner, screenshot/trace capture,
+  per-run evidence directories.
+- Prerequisites: none.
+- Test/dogfood environment: local harness; containerized where useful.
+- Fixtures: clean-state images, deterministic seeds.
+- Acceptance: a clean start in one command; evidence is retained per run.
+- Evidence retained: recorded journeys, traces, run manifests.
+- Repositories: watchpost, watchpost-agent, website.
+- Documentation/handover: runbook for reproduction and evidence.
+- Non-goals: product features; passing UX judgement.
+- Residual risk: harness artefacts can mask product issues.
+- Commit boundary: one commit per repo.
+
+### C2. Seeded fleets, deterministic clocks, failure injection, capture tooling  `AUTOMATABLE`
+
+- Goal: failure states and fleet scales are injectable and observable.
+- User problem: freshness, stale, rejected, and partial states cannot be
+  exercised without deterministic clocks and injection hooks.
+- Scope: fleet seed generators, deterministic clocks, failure-injection hooks,
+  browser and device coverage, accessibility scanner wiring.
+- Prerequisites: C1.
+- Test/dogfood environment: local harness.
+- Fixtures: seeded fleets at 25/100/250/500 posts; injection matrix.
+- Acceptance: every failure state in the matrix is injectable; seeds run in
+  one command; a11y scans run on the target pages.
+- Evidence retained: injection matrix, seed manifests, scan output.
+- Repositories: watchpost, watchpost-agent, website.
+- Documentation/handover: extension of the C1 runbook.
+- Non-goals: fixing the defects the tooling reveals.
+- Residual risk: synthetic data is not production traffic.
+- Commit boundary: one commit per repo.
+
+## Batch 2 — ordinary-user journey
+
+### C3. Ordinary-user local-web installation and pairing dogfood  `HUMAN` + `REAL-ENV`
+
+- Goal: people who did not implement Watchpost can install the agent from a
+  clean installation, open its local website, pair, and see first telemetry.
+- User problem: the agent being separate software and the pairing sequence are
+  the first usability risks for a new operator.
+- Scope: discovery of the agent, local web setup, creating or selecting a post,
+  pairing approval, first telemetry, finding graphs and rules, understanding
+  failure messages, recovering from mistakes.
+- Prerequisites: C1, C2.
+- Test/dogfood environment: a clean representative environment, such as a fresh
+  VM or a separate machine, with the agent installed through the documented
+  installer rather than a developer build tree; human participants.
+- Fixtures: C1 harness; consent and observation protocol.
+- Acceptance: recorded task completion and time; confusion points, abandoned
+  paths, and required support logged against an agreed completion rate.
+- Evidence retained: task logs, timings, confusion notes, support requests.
+- Repositories: watchpost, watchpost-agent, website.
+- Documentation/handover: Getting started, Posts, Agent architecture revised
+  from observed friction.
+- Non-goals: redesigning the product from one session; marketing claims.
+- Residual risk: small participant counts; results are directional.
+- Commit boundary: one commit per repo.
+
+### C4. Headless CLI and SSH installation and pairing dogfood  `HUMAN` + `REAL-ENV`
+
+- Goal: the CLI is a genuine peer for server, SSH, automation, configuration
+  management, and recovery workflows, proven on real headless hosts by operators
+  who did not write it.
+- User problem: the CLI surface is complete but unproven in real hands.
+- Scope: headless install, configure, pair, pair-status, rotation, unpair, and
+  reset flows over SSH and from scripts on a separate headless host or clean VM,
+  not by invoking commands inside the development checkout.
+- Prerequisites: C1, C2, C3.
+- Test/dogfood environment: a real headless host or clean VM reached over SSH;
+  human participants.
+- Fixtures: C1 harness; disposable headless targets.
+- Acceptance: completion and time recorded per CLI flow; confusion points and
+  support required logged; parity gaps with the web flow documented.
+- Evidence retained: session logs, timings, failure notes.
+- Repositories: watchpost-agent, website.
+- Documentation/handover: Agent architecture CLI surface.
+- Non-goals: inventing CLI features not needed by the journeys.
+- Residual risk: participants may be comfortable with CLIs, skewing results.
+- Commit boundary: one commit per repo.
+
+## Batch 3 — dense multi-post survey
+
+### C5. Dense survey backend, query, and render budgets at scale  `AUTOMATABLE`
+
+- Goal: survey queries and rendering meet latency budgets at 25/100/250/500
+  posts across the full state mix.
+- User problem: hierarchy and rendering degrade before a fleet grows.
+- Scope: query latency, graph density and decimation, animation load, render
+  latency, per-scale budgets.
+- Prerequisites: C2 (seed tooling).
+- Test/dogfood environment: local seeded fleets.
+- Fixtures: C2 seeds at all four scales with mixed states.
+- Acceptance: per-scale query and render latency budgets met; animation CPU
+  load bounded; trace tables retained per scale.
+- Evidence retained: latency tables, traces, screenshots at each scale.
+- Repositories: watchpost, website.
+- Documentation/handover: Collection survey section, Verification.
+- Non-goals: redesigning the whole UI.
+- Residual risk: synthetic fleets are not production traffic.
+- Commit boundary: one commit per repo.
+
+### C6. Dense survey hierarchy, scanning, grouping, filtering, and visual-health dogfood  `HUMAN`
+
+- Goal: operators can find critical and unknown posts quickly and read health
+  without relying on colour alone.
+- User problem: scan speed and information hierarchy are judged by humans, not
+  benchmarks.
+- Scope: information hierarchy, health-bar colour-independent meaning, scan
+  speed, sorting/filtering/grouping/search, responsive behaviour, prominence of
+  critical/unknown posts.
+- Prerequisites: C5.
+- Test/dogfood environment: local seeded fleets; human participants.
+- Fixtures: C2/C5 seeds; structured scan tasks.
+- Acceptance: structured scan tasks complete within agreed times; critical and
+  unknown posts are discoverable; colour-independent comprehension passes.
+- Evidence retained: task timings, notes, screenshots.
+- Repositories: watchpost, website.
+- Documentation/handover: Posts health section, Collection.
+- Non-goals: redesigning interactions not surfaced by the tasks.
+- Residual risk: synthetic fleets differ from production fleets.
+- Commit boundary: one commit per repo.
+
+## Batch 4 — lifecycle and failure recovery
+
+### C7. Post edit, archive, restore, and permanent-deletion UX and recovery  `HUMAN`
+
+- Goal: identity editing and destructive flows are forgiving and clearly
+  explained.
+- User problem: operators make mistakes and must understand what remains where.
+- Scope: editing display name/address/labels/ownership/maintenance; archive and
+  restore; permanent deletion with accidental-deletion protection; explanation
+  of what remains centrally and what is removed.
+- Prerequisites: C2 (failure injection), C3.
+- Test/dogfood environment: local; human recovery scenarios.
+- Fixtures: C2 injection matrix.
+- Acceptance: every flow has a tested path; destructive actions require
+  explicit confirmation; participants can recover from a mistaken action.
+- Evidence retained: scenario runbook and recorded outcomes.
+- Repositories: watchpost, website.
+- Documentation/handover: Posts lifecycle, Collection.
+- Non-goals: automating every recovery.
+- Residual risk: real-machine timing differs from local simulation.
+- Commit boundary: one commit per repo.
+
+### C8. Agent expiry, rejection, revocation, re-pair, replacement, reset, reinstall, and upgrade recovery  `AUTOMATABLE` + `HUMAN`
+
+- Goal: every agent lifecycle failure is recoverable and the operator
+  understands what remains on the machine and centrally.
+- User problem: expired pairing, wrong-post pairing, deleted posts, and lost
+  servers leave unclear state.
+- Scope: expired and consumed pairing, wrong-post pairing, re-pairing after
+  deletion, stale local credentials, server loss during pairing, agent loss
+  during rotation, reinstall over an active service, upgrade while running, and
+  recovery from the `text file busy` class of installation failure.
+- Prerequisites: C2, C3.
+- Test/dogfood environment: local multi-machine equivalent; human recovery
+  comprehension.
+- Fixtures: C2 failure-injection matrix.
+- Acceptance: every scenario has a defined recovery path and a test; the UX
+  explains what remains remote, what remains central, and what to do next.
+- Evidence retained: scenario runbook and recorded outcomes.
+- Repositories: watchpost, watchpost-agent, website.
+- Documentation/handover: Agent architecture, Posts lifecycle, Collection.
+- Non-goals: automating every recovery.
+- Residual risk: real-machine timing differs from local simulation.
+- Commit boundary: one commit per repo.
+
+## Batch 5 — alert authoring
+
+### C9. Rule semantics: missing, stale, bad-quality, recovery conditions, and historical preview  `AUTOMATABLE`
+
+- Goal: deterministic rule semantics for every quality state are explicit and
+  previewed against history.
+- User problem: thresholds, duration, missing/stale data, and bad quality are
+  hard to configure confidently.
+- Scope: signal selection, units, thresholds, duration, recovery conditions,
+  missing and stale data, bad quality, maintenance, preview against recent
+  history, example outcomes, validation, safe defaults.
+- Prerequisites: C2.
+- Test/dogfood environment: local.
+- Fixtures: seeded history for previews.
+- Acceptance: preview matches applied behaviour for every quality state; API
+  and semantic tests pass.
+- Evidence retained: rule examples and preview/apply comparisons.
+- Repositories: watchpost, website.
+- Documentation/handover: Rules and alerts, Collection.
+- Non-goals: non-deterministic rule engines.
+- Residual risk: preview cannot prove every future event.
+- Commit boundary: one commit per repo.
+
+### C10. Guided alert-authoring UI, templates, and human comprehension  `HUMAN`
+
+- Goal: an operator who has not seen the code can author and validate a
+  threshold rule with templates.
+- User problem: authoring guidance and templates are a comprehension problem,
+  not only an API problem.
+- Scope: guided editor, starter templates, editing and disabling, notification
+  distinction, alert-to-incident flow, comprehension tasks.
+- Prerequisites: C9.
+- Test/dogfood environment: local; human comprehension sessions.
+- Fixtures: C9 preview tooling; structured authoring tasks.
+- Acceptance: comprehension tasks complete with a threshold rule authored and
+  validated; preview matches applied behaviour.
+- Evidence retained: comprehension-session notes and rule examples.
+- Repositories: watchpost, website.
+- Documentation/handover: Rules and alerts.
+- Non-goals: weakening deterministic evaluation.
+- Residual risk: comprehension is subjective; use structured tasks.
+- Commit boundary: one commit per repo.
+
+## Batch 6 — device integrations
+
+### C11. SNMPv3 guided setup, connection testing, secrets, profiles, and polling health  `AUTOMATABLE` + `REAL-DEVICE`
+
+- Goal: SNMPv3 onboarding is guided and its health is explicit.
+- User problem: device onboarding requires deep protocol knowledge.
+- Scope: guided setup, connection testing, profile templates, OID explanation,
+  secret handling, polling health, device-specific survey presentation.
+- Prerequisites: C2.
+- Test/dogfood environment: device simulators; a real device where available.
+- Fixtures: SNMP simulators, test profiles.
+- Acceptance: a guided profile is created without manual OID expertise; polling
+  health distinguishes good, missing, stale, and failed.
+- Evidence retained: simulator and real-device evidence.
+- Repositories: watchpost, website.
+- Documentation/handover: Collection (SNMP), Security model.
+- Non-goals: new protocols.
+- Residual risk: real device behaviour exceeds simulators.
+- Commit boundary: one commit per repo.
+
+### C12. Network-device, UPS, and environmental read-only integration slices  `REAL-DEVICE`
+
+- Goal: read-only slices for network devices, UPS equipment, and environmental
+  sensors are proven in order.
+- User problem: these devices dominate fleet counts and need trustworthy
+  read-only coverage.
+- Scope: SNMPv3 network-device, UPS, and environmental sensor slices with
+  bounded OID profiles and survey presentation.
+- Prerequisites: C11.
+- Test/dogfood environment: lab or real devices.
+- Fixtures: device profiles and simulators.
+- Acceptance: each slice's read-only contract is proven with good/missing/
+  stale/failed distinctions; no write paths.
+- Evidence retained: per-slice integration evidence.
+- Repositories: watchpost, website.
+- Documentation/handover: Collection, Current limitations.
+- Non-goals: write or control paths.
+- Residual risk: device families vary beyond the tested set.
+- Commit boundary: one commit per repo.
+
+### C13. Camera availability and health, and bounded consumer-IoT observation  `REAL-DEVICE`
+
+- Goal: camera and consumer-IoT observation begin with availability and health,
+  not video ingestion.
+- User problem: cameras and IoT devices are requested but must not expand into
+  unbounded ingestion.
+- Scope: camera availability and health without video ingestion; bounded
+  consumer-IoT state observation.
+- Prerequisites: C11.
+- Test/dogfood environment: lab or real devices.
+- Fixtures: device simulators and profiles.
+- Acceptance: availability/health observations are bounded, read-only, and
+  shown in the survey; no video ingestion.
+- Evidence retained: per-device integration evidence.
+- Repositories: watchpost, website.
+- Documentation/handover: Collection, Current limitations.
+- Non-goals: video streaming or storage.
+- Residual risk: real camera and IoT behaviour varies.
+- Commit boundary: one commit per repo.
+
+### C14. PLC and building-control read-only research plus a separate control-command threat model  `AUTOMATABLE` + `SECURITY-REVIEW`
+
+- Goal: PLC and building-control reads are researched; control commands are
+  separated into a threat model with no writes implemented.
+- User problem: these devices are safety-adjacent and must never be handled as
+  ordinary monitoring actions.
+- Scope: read-only research for PLC and building-control reads; a separate
+  control-command threat model covering safety boundaries, authorization,
+  approval, idempotency, audit, verification, and simulation.
+- Prerequisites: C11.
+- Test/dogfood environment: research and review; no production devices.
+- Fixtures: threat-model document, protocol research notes.
+- Acceptance: reads are bounded and read-only; the control-command threat model
+  states Watchpost is not a safety controller, HMI, or SCADA replacement; no
+  write is implemented.
+- Evidence retained: threat model and research notes.
+- Repositories: watchpost, website.
+- Documentation/handover: Security model, Current limitations.
+- Non-goals: implementing writes or control commands.
+- Residual risk: safety-adjacent systems require external review before any
+  later control work.
+- Commit boundary: one commit per repo.
+
+## Batch 7 — real remote-agent administration
+
+### C15. Real Caddy and LAN remote-agent administration with negative proxy-spoof tests  `REAL-ENV`
+
+- Goal: the documented same-machine and remote-machine Caddy topologies work
+  over a real LAN.
+- User problem: the advanced remote-admin controls have not been exercised over
+  real paths.
+- Scope: Caddy termination, TLS, hostname and forwarded-protocol handling,
+  trusted and untrusted proxy peers, allow/deny CIDRs, expired bootstrap tokens,
+  secure cookies, CSRF and Origin behaviour, and negative tests proving spoofed
+  forwarding headers from untrusted peers are ineffective.
+- Prerequisites: C1, C2, and a real multi-machine network. Not dependent on the
+  device-integration batch.
+- Test/dogfood environment: two or more real hosts on a LAN; `REAL-ENV`.
+- Fixtures: C1 harness, TLS certs, Caddy.
+- Acceptance: negative spoof tests pass; remote setup and daily administration
+  work over the documented path; proxy restart and address change recover
+  gracefully.
+- Evidence retained: network traces, test matrix, cert/config records.
+- Repositories: watchpost, watchpost-agent, website.
+- Documentation/handover: Deployment, Caddy, Security model.
+- Non-goals: turning the agent into a general remote-management platform.
+- Residual risk: LAN topology is environment-specific.
+- Commit boundary: one commit per repo.
+
+### C16. Real nginx, VPN, and intermittent-network administration and recovery  `REAL-ENV`
+
+- Goal: the nginx topology and recovery over VPN and intermittent links are
+  proven.
+- User problem: intermittent connectivity and address changes are common and
+  untested over real paths.
+- Scope: nginx termination, VPN paths, latency and intermittent connectivity,
+  unreachable Watchpost, proxy restart, address changes, and recovery flows.
+- Prerequisites: C1, C2, C15, and a real multi-machine network.
+- Test/dogfood environment: real hosts over VPN; `REAL-ENV`.
+- Fixtures: C1 harness, TLS certs, nginx, VPN.
+- Acceptance: queueing and replay survive intermittent links; address change is
+  recovered; the negative proxy-spoof tests pass against nginx too.
+- Evidence retained: network traces, recovery timelines.
+- Repositories: watchpost, watchpost-agent, website.
+- Documentation/handover: Deployment, nginx, Agent architecture.
+- Non-goals: new transport protocols.
+- Residual risk: VPN and carrier behaviour vary.
+- Commit boundary: one commit per repo.
+
+## Batch 8 — UX, mobile, and accessibility
+
+### C17. Mobile, degraded-state, keyboard, screen-reader, contrast, zoom, and reduced-motion pass  `ASSISTIVE-TECH` + `HUMAN`
+
+- Goal: a dedicated pass over the full accessibility and degraded-state surface.
+- User problem: accessibility and degraded states cannot be judged from the
+  happy path.
+- Scope: keyboard-only operation, focus order and visibility, dialogs and
+  destructive confirmations, labels and error association, screen-reader
+  semantics, colour contrast, colour-independent health communication, reduced
+  motion, narrow mobile layouts, dense desktop layouts, zoom and text resizing,
+  and empty/loading/stale/offline/partial/rejected/permission-denied/
+  server-error states.
+- Prerequisites: C5, C6 (layouts), C2 tooling.
+- Test/dogfood environment: real assistive technology; `ASSISTIVE-TECH`.
+- Fixtures: automated a11y scanners, screen readers, keyboard-only sessions.
+- Acceptance: checklist passes with both automated and manual evidence; a clean
+  automated scan is not completion.
+- Evidence retained: scan reports and manual-test notes.
+- Repositories: watchpost, website.
+- Documentation/handover: release notes.
+- Non-goals: redesigning interactions not surfaced by the pass.
+- Residual risk: assistive-technology combinations vary.
+- Commit boundary: one commit per repo. Split if acceptance criteria grow
+  beyond one reviewable unit.
+
+## Batch 9 — production operations
+
+### C18. Production operations exercise and explicit release-readiness decision  `REAL-ENV` + `SECURITY-REVIEW`
+
+- Goal: an explicit release-readiness review over production-shaped deployment
+  evidence.
+- User problem: production claims require operational proof, not unit tests.
+- Scope: TLS deployment, trusted-network and proxy configuration, least-
+  privilege service accounts, filesystem permissions, secret rotation, backup
+  scheduling, restore onto a clean machine, upgrade and rollback from retained
+  release artifacts, database growth and retention, storage exhaustion, clock
+  skew, log rotation, restart behaviour, monitoring of Watchpost itself,
+  incident response for a lost or compromised agent, and published support and
+  platform boundaries.
+- Prerequisites: all earlier batches' evidence; a real deployment; external
+  security review where the risk assessment requires it.
+- Test/dogfood environment: real deployment; `REAL-ENV`.
+- Fixtures: retained artifacts, clean restore machines.
+- Acceptance: every listed area has a recorded outcome; the review states
+  passed gates, blocked gates, accepted risks, and remaining non-claims. The
+  release-readiness decision is a separate explicit record inside this
+  checkpoint's evidence, not an implied conclusion.
+- Evidence retained: the review document and its supporting records.
+- Repositories: watchpost, watchpost-agent, website.
+- Documentation/handover: Deployment, Verification and hardening, Current
+  limitations, release notes.
+- Non-goals: claiming readiness the review does not support.
+- Residual risk: real environments differ from reviewed ones.
+- Commit boundary: one commit per repo. Split the operations exercise from the
+  release-readiness decision if needed.

@@ -484,3 +484,29 @@ arm64 unless a target is deliberately unsupported and documented.
 The public website lives in the sibling `watchpost-ops.github.io` repository.
 Its `HANDOVER.md` governs website changes. Product claims on that site must stay
 aligned with actual milestones recorded here and in `PLAN.md`.
+
+## Proposed remaining-work checkpoints
+
+`PLAN.md` carries a proposed, dependency-ordered plan of eighteen concrete
+checkpoints (C1-C18) grouped under phase headings: instrumentation (C1-C2),
+ordinary-user journey (C3-C4), dense survey (C5-C6), lifecycle and failure
+recovery (C7-C8), alert authoring (C9-C10), device integrations (C11-C14),
+real remote-agent administration (C15-C16), UX/mobile/accessibility (C17),
+and production operations with an explicit release-readiness decision (C18).
+It is proposed for review, not implemented.
+
+Every checkpoint carries execution classes. `AUTOMATABLE` can be completed
+with automated tooling in an isolated environment. `HUMAN`, `REAL-ENV`,
+`REAL-DEVICE`, `ASSISTIVE-TECH`, and `SECURITY-REVIEW` require participants,
+hardware, real networks, assistive technology, or an external reviewer and
+cannot be honestly completed by an isolated coding agent. No checkpoint may be
+claimed complete without its required classes actually running.
+
+The remote-administration checkpoints (C15-C16) depend on the journey and
+failure harness and a real multi-machine network, not on the device-integration
+batch. PLC and building-control commands remain a separate threat-model track
+with no writes implemented (C14).
+
+The public website documents this status on the Posts, Security model,
+Verification and hardening, and Current limitations pages; those pages must
+stay aligned with `PLAN.md` when a checkpoint lands.
