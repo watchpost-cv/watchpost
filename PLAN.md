@@ -22,8 +22,14 @@ Telemetry and log ingestion fail closed with HTTP 507 after collector
 authentication, an immediate retention pass runs when the node is over budget,
 and the SPA shows a storage warning. `GET /api/v1/storage` is an authenticated
 diagnostic; the footprint is also reported in `/api/v1/diagnostics`. The agent
-surfaces a 507 distinctly as "Watchpost storage is full". Sustained capacity
-verification belongs to R3.
+surfaces a 507 distinctly as "Watchpost storage is full".
+
+R3 is complete: `hardening/long-run.sh` runs a race-built server and collector
+with retention at a window shorter than the soak and proves the database
+footprint stays flat once pruning catches the ingestion rate (90s local soak:
+`db_bytes=331776 mid=331776 flat_growth=true`). The CI 15s soak enforces the
+hard ceilings; flat-growth evidence requires the longer local run. See
+`docs/scale-evidence.md`.
 
 ## Agent architecture programme (WP-A01–WP-A18)
 

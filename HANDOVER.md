@@ -41,6 +41,15 @@ diagnostic; the footprint is also reported in `/api/v1/diagnostics`. The agent
 surfaces a 507 distinctly as "Watchpost storage is full". The guarantee is
 that no loss is silent: Watchpost rejects explicitly, agents retry within
 bounded storage, and any eventual queue loss is counted and displayed.
+
+## Sustained capacity
+
+R3 extends `hardening/long-run.sh` to run retention at a window shorter than
+the soak and assert the database footprint stops growing once pruning catches
+the ingestion rate. Flat-growth is enforced only when the soak outlives twice
+the retention window, so the CI 15-second soak checks ceilings while the
+longer local run produces the flat-growth evidence (90s soak with 15s
+retention: db stable at 331,776 bytes). See `docs/scale-evidence.md`.
 Host enrollment records an optional address or hostname, then pairs the
 bundled collector using an explicit Watchpost URL reachable from the post. The
 collector is outbound-only. Post editing is optimistic-concurrency protected;
