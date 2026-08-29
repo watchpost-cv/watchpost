@@ -127,8 +127,17 @@ R16 is complete: the canonical host signal registry is frozen in
 `internal/contract` (`HostSignals`) and the installed agent now emits exactly
 those signals (`load.1/5/15`, `collector.up`, canonical disk/filesystem
 signals). Historical rows are never rewritten; a bounded alias layer maps the
-deprecated `load.one` to `load.1` for rules and history queries. Removal of
-the bundled legacy collector is R17.
+deprecated `load.one` to `load.1` for rules and history queries.
+
+R17 is complete: the bundled legacy collector lifecycle is removed.
+`watchpost collector pair/run/install/status/logs/uninstall` and the
+`internal/collectorclient` and `internal/collectorservice` packages are gone;
+`collector sample` remains as read-only host diagnostics, and the v1 batch
+contract at `/api/collector/v1/observations` stays because the agent delivers
+through it. The SPA no longer has a v1 pairing view; host enrollment points to
+the agent install/pair/approve journey. The host-journey and long-run hardening
+gates were rewritten to drive the v2 agent flow through the API. Online backup
+and key/restore semantics are R18a.
 
 ## Agent architecture programme (WP-A01–WP-A18)
 

@@ -31,32 +31,20 @@ cd web && nift build && nift status && cd ..
 committed dist matches the canonical source, and `hardening/spa-gate.sh`
 proves a full regeneration produces no diff.
 
-On Linux, inspect the host signals produced by the bundled collector sampler:
+On Linux, inspect the canonical host signals with the host sampler:
 
 ```sh
 ./watchpost collector sample
 ```
 
-For a monitored host, use **Add a machine or device** in the SPA. Record a
-hostname or IP for inventory and active checks, choose **Host**, then generate
-the one-use pairing commands. Set the Watchpost URL to an address reachable
-from that machine (remote machines cannot use `127.0.0.1`). Copy the compiled
-binary to the post, run the pairing commands there, and install the service.
-The collector initiates outbound delivery of CPU, memory, disk, load, uptime,
-and health signals; it does not expose an inbound management port.
-
-After pairing, install and inspect a per-user systemd collector service:
-
-```sh
-./watchpost collector install
-./watchpost collector status
-./watchpost collector logs
-./watchpost collector uninstall
-```
-
-Use `--system` as root for an explicit machine-wide service. The installer
-copies the binary to a stable location; it does not depend on the downloaded
-binary remaining in the current directory.
+Host monitoring is delivered by the separately installed Watchpost Agent (see
+the sibling `watchpost-agent` repository). The bundled collector lifecycle was
+removed (R17); the agent is the supported host-monitoring path. For a monitored
+host, use **Add a machine or device** in the SPA to create a host post, then
+install and run the agent on the machine, request pairing from the agent's
+local interface or CLI, and approve the matching phrase here. The agent
+initiates outbound delivery of CPU, memory, disk, load, uptime and health
+signals; it does not expose an inbound management port.
 
 The local queue is limited to 256 batches or 8 MiB. It survives restart,
 replays in sequence, removes only acknowledged batches, and reports saturation

@@ -71,7 +71,8 @@ reset and uninstall remain separate operations.
 
 ## Compatibility direction
 
-The existing bundled `watchpost collector` commands are a transitional
-compatibility path. New development belongs in the sibling `watchpost-agent`
-repository. Migration must preserve existing post evidence while rotating old
-collector credentials into opaque agent-installation identities.
+The bundled `watchpost collector` lifecycle commands were removed in R17; the
+separate `watchpost-agent` program is the supported host-monitoring delivery
+path. The `collector sample` host-diagnostics command and the v1 batch contract
+at `/api/collector/v1/observations` remain, and the server-side alias layer
+keeps legacy signal names readable for existing local data.

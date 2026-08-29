@@ -3,7 +3,7 @@
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const state = { csrf: "", user: null, posts: [], collectors: [], agentConnections: [], rules: [], checkSchedules: [], deviceProfiles: [], deviceAdapters: [], devicePresets: [], alerts: [], incidents: [], agentRequests: [], storage: null, postLimit: 50 };
-const routes = new Set(["overview", "survey", "posts", "edit-post", "enroll", "collectors", "checks", "history", "rules", "evidence", "investigate", "actions", "incidents", "devices", "fleet", "audit", "users", "account"]);
+const routes = new Set(["overview", "survey", "posts", "edit-post", "enroll", "checks", "history", "rules", "evidence", "investigate", "actions", "incidents", "devices", "fleet", "audit", "users", "account"]);
 
 async function request(path, options = {}) {
   const config = { ...options, headers: { ...(options.body ? { "Content-Type": "application/json" } : {}), ...(options.headers || {}) } };
@@ -78,7 +78,7 @@ async function loadCore() {
   state.deviceAdapters = results[9].status === "fulfilled" ? results[9].value.adapters : [];
   state.devicePresets = results[10].status === "fulfilled" ? results[10].value.presets : [];
   state.storage = results[11].status === "fulfilled" ? results[11].value : null;
-  updatePostSelects(); renderOverview(); renderPosts(); renderIncidents(); renderCollectorHealth(); renderAgentRequests(); renderRuleInventory(); renderCheckSchedules(); renderDeviceProfiles(); renderStorageWarning();
+  updatePostSelects(); renderOverview(); renderPosts(); renderIncidents(); renderAgentRequests(); renderRuleInventory(); renderCheckSchedules(); renderDeviceProfiles(); renderStorageWarning();
   if (failures.length) showMessage(`${failures.length} workspace section${failures.length === 1 ? "" : "s"} could not be loaded. Available data is still shown.`, "error");
 }
 
@@ -126,7 +126,6 @@ function route() {
   if (current === "audit") renderAudit();
   if (current === "users") renderUsers();
   if (current === "edit-post") renderPostEditor(new URLSearchParams(location.hash.split("?")[1] || "").get("id"));
-  if (current === "collectors" && !$('#collector [name="server_url"]').value) $('#collector [name="server_url"]').value = location.origin;
 }
 
 function updatePostSelects() {
@@ -137,7 +136,7 @@ function updatePostSelects() {
 function renderOverview() {
   const firing = state.alerts.filter(alert => alert.state === "firing").length;
   const open = state.incidents.filter(incident => (incident.Status || incident.status) !== "resolved").length;
-  $("#summary").innerHTML = [[state.posts.length, "Posts"], [firing, "Firing alerts"], [open, "Open incidents"], [state.collectors.filter(item => ["offline", "stale", "rejected"].includes(item.status)).length, "Collector issues"]].map(([value, label]) => `<div class="summary-card"><strong>${value}</strong><span>${label}</span></div>`).join("");
+  $("#summary").innerHTML = [[state.posts.length, "Posts"], [firing, "Firing alerts"], [open, "Open incidents"], [state.agentConnections.filter(item => ["offline", "stale", "rejected"].includes(item.status)).length, "Agent issues"]].map(([value, label]) => `<div class="summary-card"><strong>${value}</strong><span>${label}</span></div>`).join("");
   $("#overview-posts").innerHTML = state.posts.length ? state.posts.slice(0, 5).map(postRow).join("") : stateBox("No posts yet", "Enroll the first system, service, or device to begin monitoring.");
   const evidence = [...state.alerts.slice(0, 3).map(alert => `<div class="evidence-row"><div><h3>${escapeHTML(title(alert.severity))} alert</h3><p>${escapeHTML(alert.post_id)} · ${escapeHTML(alert.state)}</p></div><span class="badge ${alert.severity === "critical" ? "danger" : "warning"}">${escapeHTML(alert.state)}</span></div>`), ...state.incidents.slice(0, 3).map(incident => `<div class="incident-row"><div><h3>${escapeHTML(incident.Title || incident.title)}</h3><p>${escapeHTML(incident.Severity || incident.severity)}</p></div><span class="badge">${escapeHTML(incident.Status || incident.status)}</span></div>`)];
   $("#overview-evidence").innerHTML = evidence.length ? evidence.join("") : stateBox("Nothing active", "Alerts and incidents will appear here when evidence requires attention.");
@@ -244,10 +243,6 @@ function renderIncidents() {
   $("#incidents").innerHTML = state.incidents.length ? state.incidents.map(incident => `<article class="incident-row"><div><h3>${escapeHTML(incident.Title || incident.title)}</h3><p>${escapeHTML(incident.Severity || incident.severity)} · ${escapeHTML(incident.Status || incident.status)}</p></div></article>`).join("") : stateBox("No incidents", "Open an incident when related evidence needs durable coordination.");
 }
 
-function renderCollectorHealth() {
-  $("#collector-health").innerHTML = state.collectors.length ? state.collectors.map(item => `<article class="post-row"><div><h3>Collector ${escapeHTML(item.collector_id)}</h3><p>Post <code>${escapeHTML(item.post_id)}</code> · ${item.last_seen_at ? `last received ${escapeHTML(new Date(item.last_seen_at).toLocaleString())}` : "no observations received"}</p>${item.last_error ? `<p>${escapeHTML(item.last_error)}</p>` : ""}</div><span class="badge ${["offline", "rejected"].includes(item.status) ? "danger" : item.status === "healthy" ? "" : "warning"}">${escapeHTML(title(item.status))}</span></article>`).join("") : stateBox("No collectors paired", "Pair a collector to begin receiving host telemetry.");
-}
-
 async function renderAudit() {
   const target = $("#audit-log");
   target.innerHTML = stateBox("Loading audit log", "Reading the attributed operation record.", "loading");
@@ -308,54 +303,13 @@ $("#refresh-survey").addEventListener("click", renderSurvey);
 
 $("#post-filter").addEventListener("input", () => { state.postLimit = 50; renderPosts(); });
 $("#more-posts").addEventListener("click", () => { state.postLimit += 50; renderPosts(); });
-$("#posts").addEventListener("click", async event => { const button = event.target.closest("[data-post-action]"); if (!button) return; const post = state.posts.find(item => item.id === button.closest("[data-post-id]").dataset.postId), action = button.dataset.postAction; if (action === "edit") { location.hash = `#/edit-post?id=${encodeURIComponent(post.id)}`; return; } if (action === "connect") { location.hash = "#/collectors"; setTimeout(() => { $('#collector [name="post"]').value = post.id; }, 0); return; } if(action==="revoke-agent"){if(!confirm(`Revoke ${button.dataset.agentId} from ${post.name}?`))return;try{await request(`/api/v1/agent-connections/${encodeURIComponent(button.dataset.agentId)}/revoke`,{method:"POST",headers:{"X-Watchpost-CSRF":state.csrf}});await loadCore();showMessage("Agent authority revoked. Unpair the local agent before pairing it again.")}catch(error){showMessage(error.message,"error")}return} try { button.disabled = true; await updatePost(post, action === "maintenance" ? { maintenance: !post.maintenance } : { archived: !post.archived }); } catch (error) { showMessage(error.message, "error"); } });
+$("#posts").addEventListener("click", async event => { const button = event.target.closest("[data-post-action]"); if (!button) return; const post = state.posts.find(item => item.id === button.closest("[data-post-id]").dataset.postId), action = button.dataset.postAction; if (action === "edit") { location.hash = `#/edit-post?id=${encodeURIComponent(post.id)}`; return; } if (action === "connect") { location.hash = "#/enroll"; showMessage("Install the Watchpost Agent on this host and request pairing from its local interface or CLI, then approve it here."); return; } if(action==="revoke-agent"){if(!confirm(`Revoke ${button.dataset.agentId} from ${post.name}?`))return;try{await request(`/api/v1/agent-connections/${encodeURIComponent(button.dataset.agentId)}/revoke`,{method:"POST",headers:{"X-Watchpost-CSRF":state.csrf}});await loadCore();showMessage("Agent authority revoked. Unpair the local agent before pairing it again.")}catch(error){showMessage(error.message,"error")}return} try { button.disabled = true; await updatePost(post, action === "maintenance" ? { maintenance: !post.maintenance } : { archived: !post.archived }); } catch (error) { showMessage(error.message, "error"); } });
 
 $("#edit-post").addEventListener("submit", async event => { event.preventDefault(); const form = event.currentTarget, values = formJSON(form), post = state.posts.find(item => item.id === values.id); setBusy(form, true); try { await updatePost(post, { name: values.name, address: values.address, owner: values.owner, maintenance: form.elements.maintenance.checked, archived: form.elements.archived.checked }); location.hash = "#/posts"; showMessage(`${values.name} updated.`); } catch (error) { showMessage(error.message, "error"); } finally { setBusy(form, false); } });
 $("#delete-post").addEventListener("submit", async event => { event.preventDefault(); const form = event.currentTarget, values = formJSON(form), id = $("#edit-post").elements.id.value; if (values.confirm_id !== id) { showMessage(`Type ${id} exactly to confirm.`, "error"); return; } setBusy(form, true); try { await request(`/api/v1/posts/${encodeURIComponent(id)}`, { method: "DELETE", headers: { "X-Watchpost-CSRF": state.csrf }, body: JSON.stringify({ confirm_id: values.confirm_id }) }); await loadCore(); location.hash = "#/posts"; showMessage(`${id} and its post-scoped data were permanently deleted.`); } catch (error) { showMessage(error.message, "error"); } finally { setBusy(form, false); } });
 
 const postWizard = setupWizard("post", "[data-step]", "#post-steps", "#post-back", "#post-next", "#post-submit", () => { const values = formJSON($("#create")); $("#post-review").innerHTML = `<dt>ID</dt><dd><code>${escapeHTML(values.id)}</code></dd><dt>Name</dt><dd>${escapeHTML(values.name)}</dd><dt>Address</dt><dd>${escapeHTML(values.address || "Not specified")}</dd><dt>Kind</dt><dd>${escapeHTML(title(values.kind))}</dd><dt>Starter rules</dt><dd>${values.starter_rules ? "CPU 90%, memory 90%, disk 85%" : "None"}</dd>`; });
-$("#create").addEventListener("submit", async event => { event.preventDefault(); const form = event.currentTarget, values = formJSON(form), starterRules = values.starter_rules === "on", post = { id: values.id, name: values.name, address: values.address, kind: values.kind, labels: {} }; setBusy(form, true); try { await request("/api/v1/posts", { method: "POST", headers: { "X-Watchpost-CSRF": state.csrf }, body: JSON.stringify(post) }); if (starterRules && post.kind === "host") { const definitions = [["cpu", "cpu.percent", 90, 300], ["memory", "memory.percent", 90, 300], ["disk", "disk.percent", 85, 0]]; for (const [name, Signal, Threshold, DurationSeconds] of definitions) await request("/api/v1/rules", { method: "POST", headers: { "X-Watchpost-CSRF": state.csrf }, body: JSON.stringify({ ID: `${post.id}-${name}-high`, PostID: post.id, Signal, Operator: "gt", Threshold, DurationSeconds, MissingPolicy: "unknown", Severity: "warning" }) }); } form.reset(); postWizard.reset(); await loadCore(); location.hash = post.kind === "host" ? "#/collectors" : "#/posts"; if (post.kind === "host") { $('#collector [name="post"]').value = post.id; $('#collector [name="server_url"]').value ||= location.origin; showMessage(`${post.name} enrolled. Install its collector next.`); } else showMessage(`${post.name} enrolled.`); } catch (error) { showMessage(error.message, "error"); } finally { setBusy(form, false); } });
-
-$("#collector").addEventListener("submit", async event => {
-  event.preventDefault();
-  const form = event.currentTarget, values = formJSON(form), output = $("#collector-result");
-  output.hidden = false;
-  output.innerHTML = stateBox("Creating pairing token", "Preparing a short-lived one-use command.", "loading");
-  setBusy(form, true);
-  try {
-    const result = await request(`/api/v1/posts/${encodeURIComponent(values.post)}/pairing-tokens`, { method: "POST", headers: { "X-Watchpost-CSRF": state.csrf }, body: JSON.stringify({}) });
-    const server = values.server_url.replace(/\/$/, ""), command = `./watchpost collector pair --server ${server} --token ${result.token}\n./watchpost collector install`;
-    output.innerHTML = `<h2>Pair within 10 minutes</h2><ol><li>Copy the compiled <code>watchpost</code> binary to the monitored Linux machine (for this machine, use the binary you already started).</li><li>Run the commands below as the account that should own the collector service.</li><li>Keep this page open until the first sample is confirmed.</li></ol><pre class="secret-block"><code>${escapeHTML(command)}</code></pre><button id="copy-collector" class="quiet-button" type="button">Copy commands</button><p class="callout">The collector makes outbound HTTPS requests to <code>${escapeHTML(server)}</code>. The post address is inventory; no inbound agent port is opened.</p><div id="pairing-status" class="pairing-status callout">Waiting for the first accepted telemetry batch…</div>`;
-    $("#copy-collector").onclick = async () => { await navigator.clipboard.writeText(command); showMessage("Pairing commands copied."); };
-    clearInterval(state.pairingPoll);
-    const started = Date.now(), connectedStatuses = new Set(["healthy", "stale", "skewed", "partial"]);
-    state.pairingPoll = setInterval(async () => {
-      const status = $("#pairing-status");
-      if (!status) { clearInterval(state.pairingPoll); return; }
-      if (Date.now() - started > 10 * 60 * 1000) {
-        clearInterval(state.pairingPoll);
-        status.innerHTML = `<strong>Pairing window ended.</strong> The commands remain above for reference, but an unused token has now expired. Generate fresh commands before pairing again.`;
-        return;
-      }
-      try {
-        const health = await request("/api/v1/collectors"), collector = health.collectors.find(item => item.post_id === values.post);
-        state.collectors = health.collectors;
-        renderCollectorHealth();
-        if (!collector) return;
-        if (collector.status === "rejected") {
-          status.innerHTML = `<strong>Collector rejected.</strong> The running service is using credentials Watchpost did not accept. With the new installer, run <code>./watchpost collector install</code> again to atomically replace and restart it; generate a fresh token only if pairing itself did not succeed.`;
-          return;
-        }
-        if (connectedStatuses.has(collector.status) && collector.last_seen_at && Date.parse(collector.last_seen_at) >= started - 5000) {
-          clearInterval(state.pairingPoll);
-          status.innerHTML = `<strong>Collector connected.</strong> The first telemetry batch was accepted for <code>${escapeHTML(values.post)}</code>. Health: ${escapeHTML(title(collector.status))}. <span class="inline-actions"><a href="#/survey">View resource survey</a> · <a href="#/rules">Review rules</a></span>`;
-        }
-      } catch {}
-    }, 3000);
-  } catch (error) {
-    output.innerHTML = stateBox("Pairing token failed", error.message, error.message.includes("permission") ? "permission" : "error");
-  } finally { setBusy(form, false); }
-});
+$("#create").addEventListener("submit", async event => { event.preventDefault(); const form = event.currentTarget, values = formJSON(form), starterRules = values.starter_rules === "on", post = { id: values.id, name: values.name, address: values.address, kind: values.kind, labels: {} }; setBusy(form, true); try { await request("/api/v1/posts", { method: "POST", headers: { "X-Watchpost-CSRF": state.csrf }, body: JSON.stringify(post) }); if (starterRules && post.kind === "host") { const definitions = [["cpu", "cpu.percent", 90, 300], ["memory", "memory.percent", 90, 300], ["disk", "disk.percent", 85, 0]]; for (const [name, Signal, Threshold, DurationSeconds] of definitions) await request("/api/v1/rules", { method: "POST", headers: { "X-Watchpost-CSRF": state.csrf }, body: JSON.stringify({ ID: `${post.id}-${name}-high`, PostID: post.id, Signal, Operator: "gt", Threshold, DurationSeconds, MissingPolicy: "unknown", Severity: "warning" }) }); } form.reset(); postWizard.reset(); await loadCore(); location.hash = "#/posts"; if (post.kind === "host") { showMessage(`${post.name} enrolled. Install the Watchpost Agent on it, request pairing from the agent, then approve it here under Add a post.`); } else showMessage(`${post.name} enrolled.`); } catch (error) { showMessage(error.message, "error"); } finally { setBusy(form, false); } });
 
 $("#check").addEventListener("submit", async event => { event.preventDefault(); const form = event.currentTarget, output = $("#check-result"); setBusy(form, true); output.hidden = false; output.innerHTML = stateBox("Running check", "Waiting for the target to respond.", "loading"); try { const result = await request("/api/v1/checks", { method: "POST", headers: { "X-Watchpost-CSRF": state.csrf }, body: JSON.stringify(formJSON(form)) }); output.innerHTML = `<h2>${result.ok ? "Check healthy" : "Check failed"}</h2><dl class="review-list"><dt>Result</dt><dd>${result.ok ? "Target responded successfully" : escapeHTML(result.failure || "Unknown failure")}</dd><dt>Latency</dt><dd>${escapeHTML(result.latency || "Not available")}</dd></dl>`; output.classList.toggle("permission-state", !result.ok); } catch (error) { output.innerHTML = stateBox("Check unavailable", error.message, error.message.includes("permission") ? "permission" : "error"); } finally { setBusy(form, false); } });
 

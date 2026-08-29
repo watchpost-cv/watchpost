@@ -185,9 +185,20 @@ R16 freezes the host signal registry (`internal/contract.HostSignals`):
 agent now emits exactly these. Historical rows are never rewritten; a bounded
 alias layer maps deprecated `load.one` to `load.1` in rules and history
 queries.
+
+## Legacy collector removal
+
+R17 removes the bundled collector lifecycle (`collector pair/run/install/
+status/logs/uninstall` and the `internal/collectorclient`/`internal/
+collectorservice` packages). `collector sample` stays as read-only host
+diagnostics; the v1 batch endpoint remains because the agent delivers through
+it. The SPA's v1 pairing view is gone — host enrollment points to the agent
+install/pair/approve journey. `host-journey.sh` and `long-run.sh` now drive
+the v2 agent flow through the API.
 Host enrollment records an optional address or hostname, then pairs the
-bundled collector using an explicit Watchpost URL reachable from the post. The
-collector is outbound-only. Post editing is optimistic-concurrency protected;
+separately installed Watchpost Agent through request/approval against an
+explicit Watchpost URL reachable from the post. The
+agent is outbound-only. Post editing is optimistic-concurrency protected;
 permanent deletion is administrator-only, requires the exact post ID, is
 audited, and removes post-scoped evidence and credentials. Preserve the clear
 archive-versus-delete distinction.

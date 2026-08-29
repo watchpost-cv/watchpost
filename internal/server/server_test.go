@@ -62,7 +62,7 @@ func TestDashboardUXContracts(t *testing.T) {
 		return w.Body.String()
 	}
 	html := read("/")
-	for _, required := range []string{"id=\"logout\"", "minlength=\"7\"", "data-view=\"enroll\"", "data-view=\"collectors\"", "starter_rules", "data-view=\"checks\"", "data-view=\"devices\"", "data-view=\"fleet\"", "class=\"resize-handle\""} {
+	for _, required := range []string{"id=\"logout\"", "minlength=\"7\"", "data-view=\"enroll\"", "data-view=\"checks\"", "starter_rules", "data-view=\"devices\"", "data-view=\"fleet\"", "class=\"resize-handle\""} {
 		if !strings.Contains(html, required) {
 			t.Errorf("dashboard missing %s", required)
 		}
