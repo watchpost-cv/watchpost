@@ -100,6 +100,15 @@ demote their own account. The post `owner` field is metadata only; evidence
 is not owner-isolated. Session administration and password rotation are
 audited.
 
+## Pairing hand-off recovery
+
+If an agent crashes after Watchpost marks its pairing request consumed but
+before the agent persists the credential, the next poll with the same request
+secret reissues a fresh credential — but only while the existing credential is
+provably unused (never delivered). A credential that has been used is never
+rotated by a re-poll, so a spurious re-poll cannot break a working connection.
+Expired requests are not reissued; the agent must request a new pairing.
+
 ## Storage capacity contract
 
 Watchpost measures its total SQLite footprint — `watchpost.db` plus the

@@ -68,6 +68,12 @@ metadata only; no owner-isolated evidence model exists. User administration
 and password rotation are audited. The SPA exposes a Users view (admin) and an
 Account view (password rotation) for every role.
 
+R10 is complete: pairing hand-off is recoverable. If an agent crashes after
+its pairing request is consumed but before the credential is persisted, the
+next poll with the same request secret reissues a fresh credential while the
+previous one is provably unused; a used credential is never rotated by a
+re-poll. Rotation's overlap-and-confirm protocol is R11.
+
 ## Agent architecture programme (WP-A01–WP-A18)
 
 WP-A01 accepted a separate `watchpost-agent` program with its own embedded

@@ -242,8 +242,20 @@ func (s *Service) Poll(ctx context.Context, id, secret string) (Enrollment, erro
 	if !now.Before(expiresAt) {
 		return Enrollment{State: "expired"}, nil
 	}
-	if state != "approved" {
+	if state == "rejected" || state == "pending" {
 		return Enrollment{State: state}, nil
+	}
+	if state == "consumed" {
+		// Recoverable handoff: the credential was consumed but may never have
+		// been persisted by the agent (crash between approve and store).
+		credential, err := s.reissueUnused(ctx, tx, id, hash[:])
+		if err != nil {
+			return Enrollment{}, err
+		}
+		if err = tx.Commit(); err != nil {
+			return Enrollment{}, err
+		}
+		return Enrollment{State: "approved", PostID: postID, CollectorID: installationID, Credential: credential}, nil
 	}
 	credential, err := random(32)
 	if err != nil {
@@ -264,12 +276,46 @@ func (s *Service) Poll(ctx context.Context, id, secret string) (Enrollment, erro
 	}
 	count, _ := result.RowsAffected()
 	if count != 1 {
-		return Enrollment{}, errors.New("pairing request already consumed")
+		return Enrollment{}, errors.New("pairing request unavailable")
 	}
 	if err = tx.Commit(); err != nil {
 		return Enrollment{}, err
 	}
 	return Enrollment{State: "approved", PostID: postID, CollectorID: installationID, Credential: credential}, nil
+}
+
+// reissueUnused returns a fresh credential for a consumed pairing request when
+// the previously issued credential was never delivered. It refuses to rotate a
+// credential that has been used or is unknown.
+func (s *Service) reissueUnused(ctx context.Context, tx *sql.Tx, id string, requestSecretHash []byte) (string, error) {
+	var state, postID, installationID, expires string
+	if err := tx.QueryRowContext(ctx, `SELECT state,COALESCE(post_id,''),installation_id,expires_at FROM agent_pairing_requests WHERE id=? AND request_secret_hash=?`, id, requestSecretHash).Scan(&state, &postID, &installationID, &expires); err != nil {
+		return "", errors.New("pairing request unavailable")
+	}
+	if state != "consumed" {
+		return "", errors.New("pairing request unavailable")
+	}
+	expiresAt, _ := time.Parse(time.RFC3339Nano, expires)
+	if !s.now().UTC().Before(expiresAt) {
+		return "", errors.New("pairing request expired")
+	}
+	var seen sql.NullString
+	var last int64
+	if err := tx.QueryRowContext(ctx, `SELECT last_seen_at,COALESCE(last_sequence,0) FROM collector_keys WHERE id=?`, installationID).Scan(&seen, &last); err != nil {
+		return "", errors.New("pairing credential unavailable")
+	}
+	if seen.Valid || last != 0 {
+		return "", errors.New("pairing already claimed by this installation")
+	}
+	credential, err := random(32)
+	if err != nil {
+		return "", err
+	}
+	credentialHash := sha256.Sum256([]byte(credential))
+	if _, err = tx.ExecContext(ctx, `UPDATE collector_keys SET secret_hash=?,last_sequence=0,last_seen_at=NULL,last_observed_at=NULL,last_sent_at=NULL,last_error='',last_rejected_at=NULL,rejected_count=0,partial=0 WHERE id=?`, credentialHash[:], installationID); err != nil {
+		return "", err
+	}
+	return credential, nil
 }
 
 func random(size int) (string, error) {

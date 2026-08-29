@@ -103,6 +103,15 @@ account while keeping the current one. An administrator cannot demote their
 own account. The post `owner` field remains metadata; evidence is not
 owner-isolated. The SPA has a Users view (admin) and an Account view. All user
 administration is audited.
+
+## Pairing hand-off recovery
+
+R10 makes credential hand-off recoverable. When an agent crashes between the
+server consuming its pairing request and the agent persisting the credential,
+the next poll with the same request secret reissues a fresh credential while
+the previous one is provably unused. A used credential is never rotated by a
+re-poll, and expired requests are not reissued (the agent must request a new
+pairing). See `internal/agentpairing`.
 Host enrollment records an optional address or hostname, then pairs the
 bundled collector using an explicit Watchpost URL reachable from the post. The
 collector is outbound-only. Post editing is optimistic-concurrency protected;

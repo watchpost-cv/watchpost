@@ -2,6 +2,7 @@ package agentpairing
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"testing"
 	"time"
@@ -88,4 +89,82 @@ func TestRevokeEndsAgentAuthority(t *testing.T) {
 	if len(items) != 1 || items[0].Status != "revoked" {
 		t.Fatalf("unexpected status: %#v", items)
 	}
+}
+
+func TestPairingHandoffRecoversAfterLostCredential(t *testing.T) {
+	ctx := context.Background()
+	database, err := store.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if _, err = posts.New(database).Create(ctx, posts.Post{ID: "host-one", Name: "Host one", Kind: "host", Labels: map[string]string{}}); err != nil {
+		t.Fatal(err)
+	}
+	service := New(database)
+	request, err := service.Create(ctx, "install-1", "request-secret-that-is-at-least-32-chars-long", "machine", "linux", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = service.Decide(ctx, request.ID, "host-one", true); err != nil {
+		t.Fatal(err)
+	}
+	first, err := service.Poll(ctx, request.ID, "request-secret-that-is-at-least-32-chars-long")
+	if err != nil || first.Credential == "" {
+		t.Fatalf("first poll: %#v %v", first, err)
+	}
+	// Simulate a crash after the server consumed the request but before the
+	// agent persisted the credential: re-poll must reissue a fresh credential.
+	second, err := service.Poll(ctx, request.ID, "request-secret-that-is-at-least-32-chars-long")
+	if err != nil {
+		t.Fatalf("recoverable re-poll failed: %v", err)
+	}
+	if second.Credential == "" || second.Credential == first.Credential {
+		t.Fatalf("re-poll did not reissue a fresh credential: %#v vs %#v", second, first)
+	}
+	var stored []byte
+	if err = database.DB.QueryRow(`SELECT secret_hash FROM collector_keys WHERE id='install-1'`).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	expected := sha256.Sum256([]byte(second.Credential))
+	if !hmac.Equal(stored, expected[:]) {
+		t.Fatal("stored credential does not match reissued credential")
+	}
+	oldHash := sha256.Sum256([]byte(first.Credential))
+	if hmac.Equal(stored, oldHash[:]) {
+		t.Fatal("old lost credential still valid")
+	}
+}
+
+func TestPairingHandoffRefusesToRotateUsedCredential(t *testing.T) {
+	ctx := context.Background()
+	database, err := store.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if _, err = posts.New(database).Create(ctx, posts.Post{ID: "host-one", Name: "Host one", Kind: "host", Labels: map[string]string{}}); err != nil {
+		t.Fatal(err)
+	}
+	service := New(database)
+	request, err := service.Create(ctx, "install-1", "request-secret-that-is-at-least-32-chars-long", "machine", "linux", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = service.Decide(ctx, request.ID, "host-one", true); err != nil {
+		t.Fatal(err)
+	}
+	first, err := service.Poll(ctx, request.ID, "request-secret-that-is-at-least-32-chars-long")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The agent stored and used the credential: mark it seen.
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err = database.DB.Exec(`UPDATE collector_keys SET last_seen_at=? WHERE id='install-1'`, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = service.Poll(ctx, request.ID, "request-secret-that-is-at-least-32-chars-long"); err == nil {
+		t.Fatal("re-poll rotated a used credential")
+	}
+	_ = first
 }
