@@ -2,6 +2,7 @@ package history
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -60,5 +61,32 @@ func TestSurveyGroupsStandardResourceSignals(t *testing.T) {
 	}
 	if len(series) != 3 {
 		t.Fatalf("got %d resource series, want 3", len(series))
+	}
+}
+
+func TestSeriesLegacySignalAlias(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(ctx, filepath.Join(t.TempDir(), "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Now().UTC()
+	if _, err = db.DB.Exec(`INSERT INTO posts(id,name,kind,created_at,updated_at) VALUES('p','Host','host',?,?)`, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.DB.Exec(`INSERT INTO collector_keys(id,post_id,secret_hash) VALUES('c','p',X'01')`); err != nil {
+		t.Fatal(err)
+	}
+	value := 1.5
+	if _, err = db.DB.Exec(`INSERT INTO observations(post_id,collector_id,observed_at,ingested_at,sequence,signal,value,unit,quality,labels_json) VALUES('p','c',?,?,1,'load.1',?,'load','good','{}')`, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), value); err != nil {
+		t.Fatal(err)
+	}
+	points, err := New(db).Series(ctx, "p", "load.one", now.Add(-time.Hour), now.Add(time.Hour), 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(points) != 1 || points[0].Value == nil || *points[0].Value != 1.5 {
+		t.Fatalf("legacy alias returned %#v", points)
 	}
 }

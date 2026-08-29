@@ -3,6 +3,8 @@ package history
 import (
 	"context"
 	"errors"
+	"strings"
+	"github.com/watchpost-ops/watchpost/internal/contract"
 	"github.com/watchpost-ops/watchpost/internal/store"
 	"time"
 )
@@ -68,7 +70,17 @@ func (s *Store) Series(ctx context.Context, post, signal string, from, to time.T
 	if limit < 1 || limit > 10000 || !from.Before(to) || to.Sub(from) > 31*24*time.Hour {
 		return nil, errors.New("invalid history window")
 	}
-	rows, err := s.s.DB.QueryContext(ctx, `SELECT observed_at,value,unit,quality FROM observations WHERE post_id=? AND signal=? AND observed_at>=? AND observed_at<=? ORDER BY observed_at LIMIT ?`, post, signal, from.UTC().Format(time.RFC3339Nano), to.UTC().Format(time.RFC3339Nano), limit)
+	signals := []string{signal}
+	if canonical, ok := contract.LegacySignalAliases[signal]; ok {
+		signals = append(signals, canonical)
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(signals)), ",")
+	args := []any{post}
+	for _, item := range signals {
+		args = append(args, item)
+	}
+	args = append(args, from.UTC().Format(time.RFC3339Nano), to.UTC().Format(time.RFC3339Nano), limit)
+	rows, err := s.s.DB.QueryContext(ctx, `SELECT observed_at,value,unit,quality FROM observations WHERE post_id=? AND signal IN (`+placeholders+`) AND observed_at>=? AND observed_at<=? ORDER BY observed_at LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
 	}

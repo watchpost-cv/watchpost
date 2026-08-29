@@ -176,6 +176,15 @@ and records `disabled`. No registered action is a no-op. The invariant:
 read capability never grants write authority, and no write operation travels
 through a generic untyped command path. Write-capable industrial/building
 actions stay out of scope under a separate authority and safety model.
+
+## Canonical host signals
+
+R16 freezes the host signal registry (`internal/contract.HostSignals`):
+`cpu.percent`, `memory.percent`, `disk.percent`/`filesystem.percent` (with
+`path` labels), `load.1/5/15`, `uptime.seconds`, `collector.up`. The installed
+agent now emits exactly these. Historical rows are never rewritten; a bounded
+alias layer maps deprecated `load.one` to `load.1` in rules and history
+queries.
 Host enrollment records an optional address or hostname, then pairs the
 bundled collector using an explicit Watchpost URL reachable from the post. The
 collector is outbound-only. Post editing is optimistic-concurrency protected;

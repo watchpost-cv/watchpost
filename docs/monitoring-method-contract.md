@@ -52,6 +52,16 @@ labels, observed_at, ingested_at, fresh_until
   intervals (so a paused schedule cannot report stale success).
 - `device_snmp`: five-minute freshness horizon from observation time.
 
+## Canonical host signals (R16)
+
+The host signal registry is frozen in `internal/contract` (`HostSignals`):
+`cpu.percent`, `memory.percent`, `disk.percent` (root, label `path=/`),
+`filesystem.percent` (label `path`), `load.1`, `load.5`, `load.15`,
+`uptime.seconds` and `collector.up`. The installed agent emits exactly these.
+Historical rows are never rewritten. A bounded alias layer maps the deprecated
+`load.one` to `load.1` for rules and history queries, so existing rules and
+charts keep working after the rename.
+
 ## What later checkpoints build here
 
 - R5 routes central-check results through this envelope into the observation

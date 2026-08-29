@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
+	"github.com/watchpost-ops/watchpost/internal/contract"
 	"github.com/watchpost-ops/watchpost/internal/store"
 	"time"
 )
@@ -157,7 +159,19 @@ func (e *Engine) Acknowledge(ctx context.Context, id int64, at time.Time) error 
 	return nil
 }
 func (e *Engine) EvaluateObservation(ctx context.Context, postID, signal string, at time.Time, value *float64, quality string) ([]Alert, error) {
-	rows, err := e.s.DB.QueryContext(ctx, `SELECT id FROM rules WHERE post_id=? AND signal=? AND enabled=1 ORDER BY id`, postID, signal)
+	signals := []string{signal}
+	for legacy, canonical := range contract.LegacySignalAliases {
+		if canonical == signal {
+			signals = append(signals, legacy)
+		}
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(signals)), ",")
+	args := make([]any, 0, len(signals)+1)
+	args = append(args, postID)
+	for _, item := range signals {
+		args = append(args, item)
+	}
+	rows, err := e.s.DB.QueryContext(ctx, `SELECT id FROM rules WHERE post_id=? AND signal IN (`+placeholders+`) AND enabled=1 ORDER BY id`, args...)
 	if err != nil {
 		return nil, err
 	}

@@ -69,3 +69,29 @@ type Observation struct {
 	IngestedAt time.Time
 	FreshUntil time.Time
 }
+
+// HostSignals is the canonical host signal registry. Both the installed agent
+// and any bundled collector must emit exactly these names.
+var HostSignals = []struct {
+	Name, Unit, Range string
+	Quality           string
+	Labels            string
+}{
+	{"cpu.percent", "percent", "0-100", "good", "none"},
+	{"memory.percent", "percent", "0-100", "good", "none"},
+	{"disk.percent", "percent", "0-100", "good", "path=/ for the root filesystem"},
+	{"filesystem.percent", "percent", "0-100", "good", "path=<filesystem>"},
+	{"load.1", "load", "0+", "good", "none"},
+	{"load.5", "load", "0+", "good", "none"},
+	{"load.15", "load", "0+", "good", "none"},
+	{"uptime.seconds", "seconds", "0+", "good", "none"},
+	{"collector.up", "boolean", "0/1", "good", "none"},
+}
+
+// LegacySignalAliases maps deprecated signal names to their canonical names so
+// existing rules and history keep working after a rename. Historical rows keep
+// their original signal names; this is a bounded read/query alias, never a
+// destructive rewrite.
+var LegacySignalAliases = map[string]string{
+	"load.one": "load.1",
+}

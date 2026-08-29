@@ -2,6 +2,7 @@ package rules
 
 import (
 	"context"
+	"path/filepath"
 	"github.com/watchpost-ops/watchpost/internal/posts"
 	"github.com/watchpost-ops/watchpost/internal/store"
 	"testing"
@@ -60,5 +61,36 @@ func TestReplayDeterminism(t *testing.T) {
 		if a[i] != b[i] {
 			t.Fatalf("%v != %v", a, b)
 		}
+	}
+}
+
+func TestLegacySignalAliasFiresRule(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(ctx, filepath.Join(t.TempDir(), "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Now().UTC()
+	if _, err = db.DB.Exec(`INSERT INTO posts(id,name,kind,created_at,updated_at) VALUES('p','Host','host',?,?)`, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	engine := New(db)
+	if err = engine.Create(ctx, Rule{ID: "load-high", PostID: "p", Signal: "load.one", Operator: "gt", Threshold: 1, MissingPolicy: "unknown", Severity: "warning", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	value := 2.0
+	alerts, err := engine.EvaluateObservation(ctx, "p", "load.1", now, &value, "good")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fired := false
+	for _, alert := range alerts {
+		if alert.State == "firing" {
+			fired = true
+		}
+	}
+	if !fired {
+		t.Fatal("legacy-signal rule did not fire on canonical signal")
 	}
 }

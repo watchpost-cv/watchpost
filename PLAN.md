@@ -121,7 +121,14 @@ verification outcome, refusing a schedule that belongs to another post;
 `silence_route` disables the named route and records `disabled`. No registered
 action is a no-op. The write-authority invariant is documented: read
 capability never grants write authority and no write operation travels through
-a generic untyped command path. Canonical host signal naming is R16.
+a generic untyped command path. 
+
+R16 is complete: the canonical host signal registry is frozen in
+`internal/contract` (`HostSignals`) and the installed agent now emits exactly
+those signals (`load.1/5/15`, `collector.up`, canonical disk/filesystem
+signals). Historical rows are never rewritten; a bounded alias layer maps the
+deprecated `load.one` to `load.1` for rules and history queries. Removal of
+the bundled legacy collector is R17.
 
 ## Agent architecture programme (WP-A01–WP-A18)
 
