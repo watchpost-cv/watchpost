@@ -159,7 +159,13 @@ R19 is complete: scheduled checks run their network probes on a bounded worker
 pool (`WATCHPOST_CHECK_WORKERS`, default 4) while result storage stays
 sequential, and telemetry ingestion is budgeted per collector
 (`WATCHPOST_INGEST_MAX_SAMPLES_PER_MINUTE`, default 3600). Both are race-tested.
-Agent-first host UX is R21.
+
+R21 is complete: the SPA is agent-first for host monitoring. Host enrollment
+shows a visible agent guide (install → pair → approve), unconnected host posts
+display "No agent" and route Connect to the enrollment approval panel, and the
+v1 pairing UI is gone. The agent web and CLI remain equivalent pairing and
+configuration surfaces with the service lifecycle retained by the CLI. Guided
+recovery and alert/incident UX are R22.
 
 ## Agent architecture programme (WP-A01–WP-A18)
 

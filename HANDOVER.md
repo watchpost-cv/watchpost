@@ -221,6 +221,12 @@ R19 runs scheduled check probes on a bounded worker pool
 (`WATCHPOST_CHECK_WORKERS`, default 4) with sequential result storage, and
 budgets telemetry per collector (`WATCHPOST_INGEST_MAX_SAMPLES_PER_MINUTE`,
 default 3600). Both are race-tested.
+
+## Agent-first host monitoring UX
+
+R21 makes the SPA agent-first for hosts: enrollment shows an agent guide
+(install → pair → approve), unconnected host posts show "No agent" and Connect
+routes to the approval panel, and the v1 pairing UI is removed.
 Host enrollment records an optional address or hostname, then pairs the
 separately installed Watchpost Agent through request/approval against an
 explicit Watchpost URL reachable from the post. The
