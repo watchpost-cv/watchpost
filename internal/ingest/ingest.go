@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
@@ -37,15 +38,18 @@ func (s *Service) AcceptBatch(ctx context.Context, secret string, observations [
 		return err
 	}
 	defer tx.Rollback()
-	var post string
-	var last int64
-	var revoked sql.NullString
 	first := observations[0]
-	if err = tx.QueryRowContext(ctx, `SELECT post_id,last_sequence,revoked_at FROM collector_keys WHERE id=? AND secret_hash=?`, first.CollectorID, h[:]).Scan(&post, &last, &revoked); err != nil || revoked.Valid || post != first.PostID {
+	info, err := s.lookupKey(ctx, tx, first.CollectorID, h[:], now)
+	if err != nil || info.revoked || info.post != first.PostID || (!info.active && !info.pending) {
 		return errors.New("collector authentication failed")
 	}
+	if info.pending {
+		if err = s.promotePending(ctx, tx, first.CollectorID); err != nil {
+			return err
+		}
+	}
 	for index, o := range observations {
-		if o.Version != 1 || o.PostID != post || o.CollectorID != first.CollectorID || o.Sequence != last+int64(index)+1 || len(o.Signal) < 1 || len(o.Signal) > 128 || len(o.Labels) > 32 || !quality[o.Quality] || (o.Value != nil && (math.IsNaN(*o.Value) || math.IsInf(*o.Value, 0))) || o.ObservedAt.Before(now.Add(-24*time.Hour)) || o.ObservedAt.After(now.Add(5*time.Minute)) {
+		if o.Version != 1 || o.PostID != info.post || o.CollectorID != first.CollectorID || o.Sequence != info.last+int64(index)+1 || len(o.Signal) < 1 || len(o.Signal) > 128 || len(o.Labels) > 32 || !quality[o.Quality] || (o.Value != nil && (math.IsNaN(*o.Value) || math.IsInf(*o.Value, 0))) || o.ObservedAt.Before(now.Add(-24*time.Hour)) || o.ObservedAt.After(now.Add(5*time.Minute)) {
 			return errors.New("invalid or non-contiguous observation batch")
 		}
 		labels, _ := json.Marshal(o.Labels)
@@ -98,21 +102,64 @@ func (s *Service) Enroll(ctx context.Context, id, postID string) (string, error)
 
 // Authenticate verifies a collector credential without ingesting anything. It
 // lets handlers reject unknown identities before exposing storage state or
-// consuming work.
+// consuming work. A pending (unconfirmed rotation) credential is accepted but
+// not promoted here.
 func (s *Service) Authenticate(ctx context.Context, collectorID, secret string) error {
 	if collectorID == "" || secret == "" {
 		return errors.New("collector authentication failed")
 	}
 	h := sha256.Sum256([]byte(secret))
-	var revoked sql.NullString
-	err := s.s.DB.QueryRowContext(ctx, `SELECT revoked_at FROM collector_keys WHERE id=? AND secret_hash=?`, collectorID, h[:]).Scan(&revoked)
-	if err != nil {
-		return errors.New("collector authentication failed")
-	}
-	if revoked.Valid {
+	info, err := s.lookupKey(ctx, s.s.DB, collectorID, h[:], s.now().UTC())
+	if err != nil || info.revoked || (!info.active && !info.pending) {
 		return errors.New("collector authentication failed")
 	}
 	return nil
+}
+
+type queryer interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+type keyInfo struct {
+	post    string
+	last    int64
+	revoked bool
+	active  bool
+	pending bool
+}
+
+// lookupKey resolves a presented credential against a collector key, allowing
+// either the active credential or an unexpired pending replacement during an
+// overlap-and-confirm rotation.
+func (s *Service) lookupKey(ctx context.Context, q queryer, id string, presented []byte, now time.Time) (keyInfo, error) {
+	var info keyInfo
+	var revoked, pendingExpires sql.NullString
+	var activeHash, pendingHash []byte
+	err := q.QueryRowContext(ctx, `SELECT post_id,last_sequence,revoked_at,secret_hash,pending_secret_hash,pending_expires_at FROM collector_keys WHERE id=?`, id).Scan(&info.post, &info.last, &revoked, &activeHash, &pendingHash, &pendingExpires)
+	if err != nil {
+		return info, err
+	}
+	info.revoked = revoked.Valid
+	info.active = hmac.Equal(activeHash, presented)
+	if len(pendingHash) == sha256.Size {
+		expired := false
+		if pendingExpires.Valid {
+			expiresAt, err := time.Parse(time.RFC3339Nano, pendingExpires.String)
+			if err != nil || !now.Before(expiresAt) {
+				expired = true
+			}
+		}
+		info.pending = !expired && hmac.Equal(pendingHash, presented)
+	}
+	return info, nil
+}
+
+// promotePending makes an unconfirmed replacement credential active. It is
+// called only inside an accepted write transaction after a batch was
+// authenticated with the pending credential.
+func (s *Service) promotePending(ctx context.Context, tx *sql.Tx, id string) error {
+	_, err := tx.ExecContext(ctx, `UPDATE collector_keys SET secret_hash=pending_secret_hash,pending_secret_hash=NULL,pending_expires_at=NULL,last_error='' WHERE id=? AND pending_secret_hash IS NOT NULL`, id)
+	return err
 }
 func (s *Service) Accept(ctx context.Context, secret string, o Observation) error {
 	if o.Version != 1 || o.Sequence < 1 || len(o.Signal) < 1 || len(o.Signal) > 128 || len(o.Labels) > 32 || !quality[o.Quality] || (o.Value != nil && (math.IsNaN(*o.Value) || math.IsInf(*o.Value, 0))) {
@@ -129,14 +176,16 @@ func (s *Service) Accept(ctx context.Context, secret string, o Observation) erro
 		return e
 	}
 	defer tx.Rollback()
-	var post string
-	var last int64
-	var revoked sql.NullString
-	e = tx.QueryRowContext(ctx, `SELECT post_id,last_sequence,revoked_at FROM collector_keys WHERE id=? AND secret_hash=?`, o.CollectorID, h[:]).Scan(&post, &last, &revoked)
-	if e != nil || revoked.Valid || post != o.PostID {
+	info, e := s.lookupKey(ctx, tx, o.CollectorID, h[:], now)
+	if e != nil || info.revoked || info.post != o.PostID || (!info.active && !info.pending) {
 		return errors.New("collector authentication failed")
 	}
-	if o.Sequence <= last {
+	if info.pending {
+		if e = s.promotePending(ctx, tx, o.CollectorID); e != nil {
+			return e
+		}
+	}
+	if o.Sequence <= info.last {
 		return errors.New("replayed observation")
 	}
 	_, e = tx.ExecContext(ctx, `INSERT INTO observations(post_id,collector_id,observed_at,ingested_at,sequence,signal,value,unit,quality,labels_json) VALUES(?,?,?,?,?,?,?,?,?,?)`, o.PostID, o.CollectorID, o.ObservedAt.UTC().Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), o.Sequence, o.Signal, o.Value, o.Unit, o.Quality, string(labels))

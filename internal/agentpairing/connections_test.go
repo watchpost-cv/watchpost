@@ -11,7 +11,7 @@ import (
 	"github.com/watchpost-ops/watchpost/internal/store"
 )
 
-func TestRotateCredentialInvalidatesPreviousSecret(t *testing.T) {
+func TestRotateUsesOverlapAndConfirm(t *testing.T) {
 	ctx := context.Background()
 	database, err := store.Open(ctx, t.TempDir())
 	if err != nil {
@@ -32,8 +32,33 @@ func TestRotateCredentialInvalidatesPreviousSecret(t *testing.T) {
 	if err != nil || next == "" {
 		t.Fatalf("rotate: %v", err)
 	}
-	if _, err = service.Rotate(ctx, "install-1", "old-secret"); err == nil {
-		t.Fatal("old credential still valid")
+	// The old credential remains authoritative; the replacement is pending.
+	var storedSecret, pendingHash []byte
+	if err = database.DB.QueryRow(`SELECT secret_hash,pending_secret_hash FROM collector_keys WHERE id='install-1'`).Scan(&storedSecret, &pendingHash); err != nil {
+		t.Fatal(err)
+	}
+	if !hmac.Equal(storedSecret, old[:]) {
+		t.Fatal("old credential was invalidated before confirmation")
+	}
+	expectedPending := sha256.Sum256([]byte(next))
+	if !hmac.Equal(pendingHash, expectedPending[:]) {
+		t.Fatal("pending credential not stored as a hash")
+	}
+	// Rotation requires the current active credential.
+	if _, err = service.Rotate(ctx, "install-1", "wrong-secret"); err == nil {
+		t.Fatal("rotate with wrong current credential succeeded")
+	}
+	// Re-rotating with the active credential replaces the pending slot.
+	again, err := service.Rotate(ctx, "install-1", "old-secret")
+	if err != nil || again == "" {
+		t.Fatalf("re-rotate: %v", err)
+	}
+	expectedPending2 := sha256.Sum256([]byte(again))
+	if err = database.DB.QueryRow(`SELECT pending_secret_hash FROM collector_keys WHERE id='install-1'`).Scan(&pendingHash); err != nil {
+		t.Fatal(err)
+	}
+	if !hmac.Equal(pendingHash, expectedPending2[:]) {
+		t.Fatal("re-rotate did not replace the pending credential")
 	}
 }
 

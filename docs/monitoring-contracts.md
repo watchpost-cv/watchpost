@@ -109,6 +109,18 @@ provably unused (never delivered). A credential that has been used is never
 rotated by a re-poll, so a spurious re-poll cannot break a working connection.
 Expired requests are not reissued; the agent must request a new pairing.
 
+## Overlap-and-confirm credential rotation
+
+Rotation no longer swaps credentials in one step. An authenticated agent
+requests a replacement; the server issues a second credential with a
+ten-minute lifetime while retaining the active one. The agent persists the
+replacement atomically and confirms it by delivering telemetry authenticated
+with it; the server then promotes the replacement and the old credential stops
+working. An unconfirmed replacement expires without invalidating the old
+credential, and the agent retains the previous credential as a delivery
+fallback until the server confirms the replacement, so a crash or network
+outage mid-rotation never bricks the connection.
+
 ## Storage capacity contract
 
 Watchpost measures its total SQLite footprint — `watchpost.db` plus the

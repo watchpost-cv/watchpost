@@ -184,17 +184,27 @@ func (s *Service) Revoke(ctx context.Context, installationID string) error {
 	}
 	return tx.Commit()
 }
+// PendingReplacementLifetime bounds how long an unconfirmed replacement
+// credential stays valid before the old credential remains authoritative.
+const PendingReplacementLifetime = 10 * time.Minute
+
+// Rotate starts an overlap-and-confirm credential replacement. The current
+// credential stays valid; a second credential is issued with a short lifetime
+// and returned so the agent can persist it atomically. The new credential
+// becomes active only when the agent first uses it (see ingest promotion);
+// an unconfirmed replacement expires without invalidating the old credential.
 func (s *Service) Rotate(ctx context.Context, installationID, current string) (string, error) {
 	if installationID == "" || current == "" {
 		return "", errors.New("agent credential required")
 	}
-	old := sha256.Sum256([]byte(current))
+	currentHash := sha256.Sum256([]byte(current))
 	credential, err := random(32)
 	if err != nil {
 		return "", err
 	}
 	next := sha256.Sum256([]byte(credential))
-	result, err := s.s.DB.ExecContext(ctx, `UPDATE collector_keys SET secret_hash=?,last_error='' WHERE id=? AND secret_hash=? AND revoked_at IS NULL`, next[:], installationID, old[:])
+	now := s.now().UTC()
+	result, err := s.s.DB.ExecContext(ctx, `UPDATE collector_keys SET pending_secret_hash=?,pending_expires_at=? WHERE id=? AND secret_hash=? AND revoked_at IS NULL`, next[:], now.Add(PendingReplacementLifetime).Format(time.RFC3339Nano), installationID, currentHash[:])
 	if err != nil {
 		return "", err
 	}

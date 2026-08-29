@@ -2,6 +2,8 @@ package ingest
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"github.com/watchpost-ops/watchpost/internal/posts"
 	"github.com/watchpost-ops/watchpost/internal/store"
 	"testing"
@@ -88,4 +90,68 @@ func FuzzObservationValidation(f *testing.F) {
 		}
 		_ = service.Accept(context.Background(), secret, Observation{Version: 1, PostID: "host-a", CollectorID: "collector-a", ObservedAt: now, Sequence: sequence, Signal: signal, Quality: quality})
 	})
+}
+
+func TestPendingCredentialPromotedOnFirstUse(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	_, _ = posts.New(db).Create(ctx, posts.Post{ID: "host-a", Name: "Host", Kind: "host"})
+	service := New(db)
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+	oldSecret, _ := service.Enroll(ctx, "collector-a", "host-a")
+	pendingRaw := "pending-replacement-credential"
+	pendingHash := sha256.Sum256([]byte(pendingRaw))
+	if _, err = db.DB.Exec(`UPDATE collector_keys SET pending_secret_hash=?,pending_expires_at=? WHERE id='collector-a'`, pendingHash[:], now.Add(10*time.Minute).Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	value := 50.0
+	batch := []Observation{{Version: 1, PostID: "host-a", CollectorID: "collector-a", ObservedAt: now, Sequence: 1, Signal: "cpu.percent", Value: &value, Unit: "percent", Quality: "good", Labels: map[string]string{}}}
+	// The pending credential authenticates and is promoted on first use.
+	if err = service.AcceptBatch(ctx, pendingRaw, batch, now); err != nil {
+		t.Fatalf("pending credential rejected: %v", err)
+	}
+	var stored []byte
+	if err = db.DB.QueryRow(`SELECT secret_hash,pending_secret_hash FROM collector_keys WHERE id='collector-a'`).Scan(&stored, new([]byte)); err != nil {
+		t.Fatal(err)
+	}
+	if !hmac.Equal(stored, pendingHash[:]) {
+		t.Fatal("pending credential was not promoted to active")
+	}
+	// The old credential no longer authenticates after promotion.
+	if err = service.AcceptBatch(ctx, oldSecret, batch, now); err == nil {
+		t.Fatal("old credential still accepted after promotion")
+	}
+}
+
+func TestExpiredPendingCredentialDoesNotInvalidateOld(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	_, _ = posts.New(db).Create(ctx, posts.Post{ID: "host-a", Name: "Host", Kind: "host"})
+	service := New(db)
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+	oldSecret, _ := service.Enroll(ctx, "collector-a", "host-a")
+	pendingRaw := "expired-pending-replacement"
+	pendingHash := sha256.Sum256([]byte(pendingRaw))
+	if _, err = db.DB.Exec(`UPDATE collector_keys SET pending_secret_hash=?,pending_expires_at=? WHERE id='collector-a'`, pendingHash[:], now.Add(-time.Minute).Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	value := 50.0
+	batch := []Observation{{Version: 1, PostID: "host-a", CollectorID: "collector-a", ObservedAt: now, Sequence: 1, Signal: "cpu.percent", Value: &value, Unit: "percent", Quality: "good", Labels: map[string]string{}}}
+	if err = service.AcceptBatch(ctx, pendingRaw, batch, now); err == nil {
+		t.Fatal("expired pending credential accepted")
+	}
+	// The old credential remains authoritative.
+	if err = service.AcceptBatch(ctx, oldSecret, batch, now); err != nil {
+		t.Fatalf("old credential rejected after expired replacement: %v", err)
+	}
 }

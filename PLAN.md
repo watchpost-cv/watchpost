@@ -72,7 +72,16 @@ R10 is complete: pairing hand-off is recoverable. If an agent crashes after
 its pairing request is consumed but before the credential is persisted, the
 next poll with the same request secret reissues a fresh credential while the
 previous one is provably unused; a used credential is never rotated by a
-re-poll. Rotation's overlap-and-confirm protocol is R11.
+re-poll.
+
+R11 is complete: credential rotation uses overlap-and-confirm. The server
+issues a pending replacement with a ten-minute lifetime while retaining the
+active credential; the agent persists the replacement atomically and keeps the
+previous credential as a delivery fallback; the first delivery authenticated
+with the replacement promotes it and the old credential stops working.
+Unconfirmed replacements expire without invalidating the old credential, so a
+crash or outage mid-rotation never bricks the connection. Unpair/revocation
+lifecycle is R12.
 
 ## Agent architecture programme (WP-A01–WP-A18)
 

@@ -112,6 +112,16 @@ the next poll with the same request secret reissues a fresh credential while
 the previous one is provably unused. A used credential is never rotated by a
 re-poll, and expired requests are not reissued (the agent must request a new
 pairing). See `internal/agentpairing`.
+
+## Overlap-and-confirm rotation
+
+R11 replaces the single-step credential swap. The server issues a pending
+replacement with a ten-minute lifetime while keeping the active credential;
+the agent persists it atomically and retains the previous credential as a
+delivery fallback; the first accepted delivery authenticated with the
+replacement promotes it and invalidates the old. An unconfirmed replacement
+expires without affecting the old credential, so a crash or outage during
+rotation cannot brick the connection. Promotion lives in `internal/ingest`.
 Host enrollment records an optional address or hostname, then pairs the
 bundled collector using an explicit Watchpost URL reachable from the post. The
 collector is outbound-only. Post editing is optimistic-concurrency protected;
