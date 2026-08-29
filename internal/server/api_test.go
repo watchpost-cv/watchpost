@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"github.com/watchpost-ops/watchpost/internal/backup"
 	"github.com/watchpost-ops/watchpost/internal/checks"
 	"github.com/watchpost-ops/watchpost/internal/config"
+	"github.com/watchpost-ops/watchpost/internal/devices"
 	"github.com/watchpost-ops/watchpost/internal/posts"
 	"github.com/watchpost-ops/watchpost/internal/rules"
 	"github.com/watchpost-ops/watchpost/internal/store"
@@ -555,4 +557,45 @@ func TestPostsPaginationBoundsManyPostLoad(t *testing.T) {
 		t.Fatalf("tail posts=%d want 20", len(tail.Posts))
 	}
 	// The survey stays bounded at 500 posts with 20k observations (server-side).
+}
+
+func TestScheduledSNMPEmitsObservationsAndAlert(t *testing.T) {
+	s := testServer(t)
+	if _, err := s.posts.Create(t.Context(), posts.Post{ID: "ups-1", Name: "UPS", Kind: "ups", Labels: map[string]string{}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.rules.Create(t.Context(), rules.Rule{ID: "ups-down", PostID: "ups-1", Signal: "snmp.poll_ok", Operator: "lt", Threshold: 1, MissingPolicy: "unknown", Severity: "critical", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	marker := sha256.Sum256([]byte("device-snmp:ups-poll"))
+	if _, err := s.store.DB.Exec(`INSERT INTO collector_keys(id,post_id,secret_hash,kind) VALUES('ups-poll','ups-1',?,'device_snmp')`, marker[:]); err != nil {
+		t.Fatal(err)
+	}
+	profile := devices.SavedProfile{ID: "ups-poll", PostID: "ups-1", Kind: "ups"}
+	now := time.Now().UTC()
+	readings := []devices.Reading{{Name: "battery_charge", OID: ".1.3.6.1.2.1.33.1.2.4.0", Unit: "percent", Value: int64(85), Quality: "good", ObservedAt: now, FreshUntil: now.Add(5 * time.Minute)}}
+	if err := s.emitDevicePoll(t.Context(), profile, true, readings, now); err != nil {
+		t.Fatal(err)
+	}
+	var okVal, charge float64
+	if err := s.store.DB.QueryRow(`SELECT value FROM observations WHERE signal='snmp.poll_ok'`).Scan(&okVal); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.DB.QueryRow(`SELECT value FROM observations WHERE signal='battery_charge'`).Scan(&charge); err != nil {
+		t.Fatal(err)
+	}
+	if okVal != 1 || charge != 85 {
+		t.Fatalf("ok=%f charge=%f", okVal, charge)
+	}
+	// A failed poll emits snmp.poll_ok=0, which the rule fires on.
+	if err := s.emitDevicePoll(t.Context(), profile, false, nil, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	var state string
+	if err := s.store.DB.QueryRow(`SELECT state FROM alerts WHERE rule_id='ups-down' ORDER BY id DESC LIMIT 1`).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != "firing" {
+		t.Fatalf("alert state=%s want firing", state)
+	}
 }

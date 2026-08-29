@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 )
 
 // Report describes the total SQLite footprint (main database plus write-ahead
@@ -82,8 +81,8 @@ func (c *Checker) Report() (Report, error) {
 		}
 	}
 	if stat, err := statfs(c.dataDir); err == nil {
-		report.FreeBytes = int64(stat.Bavail) * stat.Bsize
-		total := int64(stat.Blocks) * stat.Bsize
+		report.FreeBytes = int64(stat.Bavail) * int64(stat.Bsize)
+		total := int64(stat.Blocks) * int64(stat.Bsize)
 		if total > 0 {
 			report.FreePercent = 100 * float64(report.FreeBytes) / float64(total)
 		}
@@ -111,10 +110,4 @@ func (c *Checker) Check() error {
 		return ErrStorageFull
 	}
 	return nil
-}
-
-func statfs(path string) (syscall.Statfs_t, error) {
-	var stat syscall.Statfs_t
-	err := syscall.Statfs(path, &stat)
-	return stat, err
 }
