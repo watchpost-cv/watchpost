@@ -88,6 +88,12 @@ clears local state once Watchpost confirms; when unreachable it persists
 `revocation_pending` and retries each delivery interval. Forced local reset is
 a separately named destructive path that warns the connection must be revoked
 centrally. Watchpost-side admin revocation and agent self-unpair are audited.
+
+R13 is complete: private-target monitoring remains a core feature with no
+global disable. Optional `WATCHPOST_CHECK_ALLOW_CIDRS`/`DENY_CIDRS`/`DENY_PORTS`
+restrict targets, enforced at schedule creation, on on-demand checks, on SNMP
+targets and again at run time against the resolved address (DNS-rebinding
+defence). On-demand checks are rate-limited to 60 per minute and audited.
 Remote agent-management security is R14.
 
 ## Agent architecture programme (WP-A01–WP-A18)

@@ -20,6 +20,17 @@ type Config struct {
 	Storage       Storage
 	SetupToken    string
 	SetupTokenTTL time.Duration
+	CheckPolicy   CheckPolicy
+}
+
+// CheckPolicy restricts which targets central checks, on-demand checks and
+// device adapters may probe. Monitoring internal infrastructure is a core
+// feature, so the default allows everything; operators opt into CIDR and port
+// allow/deny lists.
+type CheckPolicy struct {
+	AllowCIDRs []string
+	DenyCIDRs  []string
+	DenyPorts  []int
 }
 
 // Storage holds the capacity guardrails that fail telemetry ingestion closed
@@ -119,10 +130,54 @@ func Load(overrides Overrides) (Config, error) {
 	if err := applySetupEnv(&cfg); err != nil {
 		return Config{}, err
 	}
+	if err := applyCheckPolicyEnv(&cfg); err != nil {
+		return Config{}, err
+	}
 	if err := validate(cfg); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+func applyCheckPolicyEnv(cfg *Config) error {
+	split := func(name string) ([]string, error) {
+		value := os.Getenv("WATCHPOST_CHECK_" + name)
+		if value == "" {
+			return nil, nil
+		}
+		parts := []string{}
+		for _, part := range strings.Split(value, ",") {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				parts = append(parts, part)
+			}
+		}
+		return parts, nil
+	}
+	allow, err := split("ALLOW_CIDRS")
+	if err != nil {
+		return err
+	}
+	deny, err := split("DENY_CIDRS")
+	if err != nil {
+		return err
+	}
+	cfg.CheckPolicy.AllowCIDRs = allow
+	cfg.CheckPolicy.DenyCIDRs = deny
+	if value := os.Getenv("WATCHPOST_CHECK_DENY_PORTS"); value != "" {
+		for _, part := range strings.Split(value, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			port, err := strconv.Atoi(part)
+			if err != nil || port < 1 || port > 65535 {
+				return fmt.Errorf("WATCHPOST_CHECK_DENY_PORTS: invalid port %q", part)
+			}
+			cfg.CheckPolicy.DenyPorts = append(cfg.CheckPolicy.DenyPorts, port)
+		}
+	}
+	return nil
 }
 
 func applySetupEnv(cfg *Config) error {

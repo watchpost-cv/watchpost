@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/watchpost-ops/watchpost/internal/actions"
@@ -60,6 +61,35 @@ type Server struct {
 	checks       *checks.ScheduleStore
 	retention    *retention.Store
 	storage      *storage.Checker
+	checkPolicy  *checks.Policy
+	checkLimiter *checkRateLimiter
+}
+
+type checkRateLimiter struct {
+	mu    sync.Mutex
+	times []time.Time
+}
+
+// allow applies a sliding one-per-second window on on-demand check execution.
+func (l *checkRateLimiter) allow() bool {
+	if l == nil {
+		return true
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	cutoff := time.Now().Add(-time.Minute)
+	kept := l.times[:0]
+	for _, at := range l.times {
+		if at.After(cutoff) {
+			kept = append(kept, at)
+		}
+	}
+	l.times = kept
+	if len(l.times) >= 60 {
+		return false
+	}
+	l.times = append(l.times, time.Now())
+	return true
 }
 
 func New(cfg config.Config, version string, logger *slog.Logger, database *store.Store) *Server {
@@ -87,6 +117,13 @@ func New(cfg config.Config, version string, logger *slog.Logger, database *store
 		return map[string]any{"disabled": count == 1}, nil
 	}})
 	server := &Server{cfg: cfg, version: version, logger: logger, store: database, auth: auth.New(database), posts: posts.New(database), ingest: ingest.New(database), history: history.New(database), rules: rules.New(database), notify: notify.New(database, sender), incidents: incidents.New(database), evidence: evidence.New(database), agent: agent.New(database, agent.EvidenceProvider{}), agentPairing: agentpairing.New(database), actions: actionRegistry, fleet: fleet.New(database), pairing: pairing.New(database), health: collectorhealth.New(database), devices: devices.NewProfileStore(database), checks: checks.NewScheduleStore(database), retention: retention.New(database, cfg.Retention), storage: storage.New(cfg.DataDir, cfg.Storage.MaxDBBytes, cfg.Storage.MinFreeBytes, cfg.Storage.MinFreePercent)}
+	checkPolicy, err := checks.NewPolicy(cfg.CheckPolicy.AllowCIDRs, cfg.CheckPolicy.DenyCIDRs, cfg.CheckPolicy.DenyPorts)
+	if err != nil {
+		logger.Warn("invalid check policy; all targets allowed", "error", err)
+	}
+	server.checkPolicy = checkPolicy
+	server.checks = checks.NewScheduleStoreWithPolicy(database, checkPolicy)
+	server.checkLimiter = &checkRateLimiter{}
 	server.provisionBootstrap()
 	return server
 }

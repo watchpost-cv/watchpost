@@ -33,15 +33,29 @@ type DueResult struct {
 	Result   Result
 }
 
-type ScheduleStore struct{ s *store.Store }
+type ScheduleStore struct {
+	s      *store.Store
+	policy *Policy
+}
 
 func NewScheduleStore(s *store.Store) *ScheduleStore { return &ScheduleStore{s: s} }
+
+// NewScheduleStoreWithPolicy applies target allow/deny rules at schedule
+// creation and again at run time (defending against DNS rebinding).
+func NewScheduleStoreWithPolicy(s *store.Store, policy *Policy) *ScheduleStore {
+	return &ScheduleStore{s: s, policy: policy}
+}
 func (s *ScheduleStore) Save(ctx context.Context, v Schedule) error {
 	if v.ID == "" || v.PostID == "" || v.Address == "" || v.IntervalSeconds < 30 || v.IntervalSeconds > 86400 {
 		return errors.New("invalid check schedule")
 	}
 	if !map[string]bool{"http": true, "tcp": true, "tls": true, "dns": true, "icmp": true}[v.Kind] {
 		return errors.New("unsupported check kind")
+	}
+	if s.policy != nil {
+		if err := s.policy.Validate(ctx, v.Address, 0); err != nil {
+			return err
+		}
 	}
 	now := time.Now().UTC()
 	tx, err := s.s.DB.BeginTx(ctx, nil)
@@ -92,16 +106,17 @@ func (s *ScheduleStore) List(ctx context.Context) ([]Schedule, error) {
 	return items, rows.Err()
 }
 
+type due struct {
+	id, post, kind, address, server string
+	interval                        int64
+}
+
 // RunDue executes due schedules in bounded batches and returns the results so
 // callers can route them through the canonical observation and rule pipeline.
 func (s *ScheduleStore) RunDue(ctx context.Context, runner *Runner, now time.Time) ([]DueResult, error) {
 	rows, err := s.s.DB.QueryContext(ctx, `SELECT id,post_id,kind,address,server_name,interval_seconds FROM check_schedules WHERE enabled=1 AND next_run_at<=? ORDER BY next_run_at LIMIT 32`, now.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, err
-	}
-	type due struct {
-		id, post, kind, address, server string
-		interval                        int64
 	}
 	var work []due
 	for rows.Next() {
@@ -115,7 +130,7 @@ func (s *ScheduleStore) RunDue(ctx context.Context, runner *Runner, now time.Tim
 	rows.Close()
 	results := []DueResult{}
 	for _, v := range work {
-		result := runner.Run(ctx, v.kind, v.address, v.server)
+		result := s.runWithPolicy(ctx, runner, v)
 		var expires any
 		if result.ExpiresAt != nil {
 			expires = result.ExpiresAt.UTC().Format(time.RFC3339Nano)
@@ -138,6 +153,18 @@ func (s *ScheduleStore) RunDue(ctx context.Context, runner *Runner, now time.Tim
 		results = append(results, DueResult{Schedule: Schedule{ID: v.id, PostID: v.post, Kind: v.kind, Address: v.address, ServerName: v.server, IntervalSeconds: v.interval}, Result: result})
 	}
 	return results, nil
+}
+
+// runWithPolicy re-applies target policy at run time so a hostname that
+// resolves differently than it did at creation (DNS rebinding) is refused
+// rather than probed.
+func (s *ScheduleStore) runWithPolicy(ctx context.Context, runner *Runner, v due) Result {
+	if s.policy != nil {
+		if err := s.policy.Validate(ctx, v.address, 0); err != nil {
+			return Result{Kind: v.kind, Address: v.address, Failure: err.Error()}
+		}
+	}
+	return runner.Run(ctx, v.kind, v.address, v.server)
 }
 
 // Observations converts a stored check result into the canonical observation

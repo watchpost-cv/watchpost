@@ -133,6 +133,17 @@ state without revoking centrally and explicitly warns that an administrator
 must revoke the connection in Watchpost (for a lost machine). Watchpost-side
 revocation remains an administrator operation too, and revoking is audited.
 
+## Private-target policy
+
+Monitoring internal infrastructure is a core feature, so no target is disabled
+by default. Operators can opt into `WATCHPOST_CHECK_ALLOW_CIDRS`,
+`WATCHPOST_CHECK_DENY_CIDRS` and `WATCHPOST_CHECK_DENY_PORTS`. The policy is
+enforced at schedule creation, on on-demand checks, on SNMP targets, and again
+at run time against the resolved address — so a hostname that rebinds to a
+denied network is refused rather than probed. An unresolvable hostname is a
+check failure, not a policy denial. On-demand checks are rate-limited (60 per
+minute) and every on-demand check is audited.
+
 ## Storage capacity contract
 
 Watchpost measures its total SQLite footprint — `watchpost.db` plus the

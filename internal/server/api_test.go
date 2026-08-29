@@ -320,6 +320,42 @@ func TestRBACRoleEnforcement(t *testing.T) {
 	}
 }
 
+func TestCheckPolicyDeniesScheduledAndOnDemandTargets(t *testing.T) {
+	dataDir := t.TempDir()
+	database, err := store.Open(t.Context(), dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	cfg := config.Config{Listen: "127.0.0.1:0", DataDir: dataDir, Retention: config.DefaultRetention(), Storage: config.DefaultStorage(), CheckPolicy: config.CheckPolicy{DenyCIDRs: []string{"127.0.0.0/8"}}}
+	handler := New(cfg, "test", slog.New(slog.NewTextHandler(io.Discard, nil)), database).Handler()
+	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"email": "admin@example.com", "password": "1234567"}, nil, "")
+	login := apiRequest(t, handler, "POST", "/api/v1/login", map[string]string{"email": "admin@example.com", "password": "1234567"}, nil, "")
+	cookie := login.Result().Cookies()[0]
+	var session struct {
+		CSRF string `json:"csrf_token"`
+	}
+	_ = json.Unmarshal(login.Body.Bytes(), &session)
+	if got := apiRequest(t, handler, "POST", "/api/v1/posts", map[string]any{"id": "web", "name": "Web", "kind": "http_endpoint"}, cookie, session.CSRF); got.Code != 201 {
+		t.Fatalf("post: %d", got.Code)
+	}
+	// On-demand check against a denied target is refused.
+	denied := apiRequest(t, handler, "POST", "/api/v1/checks", map[string]string{"kind": "http", "address": "http://127.0.0.1:1"}, cookie, session.CSRF)
+	if denied.Code != 400 || !bytes.Contains(denied.Body.Bytes(), []byte("denied by check policy")) {
+		t.Fatalf("on-demand denied target: %d %s", denied.Code, denied.Body.String())
+	}
+	// A durable schedule against a denied target is refused.
+	schedule := apiRequest(t, handler, "POST", "/api/v1/check-schedules", map[string]any{"ID": "web-http", "PostID": "web", "Kind": "http", "Address": "http://127.0.0.1:1", "IntervalSeconds": 60}, cookie, session.CSRF)
+	if schedule.Code != 400 || !bytes.Contains(schedule.Body.Bytes(), []byte("denied by check policy")) {
+		t.Fatalf("scheduled denied target: %d %s", schedule.Code, schedule.Body.String())
+	}
+	// An allowed public target passes policy.
+	allowed := apiRequest(t, handler, "POST", "/api/v1/checks", map[string]string{"kind": "dns", "address": "example.com"}, cookie, session.CSRF)
+	if allowed.Code == 400 && bytes.Contains(allowed.Body.Bytes(), []byte("denied by check policy")) {
+		t.Fatalf("allowed target refused by policy: %s", allowed.Body.String())
+	}
+}
+
 func TestSecureCookieBehindHTTPSProxy(t *testing.T) {
 	s := testServer(t)
 	s.cfg.SecureCookies = true

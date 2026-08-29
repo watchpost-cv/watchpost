@@ -133,6 +133,15 @@ credential whose revocation was never confirmed is never silently discarded.
 Forced local reset remains a separate destructive operation and now warns that
 the connection must be revoked centrally for a lost machine. Admin revocation
 and agent self-unpair are audited.
+
+## Private-target policy
+
+R13 keeps private-target monitoring a core feature (no global disable) and
+adds optional `WATCHPOST_CHECK_ALLOW_CIDRS`, `WATCHPOST_CHECK_DENY_CIDRS` and
+`WATCHPOST_CHECK_DENY_PORTS`. The policy is enforced at schedule creation, on
+on-demand checks, on SNMP targets and again at run time against the resolved
+address, so a rebinding hostname is refused rather than probed. On-demand
+checks are rate-limited to 60/minute and audited. See `internal/checks`.
 Host enrollment records an optional address or hostname, then pairs the
 bundled collector using an explicit Watchpost URL reachable from the post. The
 collector is outbound-only. Post editing is optimistic-concurrency protected;

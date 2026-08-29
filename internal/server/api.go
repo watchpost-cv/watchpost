@@ -528,10 +528,19 @@ func (s *Server) handleHostSnapshot(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, snapshot)
 }
 func (s *Server) handleCheck(w http.ResponseWriter, r *http.Request) {
+	if !s.checkLimiter.allow() {
+		writeJSON(w, 429, map[string]string{"error": "too many on-demand checks"})
+		return
+	}
 	var in struct{ Kind, Address, ServerName string }
 	if !decode(w, r, &in) {
 		return
 	}
+	if err := s.checkPolicy.Validate(r.Context(), in.Address, 0); err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	s.audit(r, "check_run", "check", in.Kind, in.Address)
 	runner := checks.New(10 * time.Second)
 	var result checks.Result
 	switch in.Kind {
@@ -1218,6 +1227,10 @@ func (s *Server) handleSNMPPoll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := devices.ValidateProfile(in.Profile); err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	if err := s.checkPolicy.Validate(r.Context(), in.Config.Address, int(in.Config.Port)); err != nil {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
