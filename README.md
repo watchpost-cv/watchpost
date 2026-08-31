@@ -102,11 +102,15 @@ setup tokens and network policy):
 watchpost service install --env-file /absolute/protected/watchpost.env
 ```
 
-The file must be an absolute, regular, owner-only (0600), non-symlink file
-owned by the invoking user; it is referenced by the unit's `EnvironmentFile=`
-and its path is recorded in the authenticated managed metadata. Secret values
-are never copied into the unit or printed. Changing the file takes effect on
-`watchpost service restart`. The generated user unit retains the baseline
+The file must be an absolute, regular, non-symlink file with exactly `0600`
+permissions, owned by the invoking user; it is referenced by the unit's
+`EnvironmentFile=` and its path is recorded in the integrity-checked managed
+metadata. Secret values are never copied into the unit or printed. The recorded
+environment file is revalidated before `start`, `restart` and `status`; `stop`,
+`logs` and `uninstall` remain available even if it is missing. Changing the file
+takes effect on `watchpost service restart`. Install creates the data directory
+with owner-only permissions and refuses symlink, non-directory or
+group/world-writable data paths. The generated user unit retains the baseline
 hardening (`NoNewPrivileges`, `PrivateTmp`, `ProtectSystem=strict`,
 `ProtectHome=read-only`, `ReadWritePaths=<data dir>`). Repeated `service
 install` calls preserve the installed listen, data directory, secure-cookies

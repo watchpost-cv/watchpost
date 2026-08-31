@@ -4,9 +4,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -119,7 +121,7 @@ func TestBuildWatchpostUnit(t *testing.T) {
 	if strings.Contains(unit, "sh -c") {
 		t.Fatal("unit must not use a shell wrapper")
 	}
-	for _, want := range []string{`"--listen" "127.0.0.1:8080"`, `"--data-dir" "/var/lib/watchpost"`, `"--secure-cookies"`, `Environment=HOME=%h`, `NoNewPrivileges=true`, `PrivateTmp=true`, `ProtectSystem=strict`, `ProtectHome=read-only`, `ReadWritePaths=/var/lib/watchpost`, `# watchpost-listen: 127.0.0.1:8080`, `# watchpost-health: /healthz`, `WantedBy=default.target`} {
+	for _, want := range []string{`"--listen" "127.0.0.1:8080"`, `"--data-dir" "/var/lib/watchpost"`, `"--secure-cookies"`, `Environment=HOME=%h`, `NoNewPrivileges=true`, `PrivateTmp=true`, `ProtectSystem=strict`, `ProtectHome=read-only`, `ReadWritePaths="/var/lib/watchpost"`, `# watchpost-listen: 127.0.0.1:8080`, `# watchpost-health: /healthz`, `WantedBy=default.target`} {
 		if !strings.Contains(unit, want) {
 			t.Fatalf("unit missing %q\n%s", want, unit)
 		}
@@ -167,13 +169,13 @@ func TestValidateNoControl(t *testing.T) {
 		}
 	}
 	m, _, _ := newFakeManager(t)
-	if err := m.install("127.0.0.1:8080\nRestart=always", "/data", false, "", os.Stderr); err == nil {
+	if err := m.install("127.0.0.1:8080\nRestart=always", filepath.Join(t.TempDir(), "data"), false, "", os.Stderr); err == nil {
 		t.Fatal("install accepted a control-character listen address")
 	}
 }
 
 func TestManagedUnitIntegrity(t *testing.T) {
-	unit := buildWatchpostUnit("/usr/local/bin/watchpost", "127.0.0.1:8080", "/data", false, "")
+	unit := buildWatchpostUnit("/usr/local/bin/watchpost", "127.0.0.1:8080", filepath.Join(t.TempDir(), "data"), false, "")
 	if _, err := readManagedUnitBytes(t, []byte(unit)); err != nil {
 		t.Fatalf("valid unit rejected: %v", err)
 	}
@@ -222,7 +224,7 @@ func TestManagedUnitIntegrity(t *testing.T) {
 		}
 	})
 	t.Run("wrong health path rejected", func(t *testing.T) {
-		body := renderWatchpostUnitBody("/usr/local/bin/watchpost", "127.0.0.1:8080", "/data", false, "")
+		body := renderWatchpostUnitBody("/usr/local/bin/watchpost", "127.0.0.1:8080", filepath.Join(t.TempDir(), "data"), false, "")
 		content := "# watchpost-listen: 127.0.0.1:8080\n# watchpost-health: /other\n" + body
 		sum := sha256.Sum256([]byte(content))
 		bad := watchpostUnitMarker + "\n" + watchpostManagedPrefix + "v1 sha256=" + hex.EncodeToString(sum[:]) + "\n" + content
@@ -234,7 +236,7 @@ func TestManagedUnitIntegrity(t *testing.T) {
 
 func TestInstallAndIdempotence(t *testing.T) {
 	m, fr, _ := newFakeManager(t)
-	if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
+	if err := m.install("127.0.0.1:8080", filepath.Join(t.TempDir(), "data"), false, "", os.Stderr); err != nil {
 		t.Fatalf("install: %v", err)
 	}
 	unit, err := os.ReadFile(m.unitPath)
@@ -251,7 +253,7 @@ func TestInstallAndIdempotence(t *testing.T) {
 		}
 	}
 	fr.calls = nil
-	if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
+	if err := m.install("127.0.0.1:8080", filepath.Join(t.TempDir(), "data"), false, "", os.Stderr); err != nil {
 		t.Fatalf("idempotent reinstall: %v", err)
 	}
 	if !strings.Contains(strings.Join(fr.calls, "\n"), "systemctl --user start watchpost.service") {
@@ -267,14 +269,14 @@ func TestInstallRefusesForeignUnit(t *testing.T) {
 	if err := os.WriteFile(m.unitPath, []byte("# hand written\n[Service]\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err == nil {
+	if err := m.install("127.0.0.1:8080", filepath.Join(t.TempDir(), "data"), false, "", os.Stderr); err == nil {
 		t.Fatal("install overwrote a foreign unit")
 	}
 }
 
 func TestInstallRefusesModifiedManagedUnit(t *testing.T) {
 	m, _, _ := newFakeManager(t)
-	if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
+	if err := m.install("127.0.0.1:8080", filepath.Join(t.TempDir(), "data"), false, "", os.Stderr); err != nil {
 		t.Fatal(err)
 	}
 	unit, _ := os.ReadFile(m.unitPath)
@@ -282,7 +284,7 @@ func TestInstallRefusesModifiedManagedUnit(t *testing.T) {
 	if err := os.WriteFile(m.unitPath, []byte(tampered), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.install("127.0.0.1:8081", "/data", false, "", os.Stderr); err == nil {
+	if err := m.install("127.0.0.1:8081", filepath.Join(t.TempDir(), "data"), false, "", os.Stderr); err == nil {
 		t.Fatal("install silently overwrote a modified managed unit")
 	}
 }
@@ -292,7 +294,7 @@ func TestActionsRequireManagedUnit(t *testing.T) {
 	if err := m.action("start", os.Stderr); err == nil {
 		t.Fatal("start on a missing unit succeeded")
 	}
-	if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
+	if err := m.install("127.0.0.1:8080", filepath.Join(t.TempDir(), "data"), false, "", os.Stderr); err != nil {
 		t.Fatal(err)
 	}
 	unit, _ := os.ReadFile(m.unitPath)
@@ -317,7 +319,7 @@ func TestStrictExitFailures(t *testing.T) {
 			}
 			return "", 0, nil
 		}
-		if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err == nil {
+		if err := m.install("127.0.0.1:8080", filepath.Join(t.TempDir(), "data"), false, "", os.Stderr); err == nil {
 			t.Fatal("install succeeded despite a failed daemon-reload")
 		}
 		joined := strings.Join(fr.calls, "\n")
@@ -333,7 +335,7 @@ func TestStrictExitFailures(t *testing.T) {
 			}
 			return "", 0, nil
 		}
-		if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err == nil {
+		if err := m.install("127.0.0.1:8080", filepath.Join(t.TempDir(), "data"), false, "", os.Stderr); err == nil {
 			t.Fatal("install succeeded despite a failed enable")
 		}
 		if strings.Contains(strings.Join(fr.calls, "\n"), "start watchpost.service") {
@@ -343,7 +345,7 @@ func TestStrictExitFailures(t *testing.T) {
 	t.Run("lifecycle start/stop/restart nonzero reports failure", func(t *testing.T) {
 		for _, verb := range []string{"start", "stop", "restart"} {
 			m, fr, _ := newFakeManager(t)
-			if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
+			if err := m.install("127.0.0.1:8080", filepath.Join(t.TempDir(), "data"), false, "", os.Stderr); err != nil {
 				t.Fatal(err)
 			}
 			fr.calls = nil
@@ -360,7 +362,7 @@ func TestStrictExitFailures(t *testing.T) {
 	})
 	t.Run("uninstall stop nonzero preserves the unit", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
+		if err := m.install("127.0.0.1:8080", filepath.Join(t.TempDir(), "data"), false, "", os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.calls = nil
@@ -386,7 +388,7 @@ func TestStrictExitFailures(t *testing.T) {
 	})
 	t.Run("uninstall disable nonzero preserves the unit", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
+		if err := m.install("127.0.0.1:8080", filepath.Join(t.TempDir(), "data"), false, "", os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.calls = nil
@@ -413,7 +415,7 @@ func TestStrictExitFailures(t *testing.T) {
 	})
 	t.Run("logs reports nonzero journalctl", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
+		if err := m.install("127.0.0.1:8080", filepath.Join(t.TempDir(), "data"), false, "", os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.handler = func(name string, args ...string) (string, int, error) {
@@ -518,7 +520,7 @@ func TestTransitionalUninstall(t *testing.T) {
 	} {
 		t.Run(tc.state, func(t *testing.T) {
 			m, fr, _ := newFakeManager(t)
-			if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
+			if err := m.install("127.0.0.1:8080", filepath.Join(t.TempDir(), "data"), false, "", os.Stderr); err != nil {
 				t.Fatal(err)
 			}
 			fr.calls = nil
@@ -571,7 +573,7 @@ func TestIsEnabledUninstallPolicy(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.state, func(t *testing.T) {
 			m, fr, _ := newFakeManager(t)
-			if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
+			if err := m.install("127.0.0.1:8080", filepath.Join(t.TempDir(), "data"), false, "", os.Stderr); err != nil {
 				t.Fatal(err)
 			}
 			fr.calls = nil
@@ -619,7 +621,7 @@ func TestIsEnabledUninstallPolicy(t *testing.T) {
 func TestUninstallStateQueryFailures(t *testing.T) {
 	t.Run("is-active launch failure", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
+		if err := m.install("127.0.0.1:8080", filepath.Join(t.TempDir(), "data"), false, "", os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.calls = nil
@@ -642,7 +644,7 @@ func TestUninstallStateQueryFailures(t *testing.T) {
 	})
 	t.Run("is-active bus failure is not read as inactive", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
+		if err := m.install("127.0.0.1:8080", filepath.Join(t.TempDir(), "data"), false, "", os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.handler = func(name string, args ...string) (string, int, error) {
@@ -662,7 +664,7 @@ func TestUninstallStateQueryFailures(t *testing.T) {
 	})
 	t.Run("is-enabled bus failure", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
+		if err := m.install("127.0.0.1:8080", filepath.Join(t.TempDir(), "data"), false, "", os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.calls = nil
@@ -697,7 +699,7 @@ func TestDisableVerificationFailsClosed(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m, fr, _ := newFakeManager(t)
-			if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
+			if err := m.install("127.0.0.1:8080", filepath.Join(t.TempDir(), "data"), false, "", os.Stderr); err != nil {
 				t.Fatal(err)
 			}
 			fr.calls = nil
@@ -743,7 +745,7 @@ func TestUninstallRollback(t *testing.T) {
 
 	t.Run("success removes the unit and leaves no backup artifacts", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
+		if err := m.install("127.0.0.1:8080", filepath.Join(t.TempDir(), "data"), false, "", os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.handler = func(name string, args ...string) (string, int, error) {
@@ -768,7 +770,7 @@ func TestUninstallRollback(t *testing.T) {
 
 	t.Run("reload failure restores the original unit and removes the backup", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
+		if err := m.install("127.0.0.1:8080", filepath.Join(t.TempDir(), "data"), false, "", os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		orig, _ := os.ReadFile(m.unitPath)
@@ -812,7 +814,7 @@ func TestUninstallRollback(t *testing.T) {
 
 	t.Run("concurrent replacement is preserved and the backup is recoverable", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
+		if err := m.install("127.0.0.1:8080", filepath.Join(t.TempDir(), "data"), false, "", os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		orig, _ := os.ReadFile(m.unitPath)
@@ -863,7 +865,7 @@ func TestStatus(t *testing.T) {
 	})
 	t.Run("invalid unit", func(t *testing.T) {
 		m, _, _ := newFakeManager(t)
-		if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
+		if err := m.install("127.0.0.1:8080", filepath.Join(t.TempDir(), "data"), false, "", os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		unit, _ := os.ReadFile(m.unitPath)
@@ -876,7 +878,7 @@ func TestStatus(t *testing.T) {
 	})
 	t.Run("inactive service", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
+		if err := m.install("127.0.0.1:8080", filepath.Join(t.TempDir(), "data"), false, "", os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.handler = func(name string, args ...string) (string, int, error) {
@@ -894,7 +896,7 @@ func TestStatus(t *testing.T) {
 	})
 	t.Run("surfaces is-active bus failure", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
+		if err := m.install("127.0.0.1:8080", filepath.Join(t.TempDir(), "data"), false, "", os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.handler = func(name string, args ...string) (string, int, error) {
@@ -918,7 +920,7 @@ func TestStatus(t *testing.T) {
 		srv := jsonServer(t, 200, `{"status":"ok"}`, "application/json")
 		listen := strings.TrimPrefix(srv.URL, "http://")
 		m, fr, _ := newFakeManager(t)
-		if err := m.install(listen, "/data", false, "", os.Stderr); err != nil {
+		if err := m.install(listen, filepath.Join(t.TempDir(), "data"), false, "", os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.handler = activeHandler(fr)
@@ -929,7 +931,7 @@ func TestStatus(t *testing.T) {
 	t.Run("404 health response", func(t *testing.T) {
 		srv := jsonServer(t, 404, `{"error":"not found"}`, "application/json")
 		m, fr, _ := newFakeManager(t)
-		if err := m.install(strings.TrimPrefix(srv.URL, "http://"), "/data", false, "", os.Stderr); err != nil {
+		if err := m.install(strings.TrimPrefix(srv.URL, "http://"), filepath.Join(t.TempDir(), "data"), false, "", os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.handler = activeHandler(fr)
@@ -940,7 +942,7 @@ func TestStatus(t *testing.T) {
 	t.Run("401 health response", func(t *testing.T) {
 		srv := jsonServer(t, 401, `{"error":"unauthorized"}`, "application/json")
 		m, fr, _ := newFakeManager(t)
-		if err := m.install(strings.TrimPrefix(srv.URL, "http://"), "/data", false, "", os.Stderr); err != nil {
+		if err := m.install(strings.TrimPrefix(srv.URL, "http://"), filepath.Join(t.TempDir(), "data"), false, "", os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.handler = activeHandler(fr)
@@ -951,7 +953,7 @@ func TestStatus(t *testing.T) {
 	t.Run("non-JSON 200 health response", func(t *testing.T) {
 		srv := jsonServer(t, 200, `ok`, "text/plain")
 		m, fr, _ := newFakeManager(t)
-		if err := m.install(strings.TrimPrefix(srv.URL, "http://"), "/data", false, "", os.Stderr); err != nil {
+		if err := m.install(strings.TrimPrefix(srv.URL, "http://"), filepath.Join(t.TempDir(), "data"), false, "", os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.handler = activeHandler(fr)
@@ -1128,6 +1130,134 @@ func TestUnitMatchesForegroundConfig(t *testing.T) {
 		if !strings.Contains(unit, want) {
 			t.Fatalf("unit ExecStart does not match foreground config (%s):\n%s", want, unit)
 		}
+	}
+}
+
+func TestEnvFilePermissions(t *testing.T) {
+	dir := t.TempDir()
+	modes := []struct {
+		mode os.FileMode
+		ok   bool
+	}{
+		{0o000, false}, {0o200, false}, {0o400, false}, {0o600, true},
+		{0o640, false}, {0o660, false}, {0o666, false},
+	}
+	for _, tc := range modes {
+		env := filepath.Join(dir, fmt.Sprintf("env-%o", tc.mode))
+		if err := os.WriteFile(env, []byte("x\n"), tc.mode); err != nil {
+			t.Fatal(err)
+		}
+		if err := validateEnvFile(env); (err == nil) != tc.ok {
+			t.Fatalf("mode %04o: ok=%v err=%v", tc.mode, tc.ok, err)
+		}
+	}
+}
+
+func TestReadWritePath(t *testing.T) {
+	if err := validateReadWritePath("/home/nick/my data"); err != nil {
+		t.Fatalf("space path rejected: %v", err)
+	}
+	unit := buildWatchpostUnit("/usr/local/bin/watchpost", "127.0.0.1:8080", "/home/nick/my data", false, "")
+	if !strings.Contains(unit, `ReadWritePaths="/home/nick/my data"`) {
+		t.Fatalf("ReadWritePaths not quoted:\n%s", unit)
+	}
+	for _, bad := range []string{"/x/%h", "/x/\"/y", "/x/\\y", "-/weird", "+/weird", "!/weird", "~/weird", "relative"} {
+		if err := validateReadWritePath(bad); err == nil {
+			t.Fatalf("unsafe ReadWritePaths path accepted: %q", bad)
+		}
+	}
+}
+
+func TestFreshInstallPreparesDataDir(t *testing.T) {
+	m, _, _ := newFakeManager(t)
+	base := t.TempDir()
+	data := filepath.Join(base, "state", "data")
+	if err := m.install("127.0.0.1:8080", data, false, "", os.Stderr); err != nil {
+		t.Fatalf("fresh install failed: %v", err)
+	}
+	info, err := os.Stat(data)
+	if err != nil || !info.IsDir() {
+		t.Fatalf("data dir not created: %v", err)
+	}
+	if info.Mode().Perm() != 0o700 {
+		t.Fatalf("data dir mode=%v", info.Mode().Perm())
+	}
+	symTarget := filepath.Join(base, "target")
+	if err := os.MkdirAll(symTarget, 0700); err != nil {
+		t.Fatal(err)
+	}
+	sym := filepath.Join(base, "symlink")
+	if err := os.Symlink(symTarget, sym); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.install("127.0.0.1:8080", sym, false, "", os.Stderr); err == nil {
+		t.Fatal("symlink data dir accepted")
+	}
+	world := filepath.Join(base, "world")
+	if err := os.MkdirAll(world, 0777); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.install("127.0.0.1:8080", world, false, "", os.Stderr); err == nil {
+		t.Fatal("world-writable data dir accepted")
+	}
+}
+
+func TestEnvFileRevalidatedOnStartRestart(t *testing.T) {
+	m, fr, _ := newFakeManager(t)
+	dir := t.TempDir()
+	env := filepath.Join(dir, "watchpost.env")
+	if err := os.WriteFile(env, []byte("WATCHPOST_LISTEN=127.0.0.1:8080\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.install("127.0.0.1:8080", filepath.Join(t.TempDir(), "data"), false, env, os.Stderr); err != nil {
+		t.Fatal(err)
+	}
+	fr.handler = func(name string, args ...string) (string, int, error) {
+		if fr.contains(args, "is-active") || fr.contains(args, "is-enabled") {
+			return "active", 0, nil
+		}
+		return "", 0, nil
+	}
+	if err := m.action("restart", os.Stderr); err != nil {
+		t.Fatalf("restart with valid env file failed: %v", err)
+	}
+	if err := os.Remove(env); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.action("restart", os.Stderr); err == nil {
+		t.Fatal("restart succeeded with a missing env file")
+	}
+	if err := m.action("start", os.Stderr); err == nil {
+		t.Fatal("start succeeded with a missing env file")
+	}
+	if err := m.status(os.Stderr, "1.0"); err == nil {
+		t.Fatal("status succeeded with a missing env file")
+	}
+	if err := m.action("stop", os.Stderr); err != nil {
+		t.Fatalf("stop should remain possible: %v", err)
+	}
+}
+
+func TestReleaseMatrixBuilds(t *testing.T) {
+	targets := []struct{ goos, goarch string }{
+		{"linux", "amd64"}, {"linux", "arm64"},
+		{"darwin", "amd64"}, {"darwin", "arm64"},
+		{"windows", "amd64"}, {"windows", "arm64"},
+	}
+	for _, tc := range targets {
+		t.Run(tc.goos+"/"+tc.goarch, func(t *testing.T) {
+			name := "watchpost"
+			if tc.goos == "windows" {
+				name = "watchpost.exe"
+			}
+			dir := t.TempDir()
+			cmd := exec.Command("go", "build", "-o", filepath.Join(dir, name), ".")
+			cmd.Env = append(os.Environ(), "GOOS="+tc.goos, "GOARCH="+tc.goarch, "CGO_ENABLED=0")
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("%s/%s build failed: %v\n%s", tc.goos, tc.goarch, err, out)
+			}
+		})
 	}
 }
 

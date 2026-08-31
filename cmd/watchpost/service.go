@@ -14,8 +14,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -93,9 +93,9 @@ type unitMeta struct {
 }
 
 // validateEnvFile validates an EnvironmentFile path for the service unit:
-// absolute, a regular non-symlink file, owner-only permissions, owned by the
-// invoking user, and free of systemd specifier and control characters. Secret
-// values are never read or embedded.
+// absolute, a regular non-symlink file with exactly owner-only 0600
+// permissions, owned by the invoking user, and free of systemd specifier and
+// control characters. Secret values are never read or embedded.
 func validateEnvFile(path string) error {
 	if !filepath.IsAbs(path) {
 		return fmt.Errorf("environment file %q must be an absolute path", path)
@@ -116,14 +116,58 @@ func validateEnvFile(path string) error {
 	if !info.Mode().IsRegular() {
 		return fmt.Errorf("environment file %q must be a regular file", path)
 	}
+	if info.Mode().Perm() != 0o600 {
+		return fmt.Errorf("environment file %q must have exactly 0600 permissions (owner read/write only)", path)
+	}
+	if err := fileOwnerOK(info); err != nil {
+		return fmt.Errorf("environment file %q: %w", path, err)
+	}
+	return nil
+}
+
+// prepareDataDir creates the service data directory with owner-only permissions
+// and refuses symlinks, non-directories, unsafe permissions or wrong ownership.
+func prepareDataDir(path string) error {
+	if err := os.MkdirAll(path, 0700); err != nil {
+		return fmt.Errorf("cannot create data directory %q: %w", path, err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("data directory %q: %w", path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("data directory %q must not be a symlink", path)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("data directory %q is not a directory", path)
+	}
 	if info.Mode().Perm()&0o022 != 0 {
-		return fmt.Errorf("environment file %q must not be group- or world-writable", path)
+		return fmt.Errorf("data directory %q must not be group- or world-writable", path)
 	}
-	if info.Mode().Perm()&0o077 != 0 {
-		return fmt.Errorf("environment file %q must be owner-only (0600)", path)
+	if err := fileOwnerOK(info); err != nil {
+		return fmt.Errorf("data directory %q: %w", path, err)
 	}
-	if stat, ok := info.Sys().(*syscall.Stat_t); ok && int(stat.Uid) != os.Getuid() {
-		return fmt.Errorf("environment file %q must be owned by the invoking user", path)
+	return nil
+}
+
+// validateReadWritePath validates a data directory for the ReadWritePaths=
+// directive: absolute, free of control characters, systemd specifiers, quotes
+// and backslashes, and not starting with a special path-list prefix.
+func validateReadWritePath(path string) error {
+	if !filepath.IsAbs(path) {
+		return fmt.Errorf("data directory %q must be an absolute path", path)
+	}
+	if err := validateNoControl(path, "data directory"); err != nil {
+		return err
+	}
+	if strings.ContainsAny(path, "%") {
+		return fmt.Errorf("data directory %q must not contain systemd specifiers (%% )", path)
+	}
+	if strings.ContainsAny(path, `"\`) {
+		return fmt.Errorf("data directory %q cannot be safely quoted in ReadWritePaths", path)
+	}
+	if len(path) > 0 && strings.ContainsRune("-+!~", rune(path[0])) {
+		return fmt.Errorf("data directory %q starts with a ReadWritePaths special prefix; use a plain absolute path", path)
 	}
 	return nil
 }
@@ -303,7 +347,7 @@ func renderWatchpostUnitBody(exe, listen, dataDir string, secureCookies bool, en
 	b.WriteString("PrivateTmp=true\n")
 	b.WriteString("ProtectSystem=strict\n")
 	b.WriteString("ProtectHome=read-only\n")
-	b.WriteString("ReadWritePaths=" + dataDir + "\n")
+	b.WriteString("ReadWritePaths=" + systemdQuote(dataDir) + "\n")
 	if envfile != "" {
 		b.WriteString("EnvironmentFile=" + systemdQuote(envfile) + "\n")
 	}
@@ -543,6 +587,20 @@ func (m *serviceManager) requireManaged(verb string) error {
 	return nil
 }
 
+// revalidateEnv checks the currently recorded environment file again so a file
+// deleted or made unsafe since install cannot silently change the service's
+// configuration. Stop, logs and uninstall intentionally skip this so operators
+// are never trapped with an unmanageable service.
+func (m *serviceManager) revalidateEnv(meta unitMeta) error {
+	if meta.envfile == "" {
+		return nil
+	}
+	if err := validateEnvFile(meta.envfile); err != nil {
+		return fmt.Errorf("the recorded environment file is no longer valid: %w", err)
+	}
+	return nil
+}
+
 func (m *serviceManager) install(listen, dataDir string, secureCookies bool, envfile string, out io.Writer) error {
 	for _, v := range []struct{ val, name string }{
 		{listen, "listen"}, {dataDir, "data-dir"},
@@ -550,6 +608,12 @@ func (m *serviceManager) install(listen, dataDir string, secureCookies bool, env
 		if err := validateNoControl(v.val, v.name); err != nil {
 			return err
 		}
+	}
+	if err := validateReadWritePath(dataDir); err != nil {
+		return err
+	}
+	if err := prepareDataDir(dataDir); err != nil {
+		return err
 	}
 	if envfile != "" {
 		if err := validateEnvFile(envfile); err != nil {
@@ -584,6 +648,15 @@ func (m *serviceManager) action(verb string, out io.Writer) error {
 	if err := m.requireManaged(verb); err != nil {
 		return err
 	}
+	if verb == "start" || verb == "restart" {
+		meta, err := readManagedUnit(m.unitPath)
+		if err != nil {
+			return err
+		}
+		if err := m.revalidateEnv(meta); err != nil {
+			return fmt.Errorf("refusing to %s %s: %w", verb, m.unitName, err)
+		}
+	}
 	o, code, err := m.systemctl(verb, m.unitName)
 	if out != nil && strings.TrimSpace(o) != "" {
 		fmt.Fprintln(out, strings.TrimSpace(o))
@@ -608,6 +681,9 @@ func (m *serviceManager) status(out io.Writer, version string) error {
 	enabled, err := m.queryState("is-enabled")
 	if err != nil {
 		return fmt.Errorf("cannot determine %s enablement state: %w", m.unitName, err)
+	}
+	if err := m.revalidateEnv(meta); err != nil {
+		return fmt.Errorf("cannot report status: %w", err)
 	}
 	active, err := m.queryState("is-active")
 	if err != nil {
@@ -815,6 +891,10 @@ func runService(args []string, version string) int {
 	}
 	if *system {
 		fmt.Fprintln(os.Stderr, "watchpost: system-wide service mode is not yet supported; use user mode (default) or the foreground command")
+		return 2
+	}
+	if runtime.GOOS != "linux" {
+		fmt.Fprintln(os.Stderr, "watchpost: service installation requires Linux systemd")
 		return 2
 	}
 	if _, err := exec.LookPath("systemctl"); err != nil {
