@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/watchpost-ops/watchpost/internal/config"
 )
 
 type fakeRunner struct {
@@ -104,7 +106,7 @@ func readManagedUnitBytes(t *testing.T, data []byte) (unitMeta, error) {
 }
 
 func TestBuildWatchpostUnit(t *testing.T) {
-	unit := buildWatchpostUnit("/usr/local/bin/watchpost", "127.0.0.1:8080", "/var/lib/watchpost", true)
+	unit := buildWatchpostUnit("/usr/local/bin/watchpost", "127.0.0.1:8080", "/var/lib/watchpost", true, "")
 	if !strings.Contains(unit, watchpostUnitMarker) {
 		t.Fatal("missing managed marker")
 	}
@@ -117,7 +119,7 @@ func TestBuildWatchpostUnit(t *testing.T) {
 	if strings.Contains(unit, "sh -c") {
 		t.Fatal("unit must not use a shell wrapper")
 	}
-	for _, want := range []string{`"--listen" "127.0.0.1:8080"`, `"--data-dir" "/var/lib/watchpost"`, `"--secure-cookies"`, `Environment=HOME=%h`, `# watchpost-listen: 127.0.0.1:8080`, `# watchpost-health: /healthz`, `WantedBy=default.target`} {
+	for _, want := range []string{`"--listen" "127.0.0.1:8080"`, `"--data-dir" "/var/lib/watchpost"`, `"--secure-cookies"`, `Environment=HOME=%h`, `NoNewPrivileges=true`, `PrivateTmp=true`, `ProtectSystem=strict`, `ProtectHome=read-only`, `ReadWritePaths=/var/lib/watchpost`, `# watchpost-listen: 127.0.0.1:8080`, `# watchpost-health: /healthz`, `WantedBy=default.target`} {
 		if !strings.Contains(unit, want) {
 			t.Fatalf("unit missing %q\n%s", want, unit)
 		}
@@ -165,13 +167,13 @@ func TestValidateNoControl(t *testing.T) {
 		}
 	}
 	m, _, _ := newFakeManager(t)
-	if err := m.install("127.0.0.1:8080\nRestart=always", "/data", false, os.Stderr); err == nil {
+	if err := m.install("127.0.0.1:8080\nRestart=always", "/data", false, "", os.Stderr); err == nil {
 		t.Fatal("install accepted a control-character listen address")
 	}
 }
 
 func TestManagedUnitIntegrity(t *testing.T) {
-	unit := buildWatchpostUnit("/usr/local/bin/watchpost", "127.0.0.1:8080", "/data", false)
+	unit := buildWatchpostUnit("/usr/local/bin/watchpost", "127.0.0.1:8080", "/data", false, "")
 	if _, err := readManagedUnitBytes(t, []byte(unit)); err != nil {
 		t.Fatalf("valid unit rejected: %v", err)
 	}
@@ -220,7 +222,7 @@ func TestManagedUnitIntegrity(t *testing.T) {
 		}
 	})
 	t.Run("wrong health path rejected", func(t *testing.T) {
-		body := renderWatchpostUnitBody("/usr/local/bin/watchpost", "127.0.0.1:8080", "/data", false)
+		body := renderWatchpostUnitBody("/usr/local/bin/watchpost", "127.0.0.1:8080", "/data", false, "")
 		content := "# watchpost-listen: 127.0.0.1:8080\n# watchpost-health: /other\n" + body
 		sum := sha256.Sum256([]byte(content))
 		bad := watchpostUnitMarker + "\n" + watchpostManagedPrefix + "v1 sha256=" + hex.EncodeToString(sum[:]) + "\n" + content
@@ -232,7 +234,7 @@ func TestManagedUnitIntegrity(t *testing.T) {
 
 func TestInstallAndIdempotence(t *testing.T) {
 	m, fr, _ := newFakeManager(t)
-	if err := m.install("127.0.0.1:8080", "/data", false, os.Stderr); err != nil {
+	if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
 		t.Fatalf("install: %v", err)
 	}
 	unit, err := os.ReadFile(m.unitPath)
@@ -249,7 +251,7 @@ func TestInstallAndIdempotence(t *testing.T) {
 		}
 	}
 	fr.calls = nil
-	if err := m.install("127.0.0.1:8080", "/data", false, os.Stderr); err != nil {
+	if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
 		t.Fatalf("idempotent reinstall: %v", err)
 	}
 	if !strings.Contains(strings.Join(fr.calls, "\n"), "systemctl --user start watchpost.service") {
@@ -265,14 +267,14 @@ func TestInstallRefusesForeignUnit(t *testing.T) {
 	if err := os.WriteFile(m.unitPath, []byte("# hand written\n[Service]\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.install("127.0.0.1:8080", "/data", false, os.Stderr); err == nil {
+	if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err == nil {
 		t.Fatal("install overwrote a foreign unit")
 	}
 }
 
 func TestInstallRefusesModifiedManagedUnit(t *testing.T) {
 	m, _, _ := newFakeManager(t)
-	if err := m.install("127.0.0.1:8080", "/data", false, os.Stderr); err != nil {
+	if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
 		t.Fatal(err)
 	}
 	unit, _ := os.ReadFile(m.unitPath)
@@ -280,7 +282,7 @@ func TestInstallRefusesModifiedManagedUnit(t *testing.T) {
 	if err := os.WriteFile(m.unitPath, []byte(tampered), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.install("127.0.0.1:8081", "/data", false, os.Stderr); err == nil {
+	if err := m.install("127.0.0.1:8081", "/data", false, "", os.Stderr); err == nil {
 		t.Fatal("install silently overwrote a modified managed unit")
 	}
 }
@@ -290,7 +292,7 @@ func TestActionsRequireManagedUnit(t *testing.T) {
 	if err := m.action("start", os.Stderr); err == nil {
 		t.Fatal("start on a missing unit succeeded")
 	}
-	if err := m.install("127.0.0.1:8080", "/data", false, os.Stderr); err != nil {
+	if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
 		t.Fatal(err)
 	}
 	unit, _ := os.ReadFile(m.unitPath)
@@ -315,7 +317,7 @@ func TestStrictExitFailures(t *testing.T) {
 			}
 			return "", 0, nil
 		}
-		if err := m.install("127.0.0.1:8080", "/data", false, os.Stderr); err == nil {
+		if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err == nil {
 			t.Fatal("install succeeded despite a failed daemon-reload")
 		}
 		joined := strings.Join(fr.calls, "\n")
@@ -331,7 +333,7 @@ func TestStrictExitFailures(t *testing.T) {
 			}
 			return "", 0, nil
 		}
-		if err := m.install("127.0.0.1:8080", "/data", false, os.Stderr); err == nil {
+		if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err == nil {
 			t.Fatal("install succeeded despite a failed enable")
 		}
 		if strings.Contains(strings.Join(fr.calls, "\n"), "start watchpost.service") {
@@ -341,7 +343,7 @@ func TestStrictExitFailures(t *testing.T) {
 	t.Run("lifecycle start/stop/restart nonzero reports failure", func(t *testing.T) {
 		for _, verb := range []string{"start", "stop", "restart"} {
 			m, fr, _ := newFakeManager(t)
-			if err := m.install("127.0.0.1:8080", "/data", false, os.Stderr); err != nil {
+			if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
 				t.Fatal(err)
 			}
 			fr.calls = nil
@@ -358,7 +360,7 @@ func TestStrictExitFailures(t *testing.T) {
 	})
 	t.Run("uninstall stop nonzero preserves the unit", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("127.0.0.1:8080", "/data", false, os.Stderr); err != nil {
+		if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.calls = nil
@@ -384,7 +386,7 @@ func TestStrictExitFailures(t *testing.T) {
 	})
 	t.Run("uninstall disable nonzero preserves the unit", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("127.0.0.1:8080", "/data", false, os.Stderr); err != nil {
+		if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.calls = nil
@@ -411,7 +413,7 @@ func TestStrictExitFailures(t *testing.T) {
 	})
 	t.Run("logs reports nonzero journalctl", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("127.0.0.1:8080", "/data", false, os.Stderr); err != nil {
+		if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.handler = func(name string, args ...string) (string, int, error) {
@@ -516,7 +518,7 @@ func TestTransitionalUninstall(t *testing.T) {
 	} {
 		t.Run(tc.state, func(t *testing.T) {
 			m, fr, _ := newFakeManager(t)
-			if err := m.install("127.0.0.1:8080", "/data", false, os.Stderr); err != nil {
+			if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
 				t.Fatal(err)
 			}
 			fr.calls = nil
@@ -569,7 +571,7 @@ func TestIsEnabledUninstallPolicy(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.state, func(t *testing.T) {
 			m, fr, _ := newFakeManager(t)
-			if err := m.install("127.0.0.1:8080", "/data", false, os.Stderr); err != nil {
+			if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
 				t.Fatal(err)
 			}
 			fr.calls = nil
@@ -617,7 +619,7 @@ func TestIsEnabledUninstallPolicy(t *testing.T) {
 func TestUninstallStateQueryFailures(t *testing.T) {
 	t.Run("is-active launch failure", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("127.0.0.1:8080", "/data", false, os.Stderr); err != nil {
+		if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.calls = nil
@@ -640,7 +642,7 @@ func TestUninstallStateQueryFailures(t *testing.T) {
 	})
 	t.Run("is-active bus failure is not read as inactive", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("127.0.0.1:8080", "/data", false, os.Stderr); err != nil {
+		if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.handler = func(name string, args ...string) (string, int, error) {
@@ -660,7 +662,7 @@ func TestUninstallStateQueryFailures(t *testing.T) {
 	})
 	t.Run("is-enabled bus failure", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("127.0.0.1:8080", "/data", false, os.Stderr); err != nil {
+		if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.calls = nil
@@ -695,7 +697,7 @@ func TestDisableVerificationFailsClosed(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m, fr, _ := newFakeManager(t)
-			if err := m.install("127.0.0.1:8080", "/data", false, os.Stderr); err != nil {
+			if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
 				t.Fatal(err)
 			}
 			fr.calls = nil
@@ -741,7 +743,7 @@ func TestUninstallRollback(t *testing.T) {
 
 	t.Run("success removes the unit and leaves no backup artifacts", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("127.0.0.1:8080", "/data", false, os.Stderr); err != nil {
+		if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.handler = func(name string, args ...string) (string, int, error) {
@@ -766,7 +768,7 @@ func TestUninstallRollback(t *testing.T) {
 
 	t.Run("reload failure restores the original unit and removes the backup", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("127.0.0.1:8080", "/data", false, os.Stderr); err != nil {
+		if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		orig, _ := os.ReadFile(m.unitPath)
@@ -810,7 +812,7 @@ func TestUninstallRollback(t *testing.T) {
 
 	t.Run("concurrent replacement is preserved and the backup is recoverable", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("127.0.0.1:8080", "/data", false, os.Stderr); err != nil {
+		if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		orig, _ := os.ReadFile(m.unitPath)
@@ -861,7 +863,7 @@ func TestStatus(t *testing.T) {
 	})
 	t.Run("invalid unit", func(t *testing.T) {
 		m, _, _ := newFakeManager(t)
-		if err := m.install("127.0.0.1:8080", "/data", false, os.Stderr); err != nil {
+		if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		unit, _ := os.ReadFile(m.unitPath)
@@ -874,7 +876,7 @@ func TestStatus(t *testing.T) {
 	})
 	t.Run("inactive service", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("127.0.0.1:8080", "/data", false, os.Stderr); err != nil {
+		if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.handler = func(name string, args ...string) (string, int, error) {
@@ -892,7 +894,7 @@ func TestStatus(t *testing.T) {
 	})
 	t.Run("surfaces is-active bus failure", func(t *testing.T) {
 		m, fr, _ := newFakeManager(t)
-		if err := m.install("127.0.0.1:8080", "/data", false, os.Stderr); err != nil {
+		if err := m.install("127.0.0.1:8080", "/data", false, "", os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.handler = func(name string, args ...string) (string, int, error) {
@@ -916,7 +918,7 @@ func TestStatus(t *testing.T) {
 		srv := jsonServer(t, 200, `{"status":"ok"}`, "application/json")
 		listen := strings.TrimPrefix(srv.URL, "http://")
 		m, fr, _ := newFakeManager(t)
-		if err := m.install(listen, "/data", false, os.Stderr); err != nil {
+		if err := m.install(listen, "/data", false, "", os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.handler = activeHandler(fr)
@@ -927,7 +929,7 @@ func TestStatus(t *testing.T) {
 	t.Run("404 health response", func(t *testing.T) {
 		srv := jsonServer(t, 404, `{"error":"not found"}`, "application/json")
 		m, fr, _ := newFakeManager(t)
-		if err := m.install(strings.TrimPrefix(srv.URL, "http://"), "/data", false, os.Stderr); err != nil {
+		if err := m.install(strings.TrimPrefix(srv.URL, "http://"), "/data", false, "", os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.handler = activeHandler(fr)
@@ -938,7 +940,7 @@ func TestStatus(t *testing.T) {
 	t.Run("401 health response", func(t *testing.T) {
 		srv := jsonServer(t, 401, `{"error":"unauthorized"}`, "application/json")
 		m, fr, _ := newFakeManager(t)
-		if err := m.install(strings.TrimPrefix(srv.URL, "http://"), "/data", false, os.Stderr); err != nil {
+		if err := m.install(strings.TrimPrefix(srv.URL, "http://"), "/data", false, "", os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.handler = activeHandler(fr)
@@ -949,7 +951,7 @@ func TestStatus(t *testing.T) {
 	t.Run("non-JSON 200 health response", func(t *testing.T) {
 		srv := jsonServer(t, 200, `ok`, "text/plain")
 		m, fr, _ := newFakeManager(t)
-		if err := m.install(strings.TrimPrefix(srv.URL, "http://"), "/data", false, os.Stderr); err != nil {
+		if err := m.install(strings.TrimPrefix(srv.URL, "http://"), "/data", false, "", os.Stderr); err != nil {
 			t.Fatal(err)
 		}
 		fr.handler = activeHandler(fr)
@@ -957,6 +959,176 @@ func TestStatus(t *testing.T) {
 			t.Fatal("status with a non-JSON 200 health response should fail")
 		}
 	})
+}
+
+func TestBackupManagedUnitNoReplace(t *testing.T) {
+	dirEntries := func(dir string) []string {
+		ents, err := os.ReadDir(dir)
+		if err != nil {
+			return nil
+		}
+		var out []string
+		for _, e := range ents {
+			out = append(out, e.Name())
+		}
+		return out
+	}
+
+	t.Run("random source failure leaves the original intact", func(t *testing.T) {
+		orig := randomSuffix
+		randomSuffix = func() (string, error) { return "", errors.New("rand failed") }
+		t.Cleanup(func() { randomSuffix = orig })
+		dir := t.TempDir()
+		unit := filepath.Join(dir, "app.service")
+		if err := os.WriteFile(unit, []byte("unit"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := backupManagedUnit(unit); err == nil {
+			t.Fatal("random-source failure should error")
+		}
+		if got, _ := os.ReadFile(unit); string(got) != "unit" {
+			t.Fatalf("original changed: %q", got)
+		}
+		if entries := dirEntries(dir); len(entries) != 1 {
+			t.Fatalf("unexpected entries after failure: %v", entries)
+		}
+	})
+
+	t.Run("collision never overwrites a retained backup", func(t *testing.T) {
+		orig := randomSuffix
+		randomSuffix = func() (string, error) { return "aa", nil }
+		t.Cleanup(func() { randomSuffix = orig })
+		dir := t.TempDir()
+		unit := filepath.Join(dir, "app.service")
+		retained := filepath.Join(dir, ".app.service.unit-backup-aa")
+		if err := os.WriteFile(unit, []byte("unit"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(retained, []byte("retained"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := backupManagedUnit(unit); err == nil {
+			t.Fatal("all candidates collided; should error")
+		}
+		if got, _ := os.ReadFile(retained); string(got) != "retained" {
+			t.Fatalf("retained backup was overwritten: %q", got)
+		}
+		if got, _ := os.ReadFile(unit); string(got) != "unit" {
+			t.Fatalf("original changed: %q", got)
+		}
+	})
+
+	t.Run("unlink failure aborts and leaves no artifact", func(t *testing.T) {
+		origSuffix, origRemove := randomSuffix, removeFile
+		randomSuffix = func() (string, error) { return "bb", nil }
+		removeFile = func(p string) error { return errors.New("remove failed") }
+		t.Cleanup(func() { randomSuffix, removeFile = origSuffix, origRemove })
+		dir := t.TempDir()
+		unit := filepath.Join(dir, "app.service")
+		if err := os.WriteFile(unit, []byte("unit"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := backupManagedUnit(unit); err == nil {
+			t.Fatal("unlink failure should error")
+		}
+		if got, _ := os.ReadFile(unit); string(got) != "unit" {
+			t.Fatalf("original changed: %q", got)
+		}
+		if entries := dirEntries(dir); len(entries) != 1 {
+			t.Fatalf("backup artifact left after aborted transaction: %v", entries)
+		}
+	})
+}
+
+func TestEnvFile(t *testing.T) {
+	dir := t.TempDir()
+	env := filepath.Join(dir, "watchpost.env")
+	if err := os.WriteFile(env, []byte("WATCHPOST_MASTER_KEY_FILE=/secure/key\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("unit includes EnvironmentFile and authenticated metadata", func(t *testing.T) {
+		unit := buildWatchpostUnit("/usr/local/bin/watchpost", "127.0.0.1:8080", "/data", false, env)
+		if !strings.Contains(unit, "EnvironmentFile="+systemdQuote(env)) {
+			t.Fatalf("unit missing EnvironmentFile\n%s", unit)
+		}
+		if !strings.Contains(unit, "# watchpost-envfile: "+env) {
+			t.Fatalf("unit missing envfile metadata\n%s", unit)
+		}
+		meta, err := readManagedUnitBytes(t, []byte(unit))
+		if err != nil {
+			t.Fatalf("unit should validate: %v", err)
+		}
+		if meta.envfile != env {
+			t.Fatalf("meta.envfile=%q", meta.envfile)
+		}
+	})
+
+	t.Run("validateEnvFile rejects unsafe files", func(t *testing.T) {
+		if err := validateEnvFile(env); err != nil {
+			t.Fatalf("valid env file rejected: %v", err)
+		}
+		if err := validateEnvFile("relative.env"); err == nil {
+			t.Fatal("relative path accepted")
+		}
+		sym := filepath.Join(dir, "link.env")
+		if err := os.Symlink(env, sym); err != nil {
+			t.Fatal(err)
+		}
+		if err := validateEnvFile(sym); err == nil {
+			t.Fatal("symlink accepted")
+		}
+		world := filepath.Join(dir, "world.env")
+		if err := os.WriteFile(world, []byte("x"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := validateEnvFile(world); err == nil {
+			t.Fatal("group/world-writable accepted")
+		}
+		percent := filepath.Join(dir, "bad%env")
+		if err := os.WriteFile(percent, []byte("x"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := validateEnvFile(percent); err == nil {
+			t.Fatal("systemd specifier character accepted")
+		}
+	})
+
+	t.Run("install validates the environment file", func(t *testing.T) {
+		m, _, _ := newFakeManager(t)
+		world := filepath.Join(dir, "world2.env")
+		if err := os.WriteFile(world, []byte("x"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.install("127.0.0.1:8080", "/data", false, world, os.Stderr); err == nil {
+			t.Fatal("install accepted an unsafe environment file")
+		}
+	})
+}
+
+func TestResolveInstallValuesPreservesInstalledConfig(t *testing.T) {
+	meta := unitMeta{listen: "127.0.0.1:9001", data: "/srv/watchpost", secure: true, envfile: "/secure/env"}
+	l, d, s, e := resolveInstallValues(meta, map[string]bool{}, "127.0.0.1:8080", "", false, "")
+	if l != "127.0.0.1:9001" || d != "/srv/watchpost" || !s || e != "/secure/env" {
+		t.Fatalf("omitted flags did not preserve installed config: listen=%q data=%q secure=%v env=%q", l, d, s, e)
+	}
+	l, d, s, e = resolveInstallValues(meta, map[string]bool{"listen": true, "data-dir": true, "secure-cookies": true, "env-file": true}, "127.0.0.1:8082", "/new", false, "/new.env")
+	if l != "127.0.0.1:8082" || d != "/new" || s || e != "/new.env" {
+		t.Fatalf("explicit overrides did not win: listen=%q data=%q secure=%v env=%q", l, d, s, e)
+	}
+}
+
+func TestUnitMatchesForegroundConfig(t *testing.T) {
+	cfg, err := config.Load(config.Overrides{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unit := buildWatchpostUnit("/usr/local/bin/watchpost", cfg.Listen, cfg.DataDir, false, "")
+	for _, want := range []string{`"--listen" "` + cfg.Listen + `"`, `"--data-dir" "` + cfg.DataDir + `"`} {
+		if !strings.Contains(unit, want) {
+			t.Fatalf("unit ExecStart does not match foreground config (%s):\n%s", want, unit)
+		}
+	}
 }
 
 func TestRunServiceDispatchErrors(t *testing.T) {

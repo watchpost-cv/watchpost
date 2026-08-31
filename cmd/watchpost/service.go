@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -84,8 +85,47 @@ type serviceManager struct {
 }
 
 type unitMeta struct {
-	listen string
-	health string
+	listen   string
+	data     string
+	envfile  string
+	secure   bool
+	health   string
+}
+
+// validateEnvFile validates an EnvironmentFile path for the service unit:
+// absolute, a regular non-symlink file, owner-only permissions, owned by the
+// invoking user, and free of systemd specifier and control characters. Secret
+// values are never read or embedded.
+func validateEnvFile(path string) error {
+	if !filepath.IsAbs(path) {
+		return fmt.Errorf("environment file %q must be an absolute path", path)
+	}
+	if err := validateNoControl(path, "environment file"); err != nil {
+		return err
+	}
+	if strings.ContainsAny(path, "%") {
+		return fmt.Errorf("environment file %q must not contain systemd specifiers (%% )", path)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("environment file: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("environment file %q must not be a symlink", path)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("environment file %q must be a regular file", path)
+	}
+	if info.Mode().Perm()&0o022 != 0 {
+		return fmt.Errorf("environment file %q must not be group- or world-writable", path)
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("environment file %q must be owner-only (0600)", path)
+	}
+	if stat, ok := info.Sys().(*syscall.Stat_t); ok && int(stat.Uid) != os.Getuid() {
+		return fmt.Errorf("environment file %q must be owned by the invoking user", path)
+	}
+	return nil
 }
 
 func userUnitPath(unitName string) string {
@@ -241,7 +281,7 @@ func systemdQuote(s string) string {
 	return b.String()
 }
 
-func renderWatchpostUnitBody(exe, listen, dataDir string, secureCookies bool) string {
+func renderWatchpostUnitBody(exe, listen, dataDir string, secureCookies bool, envfile string) string {
 	var b strings.Builder
 	b.WriteString("[Unit]\n")
 	b.WriteString("Description=Watchpost monitoring service\n")
@@ -259,13 +299,29 @@ func renderWatchpostUnitBody(exe, listen, dataDir string, secureCookies bool) st
 	b.WriteString("WorkingDirectory=" + systemdQuote(filepath.Dir(exe)) + "\n")
 	b.WriteString("Restart=on-failure\n")
 	b.WriteString("Environment=HOME=%h\n")
+	b.WriteString("NoNewPrivileges=true\n")
+	b.WriteString("PrivateTmp=true\n")
+	b.WriteString("ProtectSystem=strict\n")
+	b.WriteString("ProtectHome=read-only\n")
+	b.WriteString("ReadWritePaths=" + dataDir + "\n")
+	if envfile != "" {
+		b.WriteString("EnvironmentFile=" + systemdQuote(envfile) + "\n")
+	}
 	b.WriteString("\n[Install]\n")
 	b.WriteString("WantedBy=default.target\n")
 	return b.String()
 }
 
-func buildWatchpostUnit(exe, listen, dataDir string, secureCookies bool) string {
-	content := "# watchpost-listen: " + listen + "\n# watchpost-health: " + watchpostHealthPath + "\n" + renderWatchpostUnitBody(exe, listen, dataDir, secureCookies)
+func buildWatchpostUnit(exe, listen, dataDir string, secureCookies bool, envfile string) string {
+	meta := "# watchpost-listen: " + listen + "\n# watchpost-data: " + dataDir + "\n"
+	if secureCookies {
+		meta += "# watchpost-secure-cookies: 1\n"
+	}
+	if envfile != "" {
+		meta += "# watchpost-envfile: " + envfile + "\n"
+	}
+	meta += "# watchpost-health: " + watchpostHealthPath + "\n"
+	content := meta + renderWatchpostUnitBody(exe, listen, dataDir, secureCookies, envfile)
 	sum := sha256.Sum256([]byte(content))
 	header := watchpostUnitMarker + "\n" + watchpostManagedPrefix + "v1 sha256=" + hex.EncodeToString(sum[:]) + "\n"
 	return header + content
@@ -299,7 +355,7 @@ func readManagedUnit(path string) (unitMeta, error) {
 		return unitMeta{}, errModified
 	}
 	meta := unitMeta{}
-	listenSeen, healthSeen := 0, 0
+	listenSeen, dataSeen, envfileSeen, secureSeen, healthSeen := 0, 0, 0, 0, 0
 	for _, ln := range lines[2:] {
 		switch {
 		case strings.HasPrefix(ln, "# watchpost-listen: "):
@@ -308,6 +364,24 @@ func readManagedUnit(path string) (unitMeta, error) {
 				return unitMeta{}, errMalformed
 			}
 			meta.listen = strings.TrimSpace(strings.TrimPrefix(ln, "# watchpost-listen: "))
+		case strings.HasPrefix(ln, "# watchpost-data: "):
+			dataSeen++
+			if dataSeen > 1 {
+				return unitMeta{}, errMalformed
+			}
+			meta.data = strings.TrimSpace(strings.TrimPrefix(ln, "# watchpost-data: "))
+		case strings.HasPrefix(ln, "# watchpost-envfile: "):
+			envfileSeen++
+			if envfileSeen > 1 {
+				return unitMeta{}, errMalformed
+			}
+			meta.envfile = strings.TrimSpace(strings.TrimPrefix(ln, "# watchpost-envfile: "))
+		case strings.HasPrefix(ln, "# watchpost-secure-cookies: "):
+			secureSeen++
+			if secureSeen > 1 {
+				return unitMeta{}, errMalformed
+			}
+			meta.secure = strings.TrimSpace(strings.TrimPrefix(ln, "# watchpost-secure-cookies: ")) == "1"
 		case strings.HasPrefix(ln, "# watchpost-health: "):
 			healthSeen++
 			if healthSeen > 1 {
@@ -316,16 +390,62 @@ func readManagedUnit(path string) (unitMeta, error) {
 			meta.health = strings.TrimSpace(strings.TrimPrefix(ln, "# watchpost-health: "))
 		}
 	}
-	if listenSeen != 1 || healthSeen != 1 || meta.listen == "" || meta.health == "" {
+	if listenSeen != 1 || dataSeen != 1 || healthSeen != 1 || meta.listen == "" || meta.data == "" || meta.health == "" {
+		return unitMeta{}, errMalformed
+	}
+	if envfileSeen > 1 || secureSeen > 1 {
 		return unitMeta{}, errMalformed
 	}
 	if meta.health != watchpostHealthPath {
 		return unitMeta{}, errMalformed
 	}
-	if err := validateNoControl(meta.listen, "listen"); err != nil {
-		return unitMeta{}, errMalformed
+	for _, v := range []struct{ val, name string }{{meta.listen, "listen"}, {meta.data, "data-dir"}} {
+		if err := validateNoControl(v.val, v.name); err != nil {
+			return unitMeta{}, errMalformed
+		}
+	}
+	if meta.envfile != "" {
+		if err := validateNoControl(meta.envfile, "environment file"); err != nil {
+			return unitMeta{}, errMalformed
+		}
+		if strings.ContainsAny(meta.envfile, "%") {
+			return unitMeta{}, errMalformed
+		}
 	}
 	return meta, nil
+}
+
+// existingUnitMeta reads a valid managed unit's metadata, or returns an empty
+// meta (nil error) when no unit is installed. An existing foreign or modified
+// unit is an error so repeated installs never silently diverge from it.
+func existingUnitMeta(path string) (unitMeta, error) {
+	meta, err := readManagedUnit(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return unitMeta{}, nil
+		}
+		return unitMeta{}, fmt.Errorf("existing unit at %s is not valid: %w", path, err)
+	}
+	return meta, nil
+}
+
+// resolveInstallValues preserves installed configuration on repeated installs:
+// a flag the operator did not explicitly set keeps its existing managed value
+// rather than being silently replaced by a CLI default.
+func resolveInstallValues(meta unitMeta, visited map[string]bool, listen, dataDir string, secureCookies bool, envfile string) (string, string, bool, string) {
+	if !visited["listen"] && meta.listen != "" {
+		listen = meta.listen
+	}
+	if !visited["data-dir"] && meta.data != "" {
+		dataDir = meta.data
+	}
+	if !visited["secure-cookies"] {
+		secureCookies = meta.secure
+	}
+	if !visited["env-file"] && meta.envfile != "" {
+		envfile = meta.envfile
+	}
+	return listen, dataDir, secureCookies, envfile
 }
 
 func writeManagedUnit(path, content string) error {
@@ -423,7 +543,7 @@ func (m *serviceManager) requireManaged(verb string) error {
 	return nil
 }
 
-func (m *serviceManager) install(listen, dataDir string, secureCookies bool, out io.Writer) error {
+func (m *serviceManager) install(listen, dataDir string, secureCookies bool, envfile string, out io.Writer) error {
 	for _, v := range []struct{ val, name string }{
 		{listen, "listen"}, {dataDir, "data-dir"},
 	} {
@@ -431,7 +551,12 @@ func (m *serviceManager) install(listen, dataDir string, secureCookies bool, out
 			return err
 		}
 	}
-	unit := buildWatchpostUnit(m.exe, listen, dataDir, secureCookies)
+	if envfile != "" {
+		if err := validateEnvFile(envfile); err != nil {
+			return err
+		}
+	}
+	unit := buildWatchpostUnit(m.exe, listen, dataDir, secureCookies, envfile)
 	if err := writeManagedUnit(m.unitPath, unit); err != nil {
 		return err
 	}
@@ -496,6 +621,10 @@ func (m *serviceManager) status(out io.Writer, version string) error {
 	fmt.Fprintf(out, "pid:     %s\n", strings.TrimSpace(pid))
 	fmt.Fprintf(out, "version: %s\n", version)
 	fmt.Fprintf(out, "listen:  %s\n", meta.listen)
+	fmt.Fprintf(out, "data:    %s\n", meta.data)
+	if meta.envfile != "" {
+		fmt.Fprintf(out, "env:     %s\n", meta.envfile)
+	}
 	if active != stateActive {
 		return fmt.Errorf("%s is %q; expected active", m.unitName, active)
 	}
@@ -541,20 +670,45 @@ func syncDir(dir string) {
 	}
 }
 
-func unitBackupSuffix() string {
-	b := make([]byte, 8)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
-}
+var (
+	linkFile = os.Link
+	removeFile = os.Remove
+	randomSuffix = func() (string, error) {
+		b := make([]byte, 8)
+		if _, err := rand.Read(b); err != nil {
+			return "", err
+		}
+		return hex.EncodeToString(b), nil
+	}
+)
 
+// backupManagedUnit moves the managed unit aside to a unique hidden backup name
+// in the same directory. It uses an exclusive hard link so an existing retained
+// backup is never overwritten; the original is unlinked only after the backup
+// link exists, and on any failure the original stays intact with no backup
+// artifact left behind.
 func backupManagedUnit(path string) (string, error) {
 	dir := filepath.Dir(path)
-	backup := filepath.Join(dir, "."+filepath.Base(path)+".unit-backup-"+unitBackupSuffix())
-	if err := os.Rename(path, backup); err != nil {
-		return "", err
+	for i := 0; i < 32; i++ {
+		suffix, err := randomSuffix()
+		if err != nil {
+			return "", fmt.Errorf("cannot generate a backup name: %w", err)
+		}
+		backup := filepath.Join(dir, "."+filepath.Base(path)+".unit-backup-"+suffix)
+		if err := linkFile(path, backup); err != nil {
+			if errors.Is(err, os.ErrExist) {
+				continue // candidate already exists; try another name
+			}
+			return "", err
+		}
+		if err := removeFile(path); err != nil {
+			_ = os.Remove(backup)
+			return "", fmt.Errorf("cannot remove the original after backing it up: %w", err)
+		}
+		syncDir(dir)
+		return backup, nil
 	}
-	syncDir(dir)
-	return backup, nil
+	return "", errors.New("could not allocate a unique backup name")
 }
 
 func restoreFromBackup(orig, backup string) error {
@@ -655,6 +809,7 @@ func runService(args []string, version string) int {
 	listen := fs.String("listen", "127.0.0.1:8080", "listen address recorded in the unit")
 	dataDir := fs.String("data-dir", "", "data directory recorded in the unit (default from WATCHPOST_DATA_DIR or user config)")
 	secureCookies := fs.Bool("secure-cookies", false, "mark session cookies Secure behind an HTTPS reverse proxy")
+	envFile := fs.String("env-file", "", "absolute owner-only environment file for WATCHPOST_* variables")
 	if err := fs.Parse(rest); err != nil {
 		return 2
 	}
@@ -666,21 +821,29 @@ func runService(args []string, version string) int {
 		fmt.Fprintln(os.Stderr, "watchpost: systemctl not found; is systemd installed?")
 		return 1
 	}
+	m := &serviceManager{
+		unitName: "watchpost.service",
+		unitPath: userUnitPath("watchpost.service"),
+		run:      execRunner{},
+	}
+	visited := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { visited[f.Name] = true })
+	meta, err := existingUnitMeta(m.unitPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "watchpost:", err)
+		return 1
+	}
+	*listen, *dataDir, *secureCookies, *envFile = resolveInstallValues(meta, visited, *listen, *dataDir, *secureCookies, *envFile)
 	if *dataDir == "" {
 		if v := os.Getenv("WATCHPOST_DATA_DIR"); v != "" {
 			*dataDir = v
-		} else if dir, err := os.UserConfigDir(); err == nil {
+		} else if dir, aerr := os.UserConfigDir(); aerr == nil {
 			*dataDir = filepath.Join(dir, "watchpost")
 		}
 	}
 	if !filepath.IsAbs(*dataDir) {
 		fmt.Fprintln(os.Stderr, "watchpost: --data-dir must be an absolute path")
 		return 2
-	}
-	m := &serviceManager{
-		unitName: "watchpost.service",
-		unitPath: userUnitPath("watchpost.service"),
-		run:      execRunner{},
 	}
 	switch cmd {
 	case "install":
@@ -695,7 +858,7 @@ func runService(args []string, version string) int {
 			return 1
 		}
 		m.exe = exe
-		if err := m.install(*listen, *dataDir, *secureCookies, os.Stdout); err != nil {
+		if err := m.install(*listen, *dataDir, *secureCookies, *envFile, os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, "watchpost:", err)
 			return 1
 		}

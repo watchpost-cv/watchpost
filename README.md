@@ -73,7 +73,7 @@ Run Watchpost in the foreground with `./watchpost` or `watchpost serve`. To
 keep it running without a terminal, install a per-user systemd unit:
 
 ```sh
-watchpost service install --data-dir /var/lib/watchpost   # --listen and --secure-cookies accepted
+watchpost service install                 # optional --listen, --data-dir, --secure-cookies, --env-file
 watchpost service status
 watchpost service logs             # or: watchpost service logs --follow
 watchpost service restart
@@ -91,8 +91,26 @@ a live health check of the public `GET /healthz` endpoint, and exits nonzero
 when the service is failed or missing.
 
 `service install` records `--listen` and `--data-dir` (default from
-`WATCHPOST_DATA_DIR` or `~/.config/watchpost`) in the unit; `--secure-cookies`
-is passed through for HTTPS reverse-proxy deployments. The `packaging/
+`WATCHPOST_DATA_DIR` or `~/.config/watchpost`, both user-writable) in the unit;
+`--secure-cookies` is passed through for HTTPS reverse-proxy deployments.
+Because a systemd user service does not inherit the shell environment, use an
+explicit protected environment file for the remaining `WATCHPOST_*`
+configuration (including `WATCHPOST_MASTER_KEY`/`WATCHPOST_MASTER_KEY_FILE`,
+setup tokens and network policy):
+
+```sh
+watchpost service install --env-file /absolute/protected/watchpost.env
+```
+
+The file must be an absolute, regular, owner-only (0600), non-symlink file
+owned by the invoking user; it is referenced by the unit's `EnvironmentFile=`
+and its path is recorded in the authenticated managed metadata. Secret values
+are never copied into the unit or printed. Changing the file takes effect on
+`watchpost service restart`. The generated user unit retains the baseline
+hardening (`NoNewPrivileges`, `PrivateTmp`, `ProtectSystem=strict`,
+`ProtectHome=read-only`, `ReadWritePaths=<data dir>`). Repeated `service
+install` calls preserve the installed listen, data directory, secure-cookies
+flag and environment file unless a flag is given explicitly. The `packaging/
 watchpost.service` template remains the reference for system-wide
 installations; `watchpost service` manages the per-user unit instead.
 `service install --system` (system-wide units) is a documented follow-up and is
