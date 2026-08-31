@@ -67,6 +67,37 @@ investigation records.
 The default listener is `127.0.0.1:8080`. Command-line options override
 `WATCHPOST_LISTEN` and `WATCHPOST_DATA_DIR`; defaults apply below both.
 
+## Run as a systemd user service
+
+Run Watchpost in the foreground with `./watchpost` or `watchpost serve`. To
+keep it running without a terminal, install a per-user systemd unit:
+
+```sh
+watchpost service install --data-dir /var/lib/watchpost   # --listen and --secure-cookies accepted
+watchpost service status
+watchpost service logs             # or: watchpost service logs --follow
+watchpost service restart
+watchpost service uninstall        # stops the service but keeps Watchpost data
+```
+
+The user unit is written to `~/.config/systemd/user/watchpost.service` and
+managed with `systemctl --user` and `journalctl --user-unit watchpost.service`.
+`service install` resolves the executable to a stable absolute path, refuses
+empty, relative or transient paths, writes the unit atomically, reloads
+systemd, and enables and starts the service. An existing unit that is not
+managed by Watchpost is never overwritten or removed silently. `watchpost
+service status` reports enabled/running state, PID, version, listen address and
+a live health check of the public `GET /healthz` endpoint, and exits nonzero
+when the service is failed or missing.
+
+`service install` records `--listen` and `--data-dir` (default from
+`WATCHPOST_DATA_DIR` or `~/.config/watchpost`) in the unit; `--secure-cookies`
+is passed through for HTTPS reverse-proxy deployments. The `packaging/
+watchpost.service` template remains the reference for system-wide
+installations; `watchpost service` manages the per-user unit instead.
+`service install --system` (system-wide units) is a documented follow-up and is
+not yet supported; user mode is the default.
+
 For an internet-facing deployment, keep that loopback binding, terminate HTTPS
 with Caddy or nginx, and pass `--secure-cookies`. See
 [`docs/reverse-proxy.md`](docs/reverse-proxy.md). Build release archives and

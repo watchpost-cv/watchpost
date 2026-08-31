@@ -23,6 +23,9 @@ import (
 var version = "dev"
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "service" {
+		os.Exit(runService(os.Args[2:], version))
+	}
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "watchpost:", err)
 		os.Exit(1)
