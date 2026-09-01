@@ -658,20 +658,20 @@ func restorablePriorState(enabledWord, activeWord string) bool {
 	return true
 }
 
-// enableRestoreArgs returns the systemctl call that reproduces a prior
-// is-enabled word exactly.
-func enableRestoreArgs(word, unit string) []string {
+// enableRestoreSteps returns the systemctl calls that reproduce a prior
+// is-enabled word exactly. Enablement is normalized first: the persistent
+// enablement link created by the attempted install is removed with disable,
+// then the intended persistent or runtime link is recreated, so a runtime-only
+// prior never leaves a persistent enablement behind.
+func enableRestoreSteps(word, unit string) [][]string {
 	switch word {
 	case "enabled":
-		return []string{"enable", unit}
+		return [][]string{{"disable", unit}, {"enable", unit}}
 	case "enabled-runtime":
-		return []string{"enable", "--runtime", unit}
-	case "masked":
-		return []string{"mask", unit}
-	case "masked-runtime":
-		return []string{"mask", "--runtime", unit}
+		return [][]string{{"disable", unit}, {"enable", "--runtime", unit}}
+	default: // disabled
+		return [][]string{{"disable", unit}}
 	}
-	return []string{"disable", unit}
 }
 
 // activeRestoreArgs returns the systemctl call that reproduces a prior
@@ -871,8 +871,11 @@ func (m *serviceManager) rollbackInstall(priorUnit []byte, hadUnit bool, priorEn
 		errs = append(errs, fmt.Sprintf("reload systemd: %v", err))
 	}
 	if hadUnit {
-		if err := m.systemctlSuccess(enableRestoreArgs(priorEnabledWord, m.unitName)...); err != nil {
-			errs = append(errs, fmt.Sprintf("restore enablement %q: %v", priorEnabledWord, err))
+		for _, args := range enableRestoreSteps(priorEnabledWord, m.unitName) {
+			if err := m.systemctlSuccess(args...); err != nil {
+				errs = append(errs, fmt.Sprintf("restore enablement %q: %v", priorEnabledWord, err))
+				break
+			}
 		}
 		if err := m.systemctlSuccess(activeRestoreArgs(priorActiveWord, m.unitName)...); err != nil {
 			errs = append(errs, fmt.Sprintf("restore active state %q: %v", priorActiveWord, err))
