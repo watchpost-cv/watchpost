@@ -236,6 +236,15 @@ func TestManagedUnitIntegrity(t *testing.T) {
 
 func TestInstallAndIdempotence(t *testing.T) {
 	m, fr, _ := newFakeManager(t)
+	fr.handler = func(name string, args ...string) (string, int, error) {
+		switch {
+		case fr.contains(args, "is-active"):
+			return "inactive", 3, nil
+		case fr.contains(args, "is-enabled"):
+			return "disabled", 1, nil
+		}
+		return "", 0, nil
+	}
 	if err := m.install("127.0.0.1:8080", filepath.Join(t.TempDir(), "data"), false, "", os.Stderr); err != nil {
 		t.Fatalf("install: %v", err)
 	}
@@ -247,7 +256,7 @@ func TestInstallAndIdempotence(t *testing.T) {
 		t.Fatalf("installed unit invalid: %v", err)
 	}
 	joined := strings.Join(fr.calls, "\n")
-	for _, want := range []string{"systemctl --user daemon-reload", "systemctl --user enable watchpost.service", "systemctl --user start watchpost.service"} {
+	for _, want := range []string{"systemctl --user daemon-reload", "systemctl --user enable watchpost.service", "systemctl --user restart watchpost.service"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("install did not call %q\n%s", want, joined)
 		}
@@ -256,7 +265,7 @@ func TestInstallAndIdempotence(t *testing.T) {
 	if err := m.install("127.0.0.1:8080", filepath.Join(t.TempDir(), "data"), false, "", os.Stderr); err != nil {
 		t.Fatalf("idempotent reinstall: %v", err)
 	}
-	if !strings.Contains(strings.Join(fr.calls, "\n"), "systemctl --user start watchpost.service") {
+	if !strings.Contains(strings.Join(fr.calls, "\n"), "systemctl --user restart watchpost.service") {
 		t.Fatal("reinstall did not restart the unit")
 	}
 }
@@ -323,7 +332,7 @@ func TestStrictExitFailures(t *testing.T) {
 			t.Fatal("install succeeded despite a failed daemon-reload")
 		}
 		joined := strings.Join(fr.calls, "\n")
-		if strings.Contains(joined, "enable watchpost.service") || strings.Contains(joined, "start watchpost.service") {
+		if strings.Contains(joined, "enable watchpost.service") || strings.Contains(joined, "restart watchpost.service") {
 			t.Fatalf("enable/start ran after a failed daemon-reload: %s", joined)
 		}
 	})
@@ -338,7 +347,7 @@ func TestStrictExitFailures(t *testing.T) {
 		if err := m.install("127.0.0.1:8080", filepath.Join(t.TempDir(), "data"), false, "", os.Stderr); err == nil {
 			t.Fatal("install succeeded despite a failed enable")
 		}
-		if strings.Contains(strings.Join(fr.calls, "\n"), "start watchpost.service") {
+		if strings.Contains(strings.Join(fr.calls, "\n"), "restart watchpost.service") {
 			t.Fatal("start ran after a failed enable")
 		}
 	})
@@ -1194,8 +1203,16 @@ func TestFreshInstallPreparesDataDir(t *testing.T) {
 		t.Fatal("symlink data dir accepted")
 	}
 	world := filepath.Join(base, "world")
-	if err := os.MkdirAll(world, 0777); err != nil {
+	if err := os.MkdirAll(world, 0700); err != nil {
 		t.Fatal(err)
+	}
+	if err := os.Chmod(world, 0777); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(world); err != nil {
+		t.Fatal(err)
+	} else if info.Mode().Perm() != 0o777 {
+		t.Fatalf("expected 0777 data dir, got %v", info.Mode().Perm())
 	}
 	if err := m.install("127.0.0.1:8080", world, false, "", os.Stderr); err == nil {
 		t.Fatal("world-writable data dir accepted")
@@ -1259,6 +1276,101 @@ func TestReleaseMatrixBuilds(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestInstallTransaction(t *testing.T) {
+	successHandler := func(fr *fakeRunner) func(name string, args ...string) (string, int, error) {
+		return func(name string, args ...string) (string, int, error) {
+			switch {
+			case fr.contains(args, "is-active"):
+				return "active", 0, nil
+			case fr.contains(args, "is-enabled"):
+				return "enabled", 0, nil
+			}
+			return "", 0, nil
+		}
+	}
+
+	t.Run("changed configuration takes effect via restart", func(t *testing.T) {
+		m, fr, _ := newFakeManager(t)
+		base := t.TempDir()
+		fr.handler = successHandler(fr)
+		data1 := filepath.Join(base, "data1")
+		if err := m.install("127.0.0.1:8080", data1, false, "", os.Stderr); err != nil {
+			t.Fatal(err)
+		}
+		fr.calls = nil
+		env := filepath.Join(base, "w.env")
+		if err := os.WriteFile(env, []byte("WATCHPOST_LISTEN=127.0.0.1:8080\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		data2 := filepath.Join(base, "data2")
+		if err := m.install("127.0.0.1:8085", data2, true, env, os.Stderr); err != nil {
+			t.Fatalf("reinstall failed: %v", err)
+		}
+		unit, _ := os.ReadFile(m.unitPath)
+		for _, want := range []string{"127.0.0.1:8085", data2, env, "--secure-cookies"} {
+			if !strings.Contains(string(unit), want) {
+				t.Fatalf("reinstall did not apply %q:\n%s", want, unit)
+			}
+		}
+		if !strings.Contains(strings.Join(fr.calls, "\n"), "systemctl --user restart watchpost.service") {
+			t.Fatal("reinstall did not restart the service")
+		}
+	})
+
+	t.Run("failed fresh install removes the new unit", func(t *testing.T) {
+		m, fr, _ := newFakeManager(t)
+		fr.handler = func(name string, args ...string) (string, int, error) {
+			switch {
+			case fr.contains(args, "is-active"):
+				return "active", 0, nil
+			case fr.contains(args, "is-enabled"):
+				return "enabled", 0, nil
+			case fr.contains(args, "restart"):
+				return "Failed", 1, nil
+			}
+			return "", 0, nil
+		}
+		if err := m.install("127.0.0.1:8080", filepath.Join(t.TempDir(), "data"), false, "", os.Stderr); err == nil {
+			t.Fatal("install should fail at restart")
+		}
+		if _, err := os.Stat(m.unitPath); !os.IsNotExist(err) {
+			t.Fatalf("new unit not removed after failed fresh install: %v", err)
+		}
+	})
+
+	t.Run("failed reinstall restores the prior unit and lifecycle state", func(t *testing.T) {
+		m, fr, _ := newFakeManager(t)
+		base := t.TempDir()
+		fr.handler = successHandler(fr)
+		if err := m.install("127.0.0.1:8080", filepath.Join(base, "data"), false, "", os.Stderr); err != nil {
+			t.Fatal(err)
+		}
+		v1, _ := os.ReadFile(m.unitPath)
+		fr.handler = func(name string, args ...string) (string, int, error) {
+			switch {
+			case fr.contains(args, "is-active"):
+				return "active", 0, nil
+			case fr.contains(args, "is-enabled"):
+				return "enabled", 0, nil
+			case fr.contains(args, "restart"):
+				return "Failed", 1, nil
+			}
+			return "", 0, nil
+		}
+		if err := m.install("127.0.0.1:8081", filepath.Join(base, "data"), false, "", os.Stderr); err == nil {
+			t.Fatal("reinstall should fail at restart")
+		}
+		got, _ := os.ReadFile(m.unitPath)
+		if string(got) != string(v1) {
+			t.Fatal("rollback did not restore the prior unit")
+		}
+		joined := strings.Join(fr.calls, "\n")
+		if !strings.Contains(joined, "systemctl --user enable watchpost.service") {
+			t.Fatal("rollback did not attempt to restore the enabled state")
+		}
+	})
 }
 
 func TestRunServiceDispatchErrors(t *testing.T) {

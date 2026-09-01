@@ -620,20 +620,44 @@ func (m *serviceManager) install(listen, dataDir string, secureCookies bool, env
 			return err
 		}
 	}
+	// Snapshot the prior managed state so a failed install can restore both the
+	// unit file and the systemd enabled/active state.
+	priorUnit, hadUnit := readFileIfPresent(m.unitPath)
+	priorEnabled := stateNotEnabled
+	priorActive := stateInactive
+	if hadUnit {
+		if _, err := readManagedUnit(m.unitPath); err != nil {
+			return fmt.Errorf("refusing to overwrite the existing unit: %w", err)
+		}
+		var err error
+		priorEnabled, err = m.queryState("is-enabled")
+		if err != nil {
+			return fmt.Errorf("cannot determine the prior enablement state: %w", err)
+		}
+		priorActive, err = m.queryState("is-active")
+		if err != nil {
+			return fmt.Errorf("cannot determine the prior service state: %w", err)
+		}
+	}
 	unit := buildWatchpostUnit(m.exe, listen, dataDir, secureCookies, envfile)
 	if err := writeManagedUnit(m.unitPath, unit); err != nil {
 		return err
 	}
+	// Restart (not start) so a changed listener, data directory, secure-cookies
+	// flag or environment file takes effect on an already-running service.
 	for _, step := range []struct {
 		verb string
 		args []string
 	}{
 		{"reloading systemd", []string{"daemon-reload"}},
 		{"enabling", []string{"enable", m.unitName}},
-		{"starting", []string{"start", m.unitName}},
+		{"restarting", []string{"restart", m.unitName}},
 	} {
 		if err := m.systemctlSuccess(step.args...); err != nil {
-			return fmt.Errorf("%s %s: %w", step.verb, m.unitName, err)
+			if rb := m.rollbackInstall(priorUnit, hadUnit, priorEnabled, priorActive); rb != "" {
+				return fmt.Errorf("%s %s failed: %w%s", step.verb, m.unitName, err, rb)
+			}
+			return fmt.Errorf("%s %s failed: %w", step.verb, m.unitName, err)
 		}
 	}
 	active, _, _ := m.systemctl("is-active", m.unitName)
@@ -642,6 +666,97 @@ func (m *serviceManager) install(listen, dataDir string, secureCookies bool, env
 	fmt.Fprintf(out, "state:  %s\n", strings.TrimSpace(active))
 	fmt.Fprintf(out, "url:    http://%s\n", listen)
 	return nil
+}
+
+func readFileIfPresent(path string) ([]byte, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, false
+	}
+	return data, true
+}
+
+func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".watchpost-restore-*")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	defer os.Remove(name)
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(mode); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(name, path)
+}
+
+// systemctlTolerantMissing runs a systemctl verb treating "unit not loaded /
+// not found" results as success, which is expected when rolling back a failed
+// fresh install whose unit has already been removed.
+func (m *serviceManager) systemctlTolerantMissing(args ...string) error {
+	out, code, err := m.systemctl(args...)
+	if err != nil {
+		low := strings.ToLower(err.Error())
+		if strings.Contains(low, "not loaded") || strings.Contains(low, "not found") || strings.Contains(low, "no such file") {
+			return nil
+		}
+		return err
+	}
+	if code != 0 {
+		low := strings.ToLower(out)
+		if strings.Contains(low, "not loaded") || strings.Contains(low, "not found") || strings.Contains(low, "no such file") {
+			return nil
+		}
+		return fmt.Errorf("systemctl %s exited %d: %s", strings.Join(args, " "), code, bounded(strings.TrimSpace(out)))
+	}
+	return nil
+}
+
+// rollbackInstall restores the prior unit and systemd enabled/active state after
+// a failed install, removing the new unit for a fresh install. It returns an
+// explanatory string when rollback itself fails so callers never claim a full
+// rollback when only the files were restored.
+func (m *serviceManager) rollbackInstall(priorUnit []byte, hadUnit bool, priorEnabled, priorActive svcState) string {
+	var errs []string
+	if hadUnit {
+		if err := writeFileAtomic(m.unitPath, priorUnit, 0644); err != nil {
+			errs = append(errs, fmt.Sprintf("restore unit: %v", err))
+		}
+	} else if err := os.Remove(m.unitPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		errs = append(errs, fmt.Sprintf("remove new unit: %v", err))
+	}
+	if err := m.systemctlSuccess("daemon-reload"); err != nil {
+		errs = append(errs, fmt.Sprintf("reload systemd: %v", err))
+	}
+	if priorEnabled == stateEnabled {
+		if err := m.systemctlSuccess("enable", m.unitName); err != nil {
+			errs = append(errs, fmt.Sprintf("restore enabled: %v", err))
+		}
+	} else if err := m.systemctlTolerantMissing("disable", m.unitName); err != nil {
+		errs = append(errs, fmt.Sprintf("restore disabled: %v", err))
+	}
+	if priorActive == stateActive {
+		if err := m.systemctlSuccess("restart", m.unitName); err != nil {
+			errs = append(errs, fmt.Sprintf("restore active: %v", err))
+		}
+	} else if err := m.systemctlTolerantMissing("stop", m.unitName); err != nil {
+		errs = append(errs, fmt.Sprintf("restore inactive: %v", err))
+	}
+	if len(errs) > 0 {
+		return "; rollback incomplete: " + strings.Join(errs, "; ")
+	}
+	return ""
 }
 
 func (m *serviceManager) action(verb string, out io.Writer) error {

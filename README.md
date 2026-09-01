@@ -120,6 +120,24 @@ installations; `watchpost service` manages the per-user unit instead.
 `service install --system` (system-wide units) is a documented follow-up and is
 not yet supported; user mode is the default.
 
+### Persistence and lingering
+
+Once installed, the service runs independently of the terminal that launched
+it: closing the terminal does not stop it. A systemd user service is tied to
+your OS user's user manager, so it normally starts when that user manager
+starts (for example at your first login after boot). Unattended boot or
+continuing to run after you log out may require lingering for your user:
+
+```sh
+loginctl show-user "$USER" -p Linger
+loginctl enable-linger "$USER"   # explicit host-level choice
+```
+
+Enable lingering deliberately: it keeps your user's services running without a
+login session and changes what runs unattended. The unit records the absolute
+path of the `watchpost` executable at install time; moving or deleting that
+binary will break the service.
+
 For an internet-facing deployment, keep that loopback binding, terminate HTTPS
 with Caddy or nginx, and pass `--secure-cookies`. See
 [`docs/reverse-proxy.md`](docs/reverse-proxy.md). Build release archives and
