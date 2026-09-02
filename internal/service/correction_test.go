@@ -995,11 +995,26 @@ func TestDataDirExistingLeafReplacedAfterInspection(t *testing.T) {
 	}
 }
 
+// nonRootTempParent returns a temporary directory whose ownership
+// deterministically fails the root-owned parent safety check regardless of the
+// test runner's uid. Running as root the directory is chowned to a non-root uid
+// (nobody); running unprivileged it is already owned by the test user.
+func nonRootTempParent(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if os.Geteuid() == 0 {
+		if err := os.Chown(dir, 65534, 65534); err != nil {
+			t.Skipf("cannot chown temp parent to a non-root uid: %v", err)
+		}
+	}
+	return dir
+}
+
 func TestDataDirParentSafety(t *testing.T) {
 	r := newStrictService(t)
 	useRealDataDirSeams(t)
 	// Non-root parent (the test user) is refused.
-	dir := t.TempDir()
+	dir := nonRootTempParent(t)
 	fd, err := openDataParentSeam(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -1035,7 +1050,7 @@ func TestDataDirParentSafety(t *testing.T) {
 	c := watchMutations(t)
 	exe := filepath.Join(t.TempDir(), "wp")
 	os.WriteFile(exe, []byte("#!/bin/sh\nexit 0\n"), 0o755)
-	dataDir := filepath.Join(t.TempDir(), "sub") // parent is the test user's temp dir (non-root)
+	dataDir := filepath.Join(nonRootTempParent(t), "sub") // parent must be non-root-owned
 	if e := Install(exe, dataDir, "127.0.0.1:8080", false, ""); e == nil {
 		t.Fatal("install accepted a non-root parent")
 	}
