@@ -67,87 +67,96 @@ investigation records.
 The default listener is `127.0.0.1:8080`. Command-line options override
 `WATCHPOST_LISTEN` and `WATCHPOST_DATA_DIR`; defaults apply below both.
 
-## Run as a systemd user service
+## Run as a systemd machine service
 
-Run Watchpost in the foreground with `./watchpost` or `watchpost serve`. To
-keep it running without a terminal, install a per-user systemd unit:
+Run Watchpost in the foreground with `./watchpost` or `watchpost serve`. To keep
+it running unattended and boot-safely on a systemd host, install it as a system
+service:
 
 ```sh
-watchpost service install                 # optional --listen, --data-dir, --secure-cookies, --env-file
+sudo watchpost service install          # optional --listen, --data-dir, --secure-cookies, --env-file
 watchpost service status
-watchpost service logs             # or: watchpost service logs --follow
-watchpost service restart
-watchpost service uninstall        # stops the service but keeps Watchpost data
+watchpost service logs                  # or: watchpost service logs --follow
+sudo watchpost service restart
+sudo watchpost service uninstall        # removes the service registration; keeps Watchpost data
 ```
 
-The user unit is written to `~/.config/systemd/user/watchpost.service` and
-managed with `systemctl --user` and `journalctl --user-unit watchpost.service`.
+The system unit is written to `/etc/systemd/system/watchpost.service` and runs
+as a dedicated unprivileged `watchpost` account (`nologin`, no home). It starts
+at boot with `WantedBy=multi-user.target` and does **not** depend on any user
+login or on systemd lingering. The binary is installed at `/usr/local/bin/watchpost`
+and the data directory is `/var/lib/watchpost` (0700, owned `watchpost:watchpost`).
+`service install` creates the account, data directory and unit idempotently, so a
+clean machine needs no manual prerequisites.
+
 `service install` resolves the executable to a stable absolute path, refuses
 empty, relative or transient paths, and writes the unit atomically with a
-versioned integrity header. An existing unit that is not managed by Watchpost is
-never overwritten or removed silently. Install is transactional: the prior
-managed unit bytes are preserved, prior systemd enablement and activity are
-inspected before mutation, only exactly-recreatable states are accepted
+versioned SHA-256 integrity header. An existing unit that is not managed by
+Watchpost is never overwritten or removed silently. Install is transactional:
+the prior managed unit bytes are preserved, prior systemd enablement and activity
+are inspected before mutation, only exactly-recreatable states are accepted
 (`enabled`, `enabled-runtime`, `disabled` × `active`, `inactive`;
 masked/static/linked/generated/transient/failed/reloading states are refused
 before mutation — unmask or stop first), and rollback reproduces the exact prior
 enablement and activity states, distinguishing persistent from runtime
-enablement. A byte-identical unit already enabled and active is a genuine no-op;
-an unchanged unit that is inactive or disabled receives only the lifecycle steps
-needed, and a changed configuration reloads systemd and restarts the service. A
-failed fresh install is stopped and disabled while the unit is still loaded, then
-removed and systemd is reloaded. `watchpost service status` reports
-enabled/running state, PID, version, listen address and a live health check of
-the public `GET /healthz` endpoint, and exits nonzero when the service is failed
-or missing.
+enablement. A changed binary with an unchanged unit is still recognised as a
+changed installation and the service is restarted. A byte-identical unit and
+binary already enabled and active is a genuine no-op. A failed fresh install is
+stopped and disabled while the unit is still loaded, then removed and systemd is
+reloaded. `watchpost service status` reports enabled/running state, PID,
+version, listen address and a live health check of the public `GET /healthz`
+endpoint, and exits nonzero when the service is failed or missing.
 
-`service install` records `--listen` and `--data-dir` (default from
-`WATCHPOST_DATA_DIR` or `~/.config/watchpost`, both user-writable) in the unit;
-`--secure-cookies` is passed through for HTTPS reverse-proxy deployments.
-Because a systemd user service does not inherit the shell environment, use an
-explicit protected environment file for the remaining `WATCHPOST_*`
-configuration (including `WATCHPOST_MASTER_KEY`/`WATCHPOST_MASTER_KEY_FILE`,
-setup tokens and network policy):
+The complete lifecycle family matches the Web Fleet convention:
 
 ```sh
-watchpost service install --env-file /absolute/protected/watchpost.env
+sudo watchpost service install|uninstall|start|stop|restart|enable|disable
+watchpost service status|logs [--follow]
+sudo watchpost service update ARTIFACT SHA256
+sudo watchpost service rollback
 ```
 
-The file must be an absolute, regular, non-symlink file with exactly `0600`
-permissions, owned by the invoking user; it is referenced by the unit's
-`EnvironmentFile=` and its path is recorded in the integrity-checked managed
-metadata. Secret values are never copied into the unit or printed. The recorded
-environment file is revalidated before `start`, `restart` and `status`; `stop`,
-`logs` and `uninstall` remain available even if it is missing. Changing the file
-takes effect on `watchpost service restart`. Install creates the data directory
-with owner-only permissions and refuses symlink, non-directory or
-group/world-writable data paths. The generated user unit retains the baseline
-hardening (`NoNewPrivileges`, `PrivateTmp`, `ProtectSystem=strict`,
-`ProtectHome=read-only`, `ReadWritePaths=<data dir>`). Repeated `service
-install` calls preserve the installed listen, data directory, secure-cookies
-flag and environment file unless a flag is given explicitly. The `packaging/
-watchpost.service` template remains the reference for system-wide
-installations; `watchpost service` manages the per-user unit instead.
-`service install --system` (system-wide units) is a documented follow-up and is
-not yet supported; user mode is the default.
+`update` replaces the binary with a checksum-verified artifact, preserving the
+prior running/stopped state and enablement, and retaining rollback metadata so a
+later `service rollback` restores the previous version and its operational
+state. Failed updates recover to the previous binary before reactivation and
+surface both the update and recovery failures when both occur.
 
-### Persistence and lingering
+### Configuration and secrets
 
-Once installed, the service runs independently of the terminal that launched
-it: closing the terminal does not stop it. A systemd user service is tied to
-your OS user's user manager, so it normally starts when that user manager
-starts (for example at your first login after boot). Unattended boot or
-continuing to run after you log out may require lingering for your user:
+`service install` records `--listen` (default `127.0.0.1:8080`) and `--data-dir`
+(default `/var/lib/watchpost`) in the unit. `--secure-cookies` is passed through
+for HTTPS reverse-proxy deployments. Because the machine service does not
+inherit the shell environment, supply the remaining `WATCHPOST_*` configuration
+(including `WATCHPOST_MASTER_KEY`/`WATCHPOST_MASTER_KEY_FILE`, setup tokens and
+network policy) through a root-protected environment file:
 
 ```sh
-loginctl show-user "$USER" -p Linger
-loginctl enable-linger "$USER"   # explicit host-level choice
+sudo watchpost service install --env-file /etc/watchpost/watchpost.env
 ```
 
-Enable lingering deliberately: it keeps your user's services running without a
-login session and changes what runs unattended. The unit records the absolute
-path of the `watchpost` executable at install time; moving or deleting that
-binary will break the service.
+The machine configuration file must be an absolute, regular, non-symlink file
+with exactly `0600` permissions, owned by `root:root`; it is read by systemd via
+`EnvironmentFile=` **before** the process drops to `User=watchpost`, so the
+service account cannot rewrite its own machine configuration. Secret values are
+never copied into the unit or printed. The recorded environment file is
+revalidated before `start`, `restart` and `status`; `stop`, `logs` and
+`uninstall` remain available even if it is missing. Changing the file takes
+effect on `watchpost service restart`. Repeated `service install` calls preserve
+the installed listen, data directory, secure-cookies flag and environment file
+unless a flag is given explicitly.
+
+The generated unit applies the baseline hardening: `NoNewPrivileges`,
+`PrivateTmp`, `ProtectSystem=strict`, `ProtectHome=true`,
+`ReadWritePaths=/var/lib/watchpost`, `Restart=on-failure`. The `packaging/
+watchpost.service` template mirrors the generated system unit for reference.
+
+### install.sh
+
+`install.sh` installs the **binary** only (from a checksum-verified release
+archive); machine-service configuration is owned by the Go CLI. `install.sh
+--system` installs to `/usr/local/bin` and then invokes the canonical
+`watchpost service install`. The shell script contains no systemd implementation.
 
 For an internet-facing deployment, keep that loopback binding, terminate HTTPS
 with Caddy or nginx, and pass `--secure-cookies`. See

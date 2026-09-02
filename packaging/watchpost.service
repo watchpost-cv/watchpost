@@ -1,17 +1,21 @@
 [Unit]
 Description=Watchpost monitoring service
 After=network-online.target
+Wants=network-online.target
 
 [Service]
+Type=simple
 User=watchpost
 Group=watchpost
-ExecStart=/usr/local/bin/watchpost --listen 127.0.0.1:8080 --data-dir /var/lib/watchpost --secure-cookies
+ExecStart=/usr/local/bin/watchpost --listen "127.0.0.1:8080" --data-dir "/var/lib/watchpost" --secure-cookies
 Restart=on-failure
+RestartSec=3
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/watchpost
+ReadWritePaths="/var/lib/watchpost"
+EnvironmentFile=/etc/watchpost/watchpost.env
 
 [Install]
 WantedBy=multi-user.target

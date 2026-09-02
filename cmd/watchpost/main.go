@@ -17,14 +17,17 @@ import (
 	"github.com/watchpost-ops/watchpost/internal/devices"
 	"github.com/watchpost-ops/watchpost/internal/hostcollector"
 	"github.com/watchpost-ops/watchpost/internal/server"
+	"github.com/watchpost-ops/watchpost/internal/service"
 	"github.com/watchpost-ops/watchpost/internal/store"
 )
 
 var version = "dev"
 
 func main() {
+	// Service-management commands must remain usable even when the application
+	// configuration is unhealthy, so dispatch before any runtime config load.
 	if len(os.Args) > 1 && os.Args[1] == "service" {
-		os.Exit(runService(os.Args[2:], version))
+		os.Exit(runService(os.Args[2:]))
 	}
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "watchpost:", err)
@@ -197,4 +200,176 @@ func readKey(file, env string) (string, error) {
 		return strings.TrimRight(env, "\r\n"), nil
 	}
 	return "", fmt.Errorf("not provided")
+}
+
+// runService dispatches `watchpost service <command>` operating the Watchpost
+// systemd **system** unit. Exit codes: 0 success, 1 operational failure, 2
+// usage error (canonical Web Fleet convention).
+func runService(args []string) int {
+	cmd := "status"
+	var flags, positional []string
+	for _, a := range args {
+		if a != "" && !strings.HasPrefix(a, "-") {
+			if cmd == "status" && len(positional) == 0 {
+				cmd = a
+				continue
+			}
+			positional = append(positional, a)
+			continue
+		}
+		flags = append(flags, a)
+	}
+	usage := func(msg string) int {
+		fmt.Fprintf(os.Stderr, "watchpost service %s: %s\n", cmd, msg)
+		return 2
+	}
+	if len(flags) > 0 {
+		switch cmd {
+		case "install":
+			for i := 0; i < len(flags); i++ {
+				switch flags[i] {
+				case "--data":
+					if i+1 < len(flags) {
+						i++
+					} else {
+						return usage("--data requires a path")
+					}
+				case "--listen":
+					if i+1 < len(flags) {
+						i++
+					} else {
+						return usage("--listen requires an address")
+					}
+				case "--env-file":
+					if i+1 < len(flags) {
+						i++
+					} else {
+						return usage("--env-file requires a path")
+					}
+				case "--secure-cookies":
+				default:
+					return usage("unknown flag " + flags[i])
+				}
+			}
+		case "logs":
+			if len(flags) > 1 || flags[0] != "--follow" {
+				return usage("logs accepts only --follow")
+			}
+		default:
+			return usage("no flags are accepted for " + cmd)
+		}
+	}
+	switch cmd {
+	case "install":
+		if len(positional) != 0 {
+			return usage("install takes no positional arguments")
+		}
+		data, listen := service.DefaultDataDir, service.DefaultListen
+		envfile, secureCookies := "", false
+		for i := 0; i < len(flags); i++ {
+			switch flags[i] {
+			case "--data":
+				if i+1 < len(flags) {
+					i++
+					data = flags[i]
+				}
+			case "--listen":
+				if i+1 < len(flags) {
+					i++
+					listen = flags[i]
+				}
+			case "--env-file":
+				if i+1 < len(flags) {
+					i++
+					envfile = flags[i]
+				}
+			case "--secure-cookies":
+				secureCookies = true
+			}
+		}
+		if err := service.Install(service.Executable(), data, listen, secureCookies, envfile); err != nil {
+			fmt.Fprintln(os.Stderr, "watchpost service install:", err)
+			return 1
+		}
+		fmt.Fprintln(os.Stdout, "watchpost.service installed and active.")
+		return 0
+	case "uninstall":
+		if len(positional) != 0 {
+			return usage("uninstall takes no positional arguments")
+		}
+		if err := service.Uninstall(); err != nil {
+			fmt.Fprintln(os.Stderr, "watchpost service uninstall:", err)
+			return 1
+		}
+		fmt.Fprintln(os.Stdout, "watchpost.service uninstalled. Data in "+service.DefaultDataDir+" was preserved.")
+		return 0
+	case "start", "stop", "restart", "enable", "disable":
+		if len(positional) != 0 {
+			return usage(cmd + " takes no positional arguments")
+		}
+		if err := lifecycleErr(cmd); err != nil {
+			fmt.Fprintln(os.Stderr, "watchpost service "+cmd+":", err)
+			return 1
+		}
+		fmt.Fprintln(os.Stdout, "watchpost.service "+cmd+"ed.")
+		return 0
+	case "status":
+		if len(positional) != 0 {
+			return usage("status takes no positional arguments")
+		}
+		if err := service.Status(os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, "watchpost service status:", err)
+			return 1
+		}
+		return 0
+	case "logs":
+		if len(positional) != 0 {
+			return usage("logs takes no positional arguments")
+		}
+		follow := len(flags) > 0 && flags[0] == "--follow"
+		if err := service.Logs(follow, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, "watchpost service logs:", err)
+			return 1
+		}
+		return 0
+	case "update":
+		if len(positional) != 2 {
+			return usage("usage: watchpost service update ARTIFACT SHA256")
+		}
+		if err := service.Update(positional[0], positional[1]); err != nil {
+			fmt.Fprintln(os.Stderr, "watchpost service update:", err)
+			return 1
+		}
+		fmt.Fprintln(os.Stdout, "watchpost.service updated and restarted.")
+		return 0
+	case "rollback":
+		if len(positional) != 0 {
+			return usage("rollback takes no positional arguments")
+		}
+		if err := service.Rollback(); err != nil {
+			fmt.Fprintln(os.Stderr, "watchpost service rollback:", err)
+			return 1
+		}
+		fmt.Fprintln(os.Stdout, "watchpost.service rolled back and restarted.")
+		return 0
+	default:
+		fmt.Fprintf(os.Stderr, "watchpost: unknown service command %q\n\nUsage: watchpost service <install|uninstall|start|stop|restart|status|enable|disable|logs|update|rollback> [flags]\n", cmd)
+		return 2
+	}
+}
+
+func lifecycleErr(verb string) error {
+	switch verb {
+	case "start":
+		return service.Start()
+	case "stop":
+		return service.Stop()
+	case "restart":
+		return service.Restart()
+	case "enable":
+		return service.Enable()
+	case "disable":
+		return service.Disable()
+	}
+	return fmt.Errorf("unknown lifecycle verb")
 }

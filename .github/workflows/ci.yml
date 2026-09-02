@@ -39,3 +39,133 @@ jobs:
         with:
           name: watchpost-${{ matrix.os }}-${{ matrix.arch }}
           path: watchpost-*
+  systemd-lifecycle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with: {go-version: '1.25.x'}
+      - name: Build the binary under test
+        run: CGO_ENABLED=0 go build -o /tmp/wp ./cmd/watchpost
+      - name: Rehearse the systemd lifecycle (install -> healthz -> update -> rollback -> uninstall)
+        run: |
+          set -euxo pipefail
+          DATA=/var/lib/watchpost
+          wait_healthz() {
+            for _ in $(seq 1 40); do
+              if curl -fsS http://127.0.0.1:8080/healthz | grep -q '"status":'; then
+                return 0
+              fi
+              sleep 0.5
+            done
+            echo "healthz never became ready" >&2
+            curl -v http://127.0.0.1:8080/healthz 2>&1 | tail -3 || true
+            return 1
+          }
+          sudo /tmp/wp service install
+          # account and data ownership are created by install
+          id watchpost
+          sudo test -O "$DATA" -o "$(stat -c %U "$DATA")" = watchpost || exit 1
+          systemctl is-active watchpost.service
+          wait_healthz
+          # install is idempotent (byte-identical + enabled + active -> no-op)
+          sudo /tmp/wp service install
+          wait_healthz
+          # start/stop/restart/status/enable/disable family
+          sudo /tmp/wp service status | grep -E 'active: *active' | grep -E 'enabled: *enabled'
+          /tmp/wp service status | grep -E 'health:  ok'   # status is read-only, no sudo
+          sudo /tmp/wp service stop
+          sudo /tmp/wp service stop   # repeated stop is safe
+          sudo /tmp/wp service start
+          wait_healthz
+          sudo /tmp/wp service restart
+          wait_healthz
+          sudo /tmp/wp service disable
+          sudo /tmp/wp service disable   # repeated disable is safe
+          test "$(systemctl is-enabled watchpost.service)" = disabled
+          sudo /tmp/wp service enable
+          test "$(systemctl is-enabled watchpost.service)" = enabled
+          # idempotent reinstall while enabled+active
+          sudo /tmp/wp service install
+          wait_healthz
+          # prior disabled+stopped state is faithfully preserved across reinstall
+          sudo /tmp/wp service stop
+          sudo /tmp/wp service disable
+          sudo /tmp/wp service install
+          test "$(systemctl is-enabled watchpost.service)" = disabled
+          test "$(systemctl is-active watchpost.service)" = inactive
+          sudo /tmp/wp service enable
+          sudo /tmp/wp service start
+          wait_healthz
+          # update with a verified artifact
+          CGO_ENABLED=0 go build -o /tmp/wp2 ./cmd/watchpost
+          SHA=$(sha256sum /tmp/wp2 | cut -d' ' -f1)
+          sudo /tmp/wp service update /tmp/wp2 "$SHA"
+          wait_healthz
+          # rollback restores the previous executable
+          sudo /tmp/wp service rollback
+          wait_healthz
+          # a deliberately stopped service stays stopped across update and rollback
+          sudo /tmp/wp service stop
+          CGO_ENABLED=0 go build -o /tmp/wp4 ./cmd/watchpost
+          SHA4=$(sha256sum /tmp/wp4 | cut -d' ' -f1)
+          sudo /tmp/wp service update /tmp/wp4 "$SHA4"
+          test "$(systemctl is-active watchpost.service)" = inactive
+          sudo /tmp/wp service rollback
+          test "$(systemctl is-active watchpost.service)" = inactive
+          # boot-enablement is asserted structurally (not a reboot claim)
+          test "$(systemctl is-enabled watchpost.service)" = enabled
+          grep -q 'WantedBy=multi-user.target' /etc/systemd/system/watchpost.service
+          # stop -> uninstall removes the unit; data is preserved
+          sudo /tmp/wp service stop
+          sudo /tmp/wp service uninstall
+          test ! -f /etc/systemd/system/watchpost.service
+          sudo test -d "$DATA"
+      - name: Rehearse partial-failure rollback (deterministic activation failure)
+        run: |
+          set -euxo pipefail
+          wait_healthz() {
+            for _ in $(seq 1 40); do
+              if curl -fsS http://127.0.0.1:8080/healthz | grep -q '"status":'; then
+                return 0
+              fi
+              sleep 0.5
+            done
+            return 1
+          }
+          mkdir -p /tmp/fakebin
+          cat > /tmp/fakebin/systemctl <<'EOF'
+          #!/bin/sh
+          case "$*" in
+            *"restart watchpost.service"*) echo "simulated activation failure" >&2; exit 1 ;;
+            *) exit 0 ;;
+          esac
+          EOF
+          chmod +x /tmp/fakebin/systemctl
+          set +e
+          sudo env "PATH=/tmp/fakebin:/usr/sbin:/usr/bin:/bin" /tmp/wp service install > /tmp/install-fail.log 2>&1
+          rc=$?
+          set -e
+          [ "$rc" -ne 0 ] || { echo "install with failing activation succeeded unexpectedly" >&2; exit 1; }
+          grep -q "rolled back" /tmp/install-fail.log || { echo "install did not report rollback" >&2; cat /tmp/install-fail.log >&2; exit 1; }
+          test ! -f /etc/systemd/system/watchpost.service || { echo "unit left behind after rollback" >&2; exit 1; }
+          sudo test -d /var/lib/watchpost
+          # Installation can then be repeated successfully.
+          sudo /tmp/wp service install
+          wait_healthz
+          sudo /tmp/wp service uninstall || true
+          # Second branch: no pre-existing binary.
+          sudo rm -f /usr/local/bin/watchpost
+          set +e
+          sudo env "PATH=/tmp/fakebin:/usr/sbin:/usr/bin:/bin" /tmp/wp service install > /tmp/install-fail2.log 2>&1
+          rc=$?
+          set -e
+          [ "$rc" -ne 0 ] || { echo "no-binary install with failing activation succeeded unexpectedly" >&2; exit 1; }
+          grep -q "rolled back" /tmp/install-fail2.log || { echo "no-binary install did not report rollback" >&2; exit 1; }
+          test ! -f /etc/systemd/system/watchpost.service || { echo "unit left behind after no-binary rollback" >&2; exit 1; }
+          test ! -f /usr/local/bin/watchpost || { echo "newly copied binary not removed after no-binary rollback" >&2; exit 1; }
+          sudo test -d /var/lib/watchpost
+          # A normal install then succeeds again.
+          sudo /tmp/wp service install
+          wait_healthz
+          sudo /tmp/wp service uninstall || true

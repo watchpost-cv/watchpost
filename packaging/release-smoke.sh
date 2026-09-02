@@ -50,7 +50,7 @@ python3 -m http.server 18091 --bind 127.0.0.1 --directory "$TMP/releases" >"$TMP
 for _ in $(seq 1 30); do curl -fsS http://127.0.0.1:18091/v0.0.1-smoke/SHA256SUMS >/dev/null 2>&1 && break; sleep .1; done
 mkdir -p "$TMP/home" "$TMP/bin"; chmod 777 "$TMP/home" "$TMP/bin"
 if [ "$(id -u)" -eq 0 ]; then
-  env HOME="$TMP/home" PATH="$PATH" WATCHPOST_VERSION=v0.0.1-smoke WATCHPOST_RELEASE_BASE=http://127.0.0.1:18091 WATCHPOST_INSTALL_DIR="$TMP/bin" sh ./install.sh --system
+  env HOME="$TMP/home" PATH="$PATH" WATCHPOST_VERSION=v0.0.1-smoke WATCHPOST_RELEASE_BASE=http://127.0.0.1:18091 WATCHPOST_INSTALL_DIR="$TMP/bin" WATCHPOST_SKIP_SERVICE_INSTALL=1 sh ./install.sh --system
 else
   env HOME="$TMP/home" WATCHPOST_VERSION=v0.0.1-smoke WATCHPOST_RELEASE_BASE=http://127.0.0.1:18091 WATCHPOST_INSTALL_DIR="$TMP/bin" sh ./install.sh
 fi
