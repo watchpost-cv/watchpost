@@ -64,8 +64,14 @@ permanent deletion is an administrator-only, ID-confirmed operation that also
 removes the post's credentials, telemetry, rules, alerts, logs, and scoped
 investigation records.
 
-The default listener is `127.0.0.1:8080`. Command-line options override
-`WATCHPOST_LISTEN` and `WATCHPOST_DATA_DIR`; defaults apply below both.
+The default listener is `127.0.0.1:7334`. The canonical `--host`/`--port` flags
+and the `WATCHPOST_HOST`/`WATCHPOST_PORT` environment variables select the bind
+address with CLI > environment > default precedence; values are trimmed once
+and a port must be an integer from 1 through 65535. The legacy single-address
+`--listen` flag and `WATCHPOST_LISTEN` environment remain supported for
+compatibility and cannot be combined with the explicit host/port form.
+`WATCHPOST_DATA_DIR` and `--data-dir` select the data directory; defaults apply
+below both.
 
 ## Run as a systemd machine service
 
@@ -74,7 +80,8 @@ it running unattended and boot-safely on a systemd host, install it as a system
 service:
 
 ```sh
-sudo watchpost service install          # optional --listen, --data-dir, --secure-cookies, --env-file
+sudo watchpost service install          # optional --host/--port (or legacy --listen), --data, --secure-cookies, --env-file
+sudo watchpost service install --host 127.0.0.1 --port 7404
 watchpost service status
 watchpost service logs                  # or: watchpost service logs --follow
 sudo watchpost service restart
@@ -124,11 +131,16 @@ surface both the update and recovery failures when both occur.
 
 ### Configuration and secrets
 
-`service install` records `--listen` (default `127.0.0.1:8080`) and `--data-dir`
-(default `/var/lib/watchpost`) in the unit. `--secure-cookies` is passed through
-for HTTPS reverse-proxy deployments. Because the machine service does not
-inherit the shell environment, supply the remaining `WATCHPOST_*` configuration
-(including `WATCHPOST_MASTER_KEY`/`WATCHPOST_MASTER_KEY_FILE`, setup tokens and
+`service install` records the canonical `--host` (default `127.0.0.1`) and
+`--port` (default `7334`) pair in the unit's `ExecStart`, so the recorded
+listener is the runtime listener across restart and reboot. The legacy
+`--listen` single-address form (and `WATCHPOST_LISTEN`) remains supported:
+units installed that way keep their recorded `--listen` until reinstalled.
+`service install --host 127.0.0.1 --port 7404` is the canonical explicit
+example. The data directory defaults to `/var/lib/watchpost`. `--secure-cookies`
+is passed through for HTTPS reverse-proxy deployments. Because the machine
+service does not inherit the shell environment, supply the remaining
+`WATCHPOST_*` configuration (including `WATCHPOST_MASTER_KEY`/`WATCHPOST_MASTER_KEY_FILE`, setup tokens and
 network policy) through a root-protected environment file:
 
 ```sh

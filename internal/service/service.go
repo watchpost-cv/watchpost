@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -40,7 +41,45 @@ const DefaultDataDir = "/var/lib/watchpost"
 const DefaultEnvFile = "/etc/watchpost/watchpost.env"
 
 // DefaultListen is the canonical loopback listen address embedded in the unit.
-const DefaultListen = "127.0.0.1:8080"
+const DefaultListen = "127.0.0.1:7334"
+
+// Options describes the listener and unit settings recorded by service install.
+// Legacy bootstrap units set Listen (single address, recorded as --listen);
+// explicit host/port units set Host and Port (recorded as canonical --host and
+// --port in ExecStart).
+type Options struct {
+	DataDir       string
+	Host          string
+	Port          string
+	Listen        string
+	SecureCookies bool
+	EnvFile       string
+}
+
+// listenMode is the unit metadata marker distinguishing an explicit host/port
+// unit from a legacy bootstrap unit.
+const listenModeExplicit = "explicit"
+const listenModeBootstrap = "bootstrap"
+
+// listener returns the canonical listen address recorded in the unit metadata:
+// the legacy single address when set, otherwise the trimmed host/port pair
+// joined safely (so IPv6 hosts are bracketed). Values are canonicalized before
+// being written so surrounding whitespace can never leak into the unit.
+func (o Options) listener() string {
+	if o.Listen != "" {
+		return o.Listen
+	}
+	return net.JoinHostPort(strings.TrimSpace(o.Host), strings.TrimSpace(o.Port))
+}
+
+// mode reports the unit listen mode recorded in the metadata marker: explicit
+// host/port units versus legacy bootstrap units.
+func (o Options) mode() string {
+	if o.Listen != "" {
+		return listenModeBootstrap
+	}
+	return listenModeExplicit
+}
 
 // ServiceAccount is the dedicated unprivileged account the unit runs as.
 const ServiceUser = "watchpost"
@@ -256,11 +295,12 @@ func copyFile(src, dst string, mode os.FileMode) error {
 
 // unitMeta carries the recorded managed-unit configuration.
 type unitMeta struct {
-	listen  string
-	data    string
-	envfile string
-	secure  bool
-	health  string
+	listen     string
+	listenMode string
+	data       string
+	envfile    string
+	secure     bool
+	health     string
 }
 
 // readManagedUnit validates a managed unit's integrity header and parses its
@@ -288,13 +328,16 @@ func readManagedUnit(content string) (unitMeta, error) {
 	if hex.EncodeToString(sum[:]) != sm[1] {
 		return unitMeta{}, errModified
 	}
-	meta := unitMeta{}
-	listenSeen, dataSeen, envfileSeen, secureSeen, healthSeen := 0, 0, 0, 0, 0
+	meta := unitMeta{listenMode: listenModeBootstrap}
+	listenSeen, dataSeen, envfileSeen, secureSeen, healthSeen, modeSeen := 0, 0, 0, 0, 0, 0
 	for _, ln := range lines[2:] {
 		switch {
 		case strings.HasPrefix(ln, "# watchpost-listen: "):
 			listenSeen++
 			meta.listen = strings.TrimSpace(strings.TrimPrefix(ln, "# watchpost-listen: "))
+		case strings.HasPrefix(ln, "# watchpost-listen-mode: "):
+			modeSeen++
+			meta.listenMode = strings.TrimSpace(strings.TrimPrefix(ln, "# watchpost-listen-mode: "))
 		case strings.HasPrefix(ln, "# watchpost-data: "):
 			dataSeen++
 			meta.data = strings.TrimSpace(strings.TrimPrefix(ln, "# watchpost-data: "))
@@ -312,7 +355,12 @@ func readManagedUnit(content string) (unitMeta, error) {
 	if listenSeen != 1 || dataSeen != 1 || healthSeen != 1 || meta.listen == "" || meta.data == "" || meta.health == "" {
 		return unitMeta{}, errMalformed
 	}
-	if envfileSeen > 1 || secureSeen > 1 {
+	if envfileSeen > 1 || secureSeen > 1 || modeSeen > 1 {
+		return unitMeta{}, errMalformed
+	}
+	// Old units predating the mode marker default to bootstrap: their recorded
+	// listener remains a bootstrap/durable value, matching legacy behaviour.
+	if meta.listenMode != listenModeExplicit && meta.listenMode != listenModeBootstrap {
 		return unitMeta{}, errMalformed
 	}
 	if meta.health != watchpostHealthPath {
@@ -326,13 +374,14 @@ func readManagedUnit(content string) (unitMeta, error) {
 	return meta, nil
 }
 
-// unitBody renders the systemd directives (no managed header).
-func unitBody(dataDir, listen string, secureCookies bool, envfile string) string {
+// unitBody renders the systemd directives (no managed header). Explicit
+// host/port units record canonical --host/--port so their recorded listener is
+// the runtime listener; legacy bootstrap units keep the single-address --listen
+// form.
+func unitBody(o Options) string {
+	dataDir := o.DataDir
 	if dataDir == "" {
 		dataDir = DefaultDataDir
-	}
-	if listen == "" {
-		listen = DefaultListen
 	}
 	var b strings.Builder
 	b.WriteString("[Unit]\n")
@@ -344,9 +393,14 @@ func unitBody(dataDir, listen string, secureCookies bool, envfile string) string
 	b.WriteString("User=" + ServiceUser + "\n")
 	b.WriteString("Group=" + ServiceGroup + "\n")
 	b.WriteString("ExecStart=" + BinaryPath)
-	b.WriteString(" " + systemdQuote("--listen") + " " + systemdQuote(listen))
+	if o.Listen != "" {
+		b.WriteString(" " + systemdQuote("--listen") + " " + systemdQuote(o.Listen))
+	} else {
+		b.WriteString(" " + systemdQuote("--host") + " " + systemdQuote(strings.TrimSpace(o.Host)))
+		b.WriteString(" " + systemdQuote("--port") + " " + systemdQuote(strings.TrimSpace(o.Port)))
+	}
 	b.WriteString(" " + systemdQuote("--data-dir") + " " + systemdQuote(dataDir))
-	if secureCookies {
+	if o.SecureCookies {
 		b.WriteString(" " + systemdQuote("--secure-cookies"))
 	}
 	b.WriteString("\n")
@@ -357,8 +411,8 @@ func unitBody(dataDir, listen string, secureCookies bool, envfile string) string
 	b.WriteString("ProtectSystem=strict\n")
 	b.WriteString("ProtectHome=true\n")
 	b.WriteString("ReadWritePaths=" + systemdQuote(dataDir) + "\n")
-	if envfile != "" {
-		b.WriteString("EnvironmentFile=" + systemdQuote(envfile) + "\n")
+	if o.EnvFile != "" {
+		b.WriteString("EnvironmentFile=" + systemdQuote(o.EnvFile) + "\n")
 	}
 	b.WriteString("\n[Install]\n")
 	b.WriteString("WantedBy=multi-user.target\n")
@@ -366,24 +420,35 @@ func unitBody(dataDir, listen string, secureCookies bool, envfile string) string
 }
 
 // buildUnit returns the full managed unit content.
-func buildUnit(dataDir, listen string, secureCookies bool, envfile string) string {
-	meta := "# watchpost-listen: " + listen + "\n# watchpost-data: " + dataDir + "\n"
-	if secureCookies {
+func buildUnit(o Options) string {
+	dataDir := o.DataDir
+	if dataDir == "" {
+		dataDir = DefaultDataDir
+	}
+	meta := "# watchpost-listen: " + o.listener() + "\n# watchpost-data: " + dataDir + "\n# watchpost-listen-mode: " + o.mode() + "\n"
+	if o.SecureCookies {
 		meta += "# watchpost-secure-cookies: 1\n"
 	}
-	if envfile != "" {
-		meta += "# watchpost-envfile: " + envfile + "\n"
+	if o.EnvFile != "" {
+		meta += "# watchpost-envfile: " + o.EnvFile + "\n"
 	}
 	meta += "# watchpost-health: " + watchpostHealthPath + "\n"
-	content := meta + unitBody(dataDir, listen, secureCookies, envfile)
+	content := meta + unitBody(o)
 	sum := sha256.Sum256([]byte(content))
 	header := watchpostUnitMarker + "\n" + watchpostManagedPrefix + "v1 sha256=" + hex.EncodeToString(sum[:]) + "\n"
 	return header + content
 }
 
-// Unit returns the full managed unit content (exported for tests).
+// Unit returns the full managed unit content for a legacy bootstrap listen
+// address (exported for tests and legacy compatibility).
 func Unit(dataDir, listen string, secureCookies bool, envfile string) string {
-	return buildUnit(dataDir, listen, secureCookies, envfile)
+	return buildUnit(Options{DataDir: dataDir, Listen: listen, SecureCookies: secureCookies, EnvFile: envfile})
+}
+
+// UnitOptions returns the full managed unit content for explicit host/port
+// options (exported for tests).
+func UnitOptions(o Options) string {
+	return buildUnit(o)
 }
 
 // unitEnv reads an Environment=WEBFLEET_* value from a unit body (none for
@@ -528,13 +593,19 @@ func (p *dataDirPlan) close() {
 // so the validated parent is the exact directory mutated; non-Linux stubs fail
 // (Install is Linux-gated).
 
-// Install installs (or idempotently reinstalls) the watchpost systemd unit: it
-// creates the service account and data directory, copies the current binary,
-// writes the managed unit, daemon-reloads, enables and starts/restarts the
-// service. A partial failure restores the prior unit, enablement, active state
-// and binary, and the returned error combines the original failure with any
-// rollback failure.
+// Install installs with legacy single-address options (bootstrap mode). It is
+// retained for compatibility; InstallOptions is the canonical entry point.
 func Install(exe, dataDir, listen string, secureCookies bool, envfile string) (retErr error) {
+	return InstallOptions(exe, Options{DataDir: dataDir, Listen: listen, SecureCookies: secureCookies, EnvFile: envfile})
+}
+
+// InstallOptions installs (or idempotently reinstalls) the watchpost systemd
+// unit from explicit options: it creates the service account and data
+// directory, copies the current binary, writes the managed unit, daemon-
+// reloads, enables and starts/restarts the service. A partial failure restores
+// the prior unit, enablement, active state and binary, and the returned error
+// combines the original failure with any rollback failure.
+func InstallOptions(exe string, o Options) (retErr error) {
 	// Non-mutating preflight runs first so a foreign/tampered unit, unsupported
 	// state, state-query failure, invalid executable, invalid environment file
 	// or unacceptable data directory is rejected with zero account, mkdir,
@@ -545,25 +616,25 @@ func Install(exe, dataDir, listen string, secureCookies bool, envfile string) (r
 	if !isRoot() {
 		return errors.New("service install requires root")
 	}
-	for _, v := range []struct{ val, name string }{{dataDir, "data dir"}, {listen, "listen"}} {
+	for _, v := range []struct{ val, name string }{{o.DataDir, "data dir"}, {o.listener(), "listen"}} {
 		if e := validateNoControl(v.val, v.name); e != nil {
 			return e
 		}
 	}
-	if dataDir == "" {
-		dataDir = DefaultDataDir
+	if o.DataDir == "" {
+		o.DataDir = DefaultDataDir
 	}
-	if listen == "" {
-		listen = DefaultListen
+	if o.Listen == "" && o.Host == "" && o.Port == "" {
+		o.Listen = DefaultListen
 	}
-	if e := validateReadWritePath(dataDir); e != nil {
+	if e := validateReadWritePath(o.DataDir); e != nil {
 		return e
 	}
-	if e := validateDataDirPath(dataDir); e != nil {
+	if e := validateDataDirPath(o.DataDir); e != nil {
 		return e
 	}
-	if envfile != "" {
-		if e := validateEnvFile(envfile); e != nil {
+	if o.EnvFile != "" {
+		if e := validateEnvFile(o.EnvFile); e != nil {
 			return e
 		}
 	}
@@ -571,7 +642,7 @@ func Install(exe, dataDir, listen string, secureCookies bool, envfile string) (r
 		return errors.New("systemctl not found; is systemd installed?")
 	}
 	// Read and authenticate the existing managed unit (non-mutating).
-	unit := buildUnit(dataDir, listen, secureCookies, envfile)
+	unit := buildUnit(o)
 	priorUnit, hadUnit := []byte(nil), false
 	if b, e := os.ReadFile(UnitPath); e == nil {
 		hadUnit = true
@@ -623,7 +694,7 @@ func Install(exe, dataDir, listen string, secureCookies bool, envfile string) (r
 	// runtime prerequisite (the data directory) is missing or unsafe, and it
 	// runs before any account/data mutation so an unacceptable existing
 	// directory cannot trigger account creation first.
-	dataPlan, dErr := inspectDataDir(dataDir)
+	dataPlan, dErr := inspectDataDir(o.DataDir)
 	if dErr != nil {
 		return fmt.Errorf("refusing to install watchpost.service: %w", dErr)
 	}
@@ -944,6 +1015,9 @@ func Status(out io.Writer) error {
 	enabled, _ := unitStateWord("is-enabled")
 	active, _ := unitStateWord("is-active")
 	pid, _, _ := systemctl("show", "-p", "MainPID", "--value", "watchpost.service")
+	// The actual runtime listener: explicit host/port units record an
+	// authoritative --host/--port listener in the unit; legacy bootstrap units
+	// record the durable listen address that governs the runtime service.
 	listen := meta.listen
 	dataDir := meta.data
 	if listen == "" {

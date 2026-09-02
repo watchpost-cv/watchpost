@@ -2,6 +2,8 @@ package service
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -859,5 +861,281 @@ func TestRollbackEnforcesManagedUnitBeforeBinary(t *testing.T) {
 	after, _ := os.ReadFile(BinaryPath)
 	if !bytes.Equal(before, after) {
 		t.Fatal("update/rollback mutated binary before the managed-unit check")
+	}
+}
+
+func TestUnitOptionsExplicitHostPort(t *testing.T) {
+	setupService(t)
+	o := Options{DataDir: "/var/lib/watchpost", Host: "0.0.0.0", Port: "7404"}
+	u := UnitOptions(o)
+	for _, want := range []string{`"--host" "0.0.0.0"`, `"--port" "7404"`, `# watchpost-listen: 0.0.0.0:7404`, `# watchpost-listen-mode: explicit`} {
+		if !strings.Contains(u, want) {
+			t.Fatalf("unit missing %q\n%s", want, u)
+		}
+	}
+	if strings.Contains(u, "--listen") {
+		t.Fatalf("explicit unit must not use legacy --listen\n%s", u)
+	}
+	if _, err := readManagedUnit(u); err != nil {
+		t.Fatalf("explicit unit should validate: %v", err)
+	}
+}
+
+func TestUnitDefaultListenIsCanonical(t *testing.T) {
+	setupService(t)
+	// A default install resolves to 127.0.0.1:7334; the unit records it through
+	// --host/--port so the listener survives restart and reboot.
+	o := Options{DataDir: "/var/lib/watchpost", Host: "127.0.0.1", Port: "7334"}
+	u := UnitOptions(o)
+	for _, want := range []string{`"--host" "127.0.0.1"`, `"--port" "7334"`, `# watchpost-listen: 127.0.0.1:7334`, `# watchpost-listen-mode: explicit`} {
+		if !strings.Contains(u, want) {
+			t.Fatalf("default unit missing %q\n%s", want, u)
+		}
+	}
+	if _, err := readManagedUnit(u); err != nil {
+		t.Fatalf("default unit should validate: %v", err)
+	}
+}
+
+func TestUnitOptionsCanonicalWhitespace(t *testing.T) {
+	setupService(t)
+	// Whitespace-surrounded host/port must never leak into the unit metadata or
+	// ExecStart; only the canonical trimmed values are recorded.
+	o := Options{DataDir: "/var/lib/watchpost", Host: "  127.0.0.1  ", Port: "  7402  "}
+	u := UnitOptions(o)
+	for _, want := range []string{`"--host" "127.0.0.1"`, `"--port" "7402"`, `# watchpost-listen: 127.0.0.1:7402`} {
+		if !strings.Contains(u, want) {
+			t.Fatalf("canonical unit missing %q\n%s", want, u)
+		}
+	}
+	for _, bad := range []string{`"  127.0.0.1  "`, `"  7402  "`, `# watchpost-listen:   127.0.0.1:7402`} {
+		if strings.Contains(u, bad) {
+			t.Fatalf("unit leaked untrimmed value %q\n%s", bad, u)
+		}
+	}
+}
+
+func TestUnitLegacyBootstrapMode(t *testing.T) {
+	setupService(t)
+	u := Unit(DefaultDataDir, "127.0.0.1:8080", false, "")
+	if !strings.Contains(u, `"--listen" "127.0.0.1:8080"`) {
+		t.Fatalf("legacy unit missing --listen\n%s", u)
+	}
+	if !strings.Contains(u, "# watchpost-listen-mode: bootstrap") {
+		t.Fatalf("legacy unit missing bootstrap mode marker\n%s", u)
+	}
+	if _, err := readManagedUnit(u); err != nil {
+		t.Fatalf("legacy unit should validate: %v", err)
+	}
+}
+
+func TestListenModeMarkers(t *testing.T) {
+	setupService(t)
+	explicit := UnitOptions(Options{DataDir: "/var/lib/watchpost", Host: "127.0.0.1", Port: "7402"})
+	if !strings.Contains(explicit, "# watchpost-listen-mode: explicit") {
+		t.Fatalf("explicit unit missing explicit mode marker\n%s", explicit)
+	}
+	m, err := readManagedUnit(explicit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.listenMode != listenModeExplicit {
+		t.Fatalf("explicit unit listenMode = %q", m.listenMode)
+	}
+	legacy := Unit(DefaultDataDir, "127.0.0.1:8080", false, "")
+	m, err = readManagedUnit(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.listenMode != listenModeBootstrap {
+		t.Fatalf("legacy unit listenMode = %q", m.listenMode)
+	}
+	// A hostile mode value is rejected.
+	bad := strings.Replace(legacy, "# watchpost-listen-mode: bootstrap", "# watchpost-listen-mode: attacker", 1)
+	if _, err := readManagedUnit(bad); err == nil {
+		t.Fatal("invalid listen-mode accepted")
+	}
+	// A duplicate mode marker is rejected.
+	dup := strings.Replace(legacy, "# watchpost-listen-mode: bootstrap", "# watchpost-listen-mode: bootstrap\n# watchpost-listen-mode: bootstrap", 1)
+	if _, err := readManagedUnit(dup); err == nil {
+		t.Fatal("duplicate listen-mode accepted")
+	}
+}
+
+func TestLegacyUnitWithoutModeMarkerDefaultsToBootstrap(t *testing.T) {
+	setupService(t)
+	// A unit written before the mode marker existed must still validate and be
+	// classified bootstrap, keeping legacy durable-listen behaviour.
+	body := unitBody(Options{DataDir: "/var/lib/watchpost", Listen: "127.0.0.1:8080"})
+	content := "# watchpost-listen: 127.0.0.1:8080\n# watchpost-data: /var/lib/watchpost\n# watchpost-health: /healthz\n" + body
+	sum := sha256.Sum256([]byte(content))
+	unit := watchpostUnitMarker + "\n" + watchpostManagedPrefix + "v1 sha256=" + hex.EncodeToString(sum[:]) + "\n" + content
+	m, err := readManagedUnit(unit)
+	if err != nil {
+		t.Fatalf("legacy unit without mode marker should validate: %v", err)
+	}
+	if m.listenMode != listenModeBootstrap {
+		t.Fatalf("missing marker must default to bootstrap, got %q", m.listenMode)
+	}
+	if m.listen != "127.0.0.1:8080" {
+		t.Fatalf("legacy recorded listen = %q", m.listen)
+	}
+}
+
+func TestStatusReportsExplicitUnitListener(t *testing.T) {
+	r := setupService(t)
+	setState(r, "enabled", "active")
+	r.script["systemctl show -p MainPID --value watchpost.service"] = fakeResult{out: "99", code: 0}
+	var got string
+	healthCheckFunc = func(url string) error { got = url; return nil }
+	writeFileAtomic(UnitPath, []byte(UnitOptions(Options{DataDir: "/var/lib/watchpost", Host: "127.0.0.1", Port: "7404"})), 0o644)
+	var buf bytes.Buffer
+	if e := Status(&buf); e != nil {
+		t.Fatal(e)
+	}
+	for _, want := range []string{"listen:  127.0.0.1:7404", "health:  ok"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Fatalf("status output missing %q\n%s", want, buf.String())
+		}
+	}
+	if !strings.HasPrefix(got, "http://127.0.0.1:7404") {
+		t.Fatalf("health check must target the recorded explicit listener, got %q", got)
+	}
+}
+
+func TestStatusLegacyBootstrapUnitReportsRecordedListener(t *testing.T) {
+	r := setupService(t)
+	setState(r, "enabled", "active")
+	r.script["systemctl show -p MainPID --value watchpost.service"] = fakeResult{out: "7", code: 0}
+	healthCheckFunc = func(url string) error { return nil }
+	writeFileAtomic(UnitPath, []byte(Unit(DefaultDataDir, "127.0.0.1:8080", false, "")), 0o644)
+	var buf bytes.Buffer
+	if e := Status(&buf); e != nil {
+		t.Fatal(e)
+	}
+	if !strings.Contains(buf.String(), "listen:  127.0.0.1:8080") {
+		t.Fatalf("legacy bootstrap status must report the recorded durable listener\n%s", buf.String())
+	}
+}
+
+func TestStatusIgnoresMalformedListenerEnv(t *testing.T) {
+	// Non-install service commands must ignore malformed WATCHPOST_HOST/
+	// WATCHPOST_PORT in the invoking shell.
+	r := setupService(t)
+	t.Setenv("WATCHPOST_HOST", "not a host")
+	t.Setenv("WATCHPOST_PORT", "not-a-port")
+	setState(r, "enabled", "active")
+	r.script["systemctl show -p MainPID --value watchpost.service"] = fakeResult{out: "7", code: 0}
+	healthCheckFunc = func(url string) error { return nil }
+	writeFileAtomic(UnitPath, []byte(UnitOptions(Options{DataDir: "/var/lib/watchpost", Host: "127.0.0.1", Port: "7404"})), 0o644)
+	var buf bytes.Buffer
+	if e := Status(&buf); e != nil {
+		t.Fatalf("status must ignore malformed listener env: %v", e)
+	}
+	if !strings.Contains(buf.String(), "listen:  127.0.0.1:7404") {
+		t.Fatalf("status output missing recorded listener\n%s", buf.String())
+	}
+}
+
+func TestReinstallExplicitHostPortChangesListener(t *testing.T) {
+	r := setupService(t)
+	setState(r, "enabled", "active")
+	exe := filepath.Join(t.TempDir(), "wp2")
+	os.WriteFile(exe, []byte("#!/bin/sh\n# v2\nexit 0\n"), 0o755)
+	r.script["systemctl daemon-reload"] = fakeResult{}
+	r.script["systemctl enable watchpost.service"] = fakeResult{}
+	r.script["systemctl restart watchpost.service"] = fakeResult{}
+	o1 := Options{DataDir: "/var/lib/watchpost", Host: "127.0.0.1", Port: "7402"}
+	if e := InstallOptions(exe, o1); e != nil {
+		t.Fatal(e)
+	}
+	b, _ := os.ReadFile(UnitPath)
+	if !strings.Contains(string(b), `"--port" "7402"`) {
+		t.Fatalf("first install must record 7402\n%s", b)
+	}
+	if !strings.Contains(string(b), "# watchpost-listen-mode: explicit") {
+		t.Fatalf("first install must be explicit mode\n%s", b)
+	}
+	// A changed --port rewrites the unit's --host/--port and restarts.
+	exe2 := filepath.Join(t.TempDir(), "wp3")
+	os.WriteFile(exe2, []byte("#!/bin/sh\n# v3\nexit 0\n"), 0o755)
+	r.log = nil
+	o2 := Options{DataDir: "/var/lib/watchpost", Host: "127.0.0.1", Port: "7403"}
+	if e := InstallOptions(exe2, o2); e != nil {
+		t.Fatalf("reinstall: %v", e)
+	}
+	b, _ = os.ReadFile(UnitPath)
+	if !strings.Contains(string(b), `"--port" "7403"`) {
+		t.Fatalf("reinstall must record 7403\n%s", b)
+	}
+	if !strings.Contains(string(b), "# watchpost-listen-mode: explicit") {
+		t.Fatalf("reinstall unit must remain explicit mode\n%s", b)
+	}
+	if !contains(r.log, "systemctl restart watchpost.service") {
+		t.Fatalf("changed listener must restart the service\ncalls: %v", r.log)
+	}
+}
+
+func TestInstallOptionsLegacyBootstrapMode(t *testing.T) {
+	r := setupService(t)
+	exe := filepath.Join(t.TempDir(), "wp")
+	os.WriteFile(exe, []byte("#!/bin/sh\nexit 0\n"), 0o755)
+	r.script["systemctl daemon-reload"] = fakeResult{}
+	r.script["systemctl enable watchpost.service"] = fakeResult{}
+	r.script["systemctl restart watchpost.service"] = fakeResult{}
+	if e := InstallOptions(exe, Options{DataDir: "/var/lib/watchpost", Listen: "127.0.0.1:8080"}); e != nil {
+		t.Fatal(e)
+	}
+	b, _ := os.ReadFile(UnitPath)
+	if !strings.Contains(string(b), `"--listen" "127.0.0.1:8080"`) {
+		t.Fatalf("legacy install must record --listen\n%s", b)
+	}
+	if !strings.Contains(string(b), "# watchpost-listen-mode: bootstrap") {
+		t.Fatalf("legacy install must be bootstrap mode\n%s", b)
+	}
+}
+
+func TestInstallOptionsExplicitDefaultListener(t *testing.T) {
+	r := setupService(t)
+	exe := filepath.Join(t.TempDir(), "wp")
+	os.WriteFile(exe, []byte("#!/bin/sh\nexit 0\n"), 0o755)
+	r.script["systemctl daemon-reload"] = fakeResult{}
+	r.script["systemctl enable watchpost.service"] = fakeResult{}
+	r.script["systemctl restart watchpost.service"] = fakeResult{}
+	// A bare CLI install resolves the fresh default 127.0.0.1:7334 and records
+	// it through canonical --host/--port.
+	if e := InstallOptions(exe, Options{DataDir: "/var/lib/watchpost", Host: "127.0.0.1", Port: "7334"}); e != nil {
+		t.Fatal(e)
+	}
+	b, _ := os.ReadFile(UnitPath)
+	if !strings.Contains(string(b), `"--host" "127.0.0.1"`) || !strings.Contains(string(b), `"--port" "7334"`) {
+		t.Fatalf("default install must record --host 127.0.0.1 --port 7334\n%s", b)
+	}
+	if !strings.Contains(string(b), "# watchpost-listen: 127.0.0.1:7334") {
+		t.Fatalf("default install must record the canonical listener\n%s", b)
+	}
+	if !strings.Contains(string(b), "# watchpost-listen-mode: explicit") {
+		t.Fatalf("default install must be explicit mode\n%s", b)
+	}
+}
+
+func TestInstallLegacyEmptyListenDefaultsToBootstrapDefault(t *testing.T) {
+	r := setupService(t)
+	exe := filepath.Join(t.TempDir(), "wp")
+	os.WriteFile(exe, []byte("#!/bin/sh\nexit 0\n"), 0o755)
+	r.script["systemctl daemon-reload"] = fakeResult{}
+	r.script["systemctl enable watchpost.service"] = fakeResult{}
+	r.script["systemctl restart watchpost.service"] = fakeResult{}
+	// The legacy Install wrapper with an empty listen defaults to the fresh
+	// DefaultListen in bootstrap mode, preserving the durable-config contract.
+	if e := Install(exe, "/var/lib/watchpost", "", false, ""); e != nil {
+		t.Fatal(e)
+	}
+	b, _ := os.ReadFile(UnitPath)
+	if !strings.Contains(string(b), `"--listen" "127.0.0.1:7334"`) {
+		t.Fatalf("legacy empty-listen install must record --listen 127.0.0.1:7334\n%s", b)
+	}
+	if !strings.Contains(string(b), "# watchpost-listen-mode: bootstrap") {
+		t.Fatalf("legacy empty-listen install must be bootstrap mode\n%s", b)
 	}
 }

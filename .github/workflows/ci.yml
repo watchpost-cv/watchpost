@@ -53,13 +53,13 @@ jobs:
           DATA=/var/lib/watchpost
           wait_healthz() {
             for _ in $(seq 1 40); do
-              if curl -fsS http://127.0.0.1:8080/healthz | grep -q '"status":'; then
+              if curl -fsS http://127.0.0.1:7334/healthz | grep -q '"status":'; then
                 return 0
               fi
               sleep 0.5
             done
             echo "healthz never became ready" >&2
-            curl -v http://127.0.0.1:8080/healthz 2>&1 | tail -3 || true
+            curl -v http://127.0.0.1:7334/healthz 2>&1 | tail -3 || true
             return 1
           }
           sudo /tmp/wp service install
@@ -127,7 +127,7 @@ jobs:
           set -euxo pipefail
           wait_healthz() {
             for _ in $(seq 1 40); do
-              if curl -fsS http://127.0.0.1:8080/healthz | grep -q '"status":'; then
+              if curl -fsS http://127.0.0.1:7334/healthz | grep -q '"status":'; then
                 return 0
               fi
               sleep 0.5

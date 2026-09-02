@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
 	"strings"
@@ -56,7 +57,9 @@ func run(args []string) error {
 		args = args[1:]
 	}
 	fs := flag.NewFlagSet("watchpost", flag.ContinueOnError)
-	listen := fs.String("listen", "", "listen address (overrides WATCHPOST_LISTEN)")
+	host := fs.String("host", "", "HTTP bind host (default 127.0.0.1; WATCHPOST_HOST overrides, CLI wins)")
+	port := fs.String("port", "", "HTTP bind port, 1-65535 (default 7334; WATCHPOST_PORT overrides, CLI wins)")
+	listen := fs.String("listen", "", "listen address (legacy; alternative to --host/--port, honors WATCHPOST_LISTEN)")
 	dataDir := fs.String("data-dir", "", "data directory (overrides WATCHPOST_DATA_DIR)")
 	secureCookies := fs.Bool("secure-cookies", false, "mark session cookies Secure behind an HTTPS reverse proxy")
 	if err := fs.Parse(args); err != nil {
@@ -65,7 +68,7 @@ func run(args []string) error {
 	if fs.NArg() != 0 {
 		return fmt.Errorf("usage: watchpost [options]")
 	}
-	cfg, err := config.Load(config.Overrides{Listen: *listen, DataDir: *dataDir, SecureCookies: *secureCookies})
+	cfg, err := buildRuntimeConfig(*listen, *host, *port, *dataDir, *secureCookies, fs)
 	if err != nil {
 		return err
 	}
@@ -78,7 +81,29 @@ func run(args []string) error {
 	app := server.New(cfg, version, logger, database)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return app.Run(ctx)
+	if err := app.Run(ctx); err != nil {
+		return fmt.Errorf("%v (listener: %s)", err, cfg.Listen)
+	}
+	return nil
+}
+
+// buildRuntimeConfig resolves the listener flags and environment and produces
+// the runtime configuration, applying the explicit host/port override to the
+// durable config listener in memory so the advertised override genuinely
+// controls the runtime listener. Bare invocations and legacy --listen keep the
+// durable config listener.
+func buildRuntimeConfig(listen, host, port, dataDir string, secureCookies bool, fs *flag.FlagSet) (config.Config, error) {
+	addr, err := resolveListener(host, port, listen, flagProvided(fs, "host"), flagProvided(fs, "port"), flagProvided(fs, "listen"))
+	if err != nil {
+		return config.Config{}, err
+	}
+	overrides := config.Overrides{DataDir: dataDir, SecureCookies: secureCookies}
+	if listenerOverrideSelected(fs) {
+		overrides.Listen = addr
+	} else {
+		overrides.Listen = listen
+	}
+	return config.Load(overrides)
 }
 
 func runCollectorSample() error {
@@ -207,8 +232,12 @@ func readKey(file, env string) (string, error) {
 // usage error (canonical Web Fleet convention).
 func runService(args []string) int {
 	cmd := "status"
+	// Flags that consume a following value are recorded as pairs so their value
+	// is never misclassified as a positional argument.
+	valueFlags := map[string]bool{"--data": true, "--host": true, "--port": true, "--listen": true, "--env-file": true}
 	var flags, positional []string
-	for _, a := range args {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
 		if a != "" && !strings.HasPrefix(a, "-") {
 			if cmd == "status" && len(positional) == 0 {
 				cmd = a
@@ -218,6 +247,10 @@ func runService(args []string) int {
 			continue
 		}
 		flags = append(flags, a)
+		if valueFlags[a] && i+1 < len(args) {
+			i++
+			flags = append(flags, args[i])
+		}
 	}
 	usage := func(msg string) int {
 		fmt.Fprintf(os.Stderr, "watchpost service %s: %s\n", cmd, msg)
@@ -233,6 +266,18 @@ func runService(args []string) int {
 						i++
 					} else {
 						return usage("--data requires a path")
+					}
+				case "--host":
+					if i+1 < len(flags) {
+						i++
+					} else {
+						return usage("--host requires an address")
+					}
+				case "--port":
+					if i+1 < len(flags) {
+						i++
+					} else {
+						return usage("--port requires a number")
 					}
 				case "--listen":
 					if i+1 < len(flags) {
@@ -264,7 +309,9 @@ func runService(args []string) int {
 		if len(positional) != 0 {
 			return usage("install takes no positional arguments")
 		}
-		data, listen := service.DefaultDataDir, service.DefaultListen
+		data := service.DefaultDataDir
+		listen, host, port := "", "", ""
+		hostSet, portSet, listenSet := false, false, false
 		envfile, secureCookies := "", false
 		for i := 0; i < len(flags); i++ {
 			switch flags[i] {
@@ -273,10 +320,23 @@ func runService(args []string) int {
 					i++
 					data = flags[i]
 				}
+			case "--host":
+				if i+1 < len(flags) {
+					i++
+					host = flags[i]
+					hostSet = true
+				}
+			case "--port":
+				if i+1 < len(flags) {
+					i++
+					port = flags[i]
+					portSet = true
+				}
 			case "--listen":
 				if i+1 < len(flags) {
 					i++
 					listen = flags[i]
+					listenSet = true
 				}
 			case "--env-file":
 				if i+1 < len(flags) {
@@ -287,7 +347,29 @@ func runService(args []string) int {
 				secureCookies = true
 			}
 		}
-		if err := service.Install(service.Executable(), data, listen, secureCookies, envfile); err != nil {
+		addr, err := resolveListener(host, port, listen, hostSet, portSet, listenSet)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "watchpost service install:", err)
+			return 2
+		}
+		if err := validateNoControl(addr, "listen"); err != nil {
+			fmt.Fprintln(os.Stderr, "watchpost service install:", err)
+			return 2
+		}
+		// Resolve the recorded listener and its mode (explicit host/port vs
+		// legacy --listen/WATCHPOST_LISTEN bootstrap) for the generated unit.
+		legacy := listenSet
+		if !legacy {
+			if _, hasListen := os.LookupEnv("WATCHPOST_LISTEN"); hasListen && !hostSet && !portSet {
+				legacy = true
+			}
+		}
+		opts, err := installOptions(data, addr, legacy, secureCookies, envfile)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "watchpost service install:", err)
+			return 2
+		}
+		if err := service.InstallOptions(service.Executable(), opts); err != nil {
 			fmt.Fprintln(os.Stderr, "watchpost service install:", err)
 			return 1
 		}
@@ -372,4 +454,19 @@ func lifecycleErr(verb string) error {
 		return service.Disable()
 	}
 	return fmt.Errorf("unknown lifecycle verb")
+}
+
+// installOptions builds the service.Options recorded in a newly installed unit
+// from the resolved listener. Legacy bootstrap units keep the single-address
+// --listen form; explicit host/port units are split back into --host/--port so
+// their recorded listener is the runtime listener across restart and reboot.
+func installOptions(dataDir, addr string, legacy bool, secureCookies bool, envfile string) (service.Options, error) {
+	if legacy {
+		return service.Options{DataDir: dataDir, Listen: addr, SecureCookies: secureCookies, EnvFile: envfile}, nil
+	}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return service.Options{}, fmt.Errorf("cannot split resolved listener %q: %w", addr, err)
+	}
+	return service.Options{DataDir: dataDir, Host: host, Port: port, SecureCookies: secureCookies, EnvFile: envfile}, nil
 }
