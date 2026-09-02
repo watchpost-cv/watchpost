@@ -65,14 +65,15 @@ jobs:
           sudo /tmp/wp service install
           # account and data ownership are created by install
           id watchpost
-          sudo test -O "$DATA" -o "$(stat -c %U "$DATA")" = watchpost || exit 1
+          test "$(stat -c %U "$DATA")" = watchpost || exit 1
           systemctl is-active watchpost.service
           wait_healthz
           # install is idempotent (byte-identical + enabled + active -> no-op)
           sudo /tmp/wp service install
           wait_healthz
           # start/stop/restart/status/enable/disable family
-          sudo /tmp/wp service status | grep -E 'active: *active' | grep -E 'enabled: *enabled'
+          sudo /tmp/wp service status | grep -E 'active: *active'
+          sudo /tmp/wp service status | grep -E 'enabled: *enabled'
           /tmp/wp service status | grep -E 'health:  ok'   # status is read-only, no sudo
           sudo /tmp/wp service stop
           sudo /tmp/wp service stop   # repeated stop is safe
