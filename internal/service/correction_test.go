@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -298,15 +299,15 @@ func TestDataDirRejectsSystemRoots(t *testing.T) {
 
 func TestDataDirRefusesUnrelatedExistingDirectory(t *testing.T) {
 	r := newStrictService(t)
+	useRealDataDirSeams(t)
 	dir := t.TempDir()
 	existing := filepath.Join(dir, "existing-data")
 	os.MkdirAll(existing, 0o755)
 	marker := filepath.Join(existing, "sentinel")
 	os.WriteFile(marker, []byte("keep"), 0o644)
-	// The directory is owned by an unrelated account (not the service UID).
-	oldOwned := requireServiceOwned
-	requireServiceOwned = func(path string) error { return fmt.Errorf("owned by UID 1000") }
-	defer func() { requireServiceOwned = oldOwned }()
+	// The service account UID differs from the directory's real owner (the test
+	// user), so the descriptor-relative inspection must refuse adoption.
+	serviceUID = func() (int, error) { return os.Getuid() + 10000, nil }
 	exe := filepath.Join(t.TempDir(), "wp")
 	os.WriteFile(exe, []byte("#!/bin/sh\nexit 0\n"), 0o755)
 	if e := Install(exe, existing, "127.0.0.1:8080", false, ""); e == nil {
@@ -327,40 +328,29 @@ func TestDataDirRefusesUnrelatedExistingDirectory(t *testing.T) {
 
 func TestDataDirLeafOnlyCreation(t *testing.T) {
 	r := newStrictService(t)
+	useRealDataDirSeams(t)
 	// The parent must already exist; only the final leaf is created.
 	parent := t.TempDir()
 	newData := filepath.Join(parent, "watchpost-data")
 	exe := filepath.Join(t.TempDir(), "wp")
 	os.WriteFile(exe, []byte("#!/bin/sh\nexit 0\n"), 0o755)
-	created := ""
-	oldMkdir := mkdirData
-	mkdirData = func(p string, mode os.FileMode) error {
-		created = p
-		return os.Mkdir(p, mode)
-	}
-	oldChown := chownData
-	chowned := ""
-	chownData = func(p string) error { chowned = p; return nil }
-	defer func() { mkdirData, chownData = oldMkdir, oldChown }()
 	r.script["systemctl daemon-reload"] = fakeResult{}
 	r.script["systemctl enable watchpost.service"] = fakeResult{}
 	r.script["systemctl restart watchpost.service"] = fakeResult{}
 	if e := Install(exe, newData, "127.0.0.1:8080", false, ""); e != nil {
 		t.Fatal(e)
 	}
-	if created != newData {
-		t.Fatalf("created path = %q, want the leaf %q (no parents)", created, newData)
-	}
-	if chowned != newData {
-		t.Fatalf("leaf data dir not handed to the service account: chowned=%q", chowned)
-	}
 	if _, e := os.Stat(newData); e != nil {
 		t.Fatalf("leaf was not actually created: %v", e)
+	}
+	if entries, _ := os.ReadDir(parent); len(entries) != 1 {
+		t.Fatalf("parent gained unexpected entries: %v", entries)
 	}
 }
 
 func TestDataDirRefusesMissingParent(t *testing.T) {
 	r := newStrictService(t)
+	useRealDataDirSeams(t)
 	dir := t.TempDir()
 	missingParent := filepath.Join(dir, "does-not-exist")
 	dataDir := filepath.Join(missingParent, "watchpost-data")
@@ -487,17 +477,52 @@ type mutationCounters struct {
 func watchMutations(t *testing.T) *mutationCounters {
 	t.Helper()
 	c := &mutationCounters{}
-	oldAccount, oldMkdir, oldChmod, oldChown := ensureAccount, mkdirData, chmodPath, chownData
+	oldAccount, oldMkdir, oldChmod, oldChown := ensureAccount, mkdirAtLeafSeam, fchmodLeafSeam, fchownLeafSeam
 	ensureAccount = func() error { c.account = true; return nil }
-	mkdirData = func(string, os.FileMode) error { c.mkdir = true; return nil }
-	chmodPath = func(string, os.FileMode) error { c.chmod = true; return nil }
-	chownData = func(string) error { c.chown = true; return nil }
-	t.Cleanup(func() { ensureAccount, mkdirData, chmodPath, chownData = oldAccount, oldMkdir, oldChmod, oldChown })
+	mkdirAtLeafSeam = func(int, string) error { c.mkdir = true; return nil }
+	fchmodLeafSeam = func(int) error { c.chmod = true; return nil }
+	fchownLeafSeam = func(int) error { c.chown = true; return nil }
+	t.Cleanup(func() {
+		ensureAccount, mkdirAtLeafSeam, fchmodLeafSeam, fchownLeafSeam = oldAccount, oldMkdir, oldChmod, oldChown
+	})
 	return c
 }
 
 func (c *mutationCounters) any() bool {
 	return c.account || c.mkdir || c.chmod || c.chown
+}
+
+// useRealDataDirSeams switches the descriptor-relative data-dir seams to their
+// real syscall implementations so a test exercises the actual filesystem
+// establishment (creation, chmod, chown, unlink relative to a directory fd).
+func useRealDataDirSeams(t *testing.T) {
+	t.Helper()
+	openDataParentSeam = openDataParentReal
+	dataParentConsistentSeam = dataParentConsistentReal
+	statDataLeafSeam = statDataLeafReal
+	mkdirAtLeafSeam = mkdirAtLeafReal
+	openAtLeafSeam = openAtLeafReal
+	fchmodLeafSeam = fchmodLeafReal
+	fchownLeafSeam = func(fd int) error { return nil } // tests run unprivileged; ownership is simulated
+	fstatLeafSeam = fstatLeafReal
+	unlinkAtSeam = unlinkAtLeafReal
+	closeFdSeam = closeFdReal
+}
+
+// hasMutatingSystemctl reports whether the fake runner issued a mutating
+// lifecycle verb (enable/disable/start/stop/restart/daemon-reload).
+func hasMutatingSystemctl(log []string) bool {
+	for _, call := range log {
+		for _, prefix := range []string{
+			"systemctl enable ", "systemctl disable ", "systemctl start ",
+			"systemctl restart ", "systemctl stop ", "systemctl daemon-reload",
+		} {
+			if strings.HasPrefix(call, prefix) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // TestInstallRefusalCausesZeroMutation proves every preflight refusal occurs
@@ -561,9 +586,11 @@ func TestInstallRefusalCausesZeroMutation(t *testing.T) {
 			setup: func(t *testing.T, r *fakeRunner) {
 				installManagedUnit(t)
 				setState(r, "enabled", "inactive")
-				oldOwned := requireServiceOwned
-				requireServiceOwned = func(path string) error { return fmt.Errorf("owned by UID 1000") }
-				t.Cleanup(func() { requireServiceOwned = oldOwned })
+				// An existing leaf not owned by the service account is refused
+				// during preflight inspection (descriptor-relative stat).
+				statDataLeafSeam = func(int, string) (dataLeafInfo, error) {
+					return dataLeafInfo{isDir: true, mode: 0o755, uid: 1000}, nil
+				}
 			},
 		},
 	}
@@ -584,12 +611,6 @@ func TestInstallRefusalCausesZeroMutation(t *testing.T) {
 				envfile = filepath.Join(t.TempDir(), "bad.env")
 				os.WriteFile(envfile, []byte("X=1\n"), 0o644) // not 0600
 				badEnv = true
-			}
-			if tc.name == "unacceptable-data-dir" {
-				// A data directory that exists and is not service-owned must be
-				// refused in preflight.
-				dataDir = filepath.Join(t.TempDir(), "existing")
-				os.MkdirAll(dataDir, 0o755)
 			}
 			beforeBin, _ := os.ReadFile(BinaryPath)
 			e := Install(exe, dataDir, "127.0.0.1:9090", false, envfile)
@@ -619,6 +640,7 @@ func TestInstallRefusalCausesZeroMutation(t *testing.T) {
 
 func TestDataDirRefusesAncestorSymlinkEscape(t *testing.T) {
 	r := newStrictService(t)
+	useRealDataDirSeams(t)
 	base := t.TempDir()
 	protected := filepath.Join(base, "protected")
 	os.MkdirAll(protected, 0o755)
@@ -644,50 +666,47 @@ func TestDataDirRefusesAncestorSymlinkEscape(t *testing.T) {
 	if len(r.log) != 0 {
 		t.Fatalf("ancestor-symlink install touched systemctl: %v", r.log)
 	}
-	// A legitimate non-symlink ancestor chain is accepted.
-	real := filepath.Join(base, "real")
-	os.MkdirAll(real, 0o755)
-	if e := validateAncestorChain(filepath.Join(real, "project")); e != nil {
-		t.Fatalf("legitimate ancestor chain refused: %v", e)
-	}
 }
 
 func TestDataDirChmodFailureOnNewLeaf(t *testing.T) {
-	newStrictService(t)
+	r := newStrictService(t)
+	useRealDataDirSeams(t)
 	parent := t.TempDir()
 	newData := filepath.Join(parent, "wp-data")
 	exe := filepath.Join(t.TempDir(), "wp")
 	os.WriteFile(exe, []byte("#!/bin/sh\nexit 0\n"), 0o755)
-	oldMkdir := mkdirData
-	oldChmod := chmodPath
-	mkdirData = func(p string, mode os.FileMode) error { return os.Mkdir(p, mode) }
-	chmodPath = func(p string, mode os.FileMode) error { return fmt.Errorf("chmod failed") }
-	defer func() { mkdirData, chmodPath = oldMkdir, oldChmod }()
+	fchmodLeafSeam = func(int) error { return fmt.Errorf("chmod failed") }
 	if e := Install(exe, newData, "127.0.0.1:8080", false, ""); e == nil {
 		t.Fatal("install succeeded despite data-dir chmod failure")
 	} else if !strings.Contains(e.Error(), "0700") {
 		t.Fatalf("chmod failure not surfaced: %v", e)
 	}
-	// The partial freshly-created leaf must have been cleaned up.
+	// The partial freshly-created leaf must have been cleaned up via the
+	// retained parent descriptor.
 	if _, e := os.Lstat(newData); !os.IsNotExist(e) {
 		t.Fatalf("partial leaf left behind after chmod failure: %v", e)
+	}
+	if len(r.log) != 0 {
+		t.Fatalf("chmod-failure install touched systemctl: %v", r.log)
 	}
 }
 
 func TestDataDirChmodFailureOnExistingLeaf(t *testing.T) {
-	newStrictService(t)
+	r := newStrictService(t)
+	useRealDataDirSeams(t)
 	dir := t.TempDir()
 	existing := filepath.Join(dir, "wp-data")
 	os.MkdirAll(existing, 0o755)
-	oldChmod := chmodPath
-	chmodPath = func(p string, mode os.FileMode) error { return fmt.Errorf("chmod failed") }
-	defer func() { chmodPath = oldChmod }()
+	fchmodLeafSeam = func(int) error { return fmt.Errorf("chmod failed") }
 	exe := filepath.Join(t.TempDir(), "wp")
 	os.WriteFile(exe, []byte("#!/bin/sh\nexit 0\n"), 0o755)
 	if e := Install(exe, existing, "127.0.0.1:8080", false, ""); e == nil {
 		t.Fatal("install succeeded despite existing data-dir chmod failure")
 	} else if !strings.Contains(e.Error(), "0700") {
 		t.Fatalf("existing-leaf chmod failure not surfaced: %v", e)
+	}
+	if len(r.log) != 0 {
+		t.Fatalf("existing-leaf chmod-failure install touched systemctl: %v", r.log)
 	}
 }
 
@@ -738,66 +757,41 @@ func TestInstallRollbackSurfacesNeutralizationFailures(t *testing.T) {
 }
 
 // TestUnchangedReinstallPreservesPriorState proves an UNCHANGED existing
-// reinstall (identical unit and binary) also preserves the exact prior state,
-// including the previously-divergent disabled/inactive and
-// enabled-runtime/inactive cases.
+// reinstall (identical unit and binary, present-safe service-owned data leaf)
+// is a genuine no-op: no enable/disable/start/stop/restart/daemon-reload is
+// issued, so the exact prior state (disabled+inactive, enabled-runtime, etc.)
+// is preserved by doing nothing.
 func TestUnchangedReinstallPreservesPriorState(t *testing.T) {
 	matrix := []stateMatrixEntry{
-		{name: "enabled+active", enabled: "enabled", active: "active", wantEnableSeq: []string{"systemctl enable watchpost.service"}, wantActive: "restart"},
-		{name: "enabled+inactive", enabled: "enabled", active: "inactive", wantEnableSeq: []string{"systemctl enable watchpost.service"}, wantActive: "stop"},
-		{name: "enabled-runtime+active", enabled: "enabled-runtime", active: "active", wantEnableSeq: []string{"systemctl enable --runtime watchpost.service"}, wantActive: "restart"},
-		{name: "enabled-runtime+inactive", enabled: "enabled-runtime", active: "inactive", wantEnableSeq: []string{"systemctl enable --runtime watchpost.service"}, wantActive: "stop"},
-		{name: "disabled+active", enabled: "disabled", active: "active", wantEnableSeq: []string{}, wantActive: "restart"},
-		{name: "disabled+inactive", enabled: "disabled", active: "inactive", wantEnableSeq: []string{}, wantActive: "stop"},
+		{name: "enabled+active", enabled: "enabled", active: "active"},
+		{name: "enabled+inactive", enabled: "enabled", active: "inactive"},
+		{name: "enabled-runtime+active", enabled: "enabled-runtime", active: "active"},
+		{name: "enabled-runtime+inactive", enabled: "enabled-runtime", active: "inactive"},
+		{name: "disabled+active", enabled: "disabled", active: "active"},
+		{name: "disabled+inactive", enabled: "disabled", active: "inactive"},
 	}
 	for _, tc := range matrix {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newStrictService(t)
-			installManagedUnit(t)
+			useRealDataDirSeams(t)
+			dataDir := filepath.Join(t.TempDir(), "wp-data")
+			if e := os.Mkdir(dataDir, 0o700); e != nil {
+				t.Fatal(e)
+			}
+			serviceUID = func() (int, error) { return os.Getuid(), nil }
+			writeFileAtomic(UnitPath, []byte(Unit(dataDir, "127.0.0.1:8080", false, "")), 0o644)
 			setState(r, tc.enabled, tc.active)
-			// Identical unit (default listen, no change) and identical binary.
 			exe := filepath.Join(t.TempDir(), "wp2")
 			os.WriteFile(exe, mustRead(t, BinaryPath), 0o755)
-			r.script["systemctl enable watchpost.service"] = fakeResult{}
-			r.script["systemctl enable --runtime watchpost.service"] = fakeResult{}
-			r.script["systemctl disable watchpost.service"] = fakeResult{}
-			r.script["systemctl restart watchpost.service"] = fakeResult{}
-			r.script["systemctl stop watchpost.service"] = fakeResult{}
-			if e := Install(exe, "/var/lib/watchpost", "127.0.0.1:8080", false, ""); e != nil {
+			if e := Install(exe, dataDir, "127.0.0.1:8080", false, ""); e != nil {
 				t.Fatalf("unchanged reinstall failed: %v", e)
 			}
-			// Genuine no-op for the already-preserved enabled+active case: read-only state
-			// queries (is-enabled/is-active) are permitted; no lifecycle mutation.
-			if tc.enabled == "enabled" && tc.active == "active" {
-				for _, call := range r.log {
-					if strings.HasPrefix(call, "systemctl enable ") || strings.HasPrefix(call, "systemctl disable ") ||
-						strings.HasPrefix(call, "systemctl start ") || strings.HasPrefix(call, "systemctl stop ") ||
-						strings.HasPrefix(call, "systemctl restart ") || call == "systemctl daemon-reload" {
-						t.Fatalf("unchanged enabled+active reinstall performed a lifecycle mutation: %s", call)
-					}
+			for _, call := range r.log {
+				if strings.HasPrefix(call, "systemctl enable ") || strings.HasPrefix(call, "systemctl disable ") ||
+					strings.HasPrefix(call, "systemctl start ") || strings.HasPrefix(call, "systemctl stop ") ||
+					strings.HasPrefix(call, "systemctl restart ") || call == "systemctl daemon-reload" {
+					t.Fatalf("unchanged %s reinstall performed a lifecycle mutation: %s", tc.name, call)
 				}
-				return
-			}
-			for _, want := range tc.wantEnableSeq {
-				if !contains(r.log, want) {
-					t.Fatalf("unchanged reinstall did not apply enablement %q: log=%v", tc.enabled, r.log)
-				}
-			}
-			if tc.enabled == "enabled-runtime" {
-				if contains(r.log, "systemctl enable watchpost.service") {
-					t.Fatalf("enabled-runtime prior was converted to persistent enable: log=%v", r.log)
-				}
-			}
-			if tc.enabled == "disabled" {
-				if contains(r.log, "systemctl enable watchpost.service") || contains(r.log, "systemctl enable --runtime watchpost.service") {
-					t.Fatalf("disabled prior was enabled by unchanged reinstall: log=%v", r.log)
-				}
-			}
-			if tc.wantActive == "restart" && !contains(r.log, "systemctl restart watchpost.service") {
-				t.Fatalf("active prior not restarted on unchanged reinstall: log=%v", r.log)
-			}
-			if tc.wantActive == "stop" && !contains(r.log, "systemctl stop watchpost.service") {
-				t.Fatalf("inactive prior not stopped on unchanged reinstall: log=%v", r.log)
 			}
 		})
 	}
@@ -808,6 +802,7 @@ func TestUnchangedReinstallPreservesPriorState(t *testing.T) {
 // rather than being reported as already-correct.
 func TestNoOpRepairsMissingDataLeaf(t *testing.T) {
 	r := newStrictService(t)
+	useRealDataDirSeams(t)
 	// The data leaf does not exist; the parent (temp dir) does.
 	dataDir := filepath.Join(t.TempDir(), "wp-data")
 	// Install a managed unit that matches the data dir so the unit is identical.
@@ -817,18 +812,8 @@ func TestNoOpRepairsMissingDataLeaf(t *testing.T) {
 	setState(r, "enabled", "active")
 	exe := filepath.Join(t.TempDir(), "wp2")
 	os.WriteFile(exe, mustRead(t, BinaryPath), 0o755)
-	created := ""
-	oldMkdir := mkdirData
-	mkdirData = func(p string, mode os.FileMode) error {
-		created = p
-		return os.Mkdir(p, mode)
-	}
-	defer func() { mkdirData = oldMkdir }()
 	if e := Install(exe, dataDir, "127.0.0.1:8080", false, ""); e != nil {
 		t.Fatalf("repair install failed: %v", e)
-	}
-	if created != dataDir {
-		t.Fatalf("missing data leaf not repaired: created=%q want %q", created, dataDir)
 	}
 	if _, e := os.Lstat(dataDir); e != nil {
 		t.Fatalf("repaired leaf not created: %v", e)
@@ -841,5 +826,100 @@ func TestNoOpRepairsMissingDataLeaf(t *testing.T) {
 			strings.HasPrefix(call, "systemctl restart ") || call == "systemctl daemon-reload" {
 			t.Fatalf("repair install performed a lifecycle mutation: %s", call)
 		}
+	}
+}
+
+// TestDataDirEstablishmentFailuresCleanUp proves a failure to fully establish
+// the data leaf (chown, bind, or post-creation inspection) fails the install
+// before any binary/unit/systemd mutation, removes the partial leaf via the
+// retained parent descriptor, and reports the cleanup result.
+func TestDataDirEstablishmentFailuresCleanUp(t *testing.T) {
+	run := func(name string, breakIt func()) {
+		t.Run(name, func(t *testing.T) {
+			r := newStrictService(t)
+			useRealDataDirSeams(t)
+			leaf := filepath.Join(t.TempDir(), "webfleet")
+			binBefore := mustRead(t, BinaryPath)
+			breakIt()
+			exe := filepath.Join(t.TempDir(), "wp")
+			os.WriteFile(exe, []byte("#!/bin/sh\nexit 0\n"), 0o755)
+			if e := Install(exe, leaf, "127.0.0.1:8080", false, ""); e == nil {
+				t.Fatal("install succeeded despite a data-leaf establishment failure")
+			}
+			if _, e := os.Stat(UnitPath); !os.IsNotExist(e) {
+				t.Fatal("unit written despite the data-leaf failure")
+			}
+			if got := mustRead(t, BinaryPath); !bytes.Equal(got, binBefore) {
+				t.Fatal("binary mutated despite the data-leaf failure")
+			}
+			if hasMutatingSystemctl(r.log) {
+				t.Fatalf("systemctl mutated despite the data-leaf failure: %v", r.log)
+			}
+			if _, e := os.Stat(leaf); !os.IsNotExist(e) {
+				t.Fatal("partial leaf was not cleaned up after the establishment failure")
+			}
+		})
+	}
+	run("chown-failure", func() { fchownLeafSeam = func(int) error { return errors.New("chown denied") } })
+	run("bind-failure", func() {
+		openAtLeafSeam = func(int, string) (int, error) { return -1, errors.New("bind denied") }
+	})
+	run("inspection-failure", func() {
+		fstatLeafSeam = func(int) (dataLeafInfo, error) { return dataLeafInfo{}, errors.New("inspect denied") }
+	})
+
+	// A cleanup failure after a failed establishment must be reported, not
+	// silently claimed as rolled back.
+	t.Run("cleanup-failure-reported", func(t *testing.T) {
+		r := newStrictService(t)
+		useRealDataDirSeams(t)
+		leaf := filepath.Join(t.TempDir(), "webfleet")
+		fchmodLeafSeam = func(int) error { return errors.New("chmod denied") }
+		unlinkAtSeam = func(int, string) error { return errors.New("unlink denied") }
+		exe := filepath.Join(t.TempDir(), "wp")
+		os.WriteFile(exe, []byte("#!/bin/sh\nexit 0\n"), 0o755)
+		if e := Install(exe, leaf, "127.0.0.1:8080", false, ""); e == nil {
+			t.Fatal("install succeeded despite a cleanup failure")
+		} else if !strings.Contains(e.Error(), "partial leaf cleanup incomplete") {
+			t.Fatalf("cleanup failure not surfaced: %v", e)
+		}
+		if len(r.log) != 0 {
+			t.Fatal("cleanup-failure install touched systemctl")
+		}
+	})
+}
+
+// TestDataDirAncestorSwapAfterInspectionRefused proves an ancestor replaced
+// after inspection (before leaf creation) is detected via the retained parent
+// descriptor and refused; the substituted location never receives a leaf.
+func TestDataDirAncestorSwapAfterInspectionRefused(t *testing.T) {
+	r := newStrictService(t)
+	useRealDataDirSeams(t)
+	original := t.TempDir()
+	substitute := t.TempDir()
+	leaf := filepath.Join(original, "watchpost-data")
+	// Between inspection (parent descriptor opened) and establishment, the
+	// parent is replaced with a symlink to the substitute. The retained
+	// descriptor must cause the establishment to be refused, so neither the
+	// substituted target nor the renamed original receives a leaf.
+	ensureAccount = func() error {
+		if e := os.Rename(original, original+"-moved"); e != nil {
+			return e
+		}
+		return os.Symlink(substitute, original)
+	}
+	exe := filepath.Join(t.TempDir(), "wp")
+	os.WriteFile(exe, []byte("#!/bin/sh\nexit 0\n"), 0o755)
+	if e := Install(exe, leaf, "127.0.0.1:8080", false, ""); e == nil {
+		t.Fatal("install proceeded after the parent was swapped for a symlink")
+	}
+	if _, e := os.Stat(filepath.Join(substitute, "watchpost-data")); !os.IsNotExist(e) {
+		t.Fatalf("leaf created at the substituted target: %v", e)
+	}
+	if _, e := os.Stat(filepath.Join(original+"-moved", "watchpost-data")); !os.IsNotExist(e) {
+		t.Fatalf("leaf created at the renamed original: %v", e)
+	}
+	if len(r.log) != 0 {
+		t.Fatal("ancestor-swap install touched systemctl")
 	}
 }
