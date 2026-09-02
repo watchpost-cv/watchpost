@@ -424,7 +424,9 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 
 // validateEnvFile validates an EnvironmentFile path for the service unit:
 // absolute, a regular non-symlink file with exactly owner-only 0600
-// permissions, and free of systemd specifier and control characters.
+// permissions, owned by root (uid 0), and free of systemd specifier and
+// control characters. Machine configuration is root-owned so the service
+// account cannot rewrite its own configuration.
 func validateEnvFile(path string) error {
 	if !filepath.IsAbs(path) {
 		return fmt.Errorf("environment file %q must be an absolute path", path)
@@ -447,6 +449,9 @@ func validateEnvFile(path string) error {
 	}
 	if info.Mode().Perm() != 0o600 {
 		return fmt.Errorf("environment file %q must have exactly 0600 permissions (owner read/write only)", path)
+	}
+	if fileUID(info) != 0 {
+		return fmt.Errorf("environment file %q must be owned by root (uid 0); machine configuration is root-owned", path)
 	}
 	return nil
 }
@@ -471,12 +476,49 @@ func validateReadWritePath(path string) error {
 	return nil
 }
 
+// prepareDataDir safely establishes the service data directory. A newly
+// created leaf directory is created and assigned to the service account. An
+// existing directory is only reused if it is a non-symlink directory already
+// owned by the service account with no group/world-write bits; an unrelated
+// or root-owned existing directory is refused rather than silently adopted.
+func prepareDataDir(path string) error {
+	info, e := os.Lstat(path)
+	if errors.Is(e, os.ErrNotExist) {
+		if e := mkdirData(path, 0o700); e != nil {
+			return e
+		}
+		_ = os.Chmod(path, 0o700)
+		if e := chownData(path); e != nil {
+			return e
+		}
+		return nil
+	}
+	if e != nil {
+		return fmt.Errorf("data directory %q: %w", path, e)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("data directory %q must not be a symlink", path)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("data directory %q is not a directory", path)
+	}
+	if info.Mode().Perm()&0o022 != 0 {
+		return fmt.Errorf("data directory %q must not be group- or world-writable", path)
+	}
+	if e := requireServiceOwned(path); e != nil {
+		return e
+	}
+	_ = os.Chmod(path, 0o700)
+	return nil
+}
+
 // Install installs (or idempotently reinstalls) the watchpost systemd unit: it
-// creates the service account and data directory, writes the root-protected
-// environment file if one is supplied, copies the current binary, writes the
-// managed unit, daemon-reloads, enables and starts/restarts the service. A
-// partial failure restores the prior unit, enablement, active state and binary.
-func Install(exe, dataDir, listen string, secureCookies bool, envfile string) error {
+// creates the service account and data directory, copies the current binary,
+// writes the managed unit, daemon-reloads, enables and starts/restarts the
+// service. A partial failure restores the prior unit, enablement, active state
+// and binary, and the returned error combines the original failure with any
+// rollback failure.
+func Install(exe, dataDir, listen string, secureCookies bool, envfile string) (retErr error) {
 	if e := requireLinux(); e != nil {
 		return e
 	}
@@ -497,6 +539,9 @@ func Install(exe, dataDir, listen string, secureCookies bool, envfile string) er
 	if e := validateReadWritePath(dataDir); e != nil {
 		return e
 	}
+	if e := validateDataDirPath(dataDir); e != nil {
+		return e
+	}
 	if envfile != "" {
 		if e := validateEnvFile(envfile); e != nil {
 			return e
@@ -508,12 +553,7 @@ func Install(exe, dataDir, listen string, secureCookies bool, envfile string) er
 	if e := ensureAccount(); e != nil {
 		return e
 	}
-	if e := mkdirData(dataDir, 0o700); e != nil {
-		return e
-	}
-	_ = os.Chmod(dataDir, 0o700)
-	_ = os.Chown(dataDir, 0, 0)
-	if e := chownData(dataDir); e != nil {
+	if e := prepareDataDir(dataDir); e != nil {
 		return e
 	}
 	unit := buildUnit(dataDir, listen, secureCookies, envfile)
@@ -527,10 +567,28 @@ func Install(exe, dataDir, listen string, secureCookies bool, envfile string) er
 	} else if !errors.Is(e, os.ErrNotExist) {
 		return e
 	}
+	// Snapshot and classify the exact prior enablement and active states BEFORE
+	// any mutation. Query failures are propagated and every state that cannot
+	// be recreated exactly by rollback is refused up front, so install never
+	// mutates a state it cannot restore.
 	priorEnabled, priorActive := "", ""
 	if hadUnit {
-		priorEnabled, _ = unitStateWord("is-enabled")
-		priorActive, _ = unitStateWord("is-active")
+		var e error
+		if priorEnabled, e = unitStateWord("is-enabled"); e != nil {
+			return fmt.Errorf("refusing to reinstall watchpost.service: %w", e)
+		}
+		if !restorableEnabledWord(priorEnabled) {
+			return fmt.Errorf("refusing to reinstall watchpost.service: prior enablement state %q cannot be restored exactly; disable or unmask it first", priorEnabled)
+		}
+		if priorActive, e = unitStateWord("is-active"); e != nil {
+			return fmt.Errorf("refusing to reinstall watchpost.service: %w", e)
+		}
+		if !restorableActiveWord(priorActive) {
+			return fmt.Errorf("refusing to reinstall watchpost.service: prior active state %q cannot be restored exactly; stop or restart it first", priorActive)
+		}
+		if !restorablePriorState(priorEnabled, priorActive) {
+			return fmt.Errorf("refusing to reinstall watchpost.service: prior state %s+%s cannot be restored exactly; unmask it first", priorEnabled, priorActive)
+		}
 	}
 	incomingDigest, err := fileSHA256(exe)
 	if err != nil {
@@ -574,23 +632,14 @@ func Install(exe, dataDir, listen string, secureCookies bool, envfile string) er
 			errs = append(errs, fmt.Sprintf("reload systemd: %v", e))
 		}
 		if hadUnit {
-			if priorEnabled == "enabled" {
-				if e := systemctlSuccess("enable", "watchpost.service"); e != nil {
-					errs = append(errs, fmt.Sprintf("re-enable: %v", e))
+			for _, args := range enableRestoreSteps(priorEnabled, "watchpost.service") {
+				if e := systemctlSuccess(args...); e != nil {
+					errs = append(errs, fmt.Sprintf("restore enablement %q: %v", priorEnabled, e))
+					break
 				}
-			} else if priorEnabled != "" && priorEnabled != "disabled" {
-				errs = append(errs, fmt.Sprintf("prior enablement %q cannot be restored", priorEnabled))
-			} else {
-				_ = systemctlSuccess("disable", "watchpost.service")
 			}
-			if priorActive == "active" {
-				if e := systemctlSuccess("start", "watchpost.service"); e != nil {
-					errs = append(errs, fmt.Sprintf("restart prior service: %v", e))
-				}
-			} else if priorActive != "" && priorActive != "inactive" && priorActive != "dead" && priorActive != "failed" {
-				errs = append(errs, fmt.Sprintf("prior active state %q cannot be restored", priorActive))
-			} else {
-				_ = systemctlSuccess("stop", "watchpost.service")
+			if e := systemctlSuccess(activeRestoreArgs(priorActive, "watchpost.service")...); e != nil {
+				errs = append(errs, fmt.Sprintf("restore active state %q: %v", priorActive, e))
 			}
 		}
 		if len(errs) == 0 {
@@ -599,8 +648,10 @@ func Install(exe, dataDir, listen string, secureCookies bool, envfile string) er
 		return "; rollback incomplete: " + strings.Join(errs, "; ")
 	}
 	defer func() {
-		if !installOK {
-			_ = restore()
+		if !installOK && retErr != nil {
+			if rb := restore(); rb != "" {
+				retErr = fmt.Errorf("%v%s", retErr, rb)
+			}
 		}
 	}()
 	if e := copyFile(exe, BinaryPath, 0o755); e != nil {
@@ -624,12 +675,71 @@ func Install(exe, dataDir, listen string, secureCookies bool, envfile string) er
 	}
 	for _, a := range steps {
 		if out, code, err := systemctl(a...); err != nil || code != 0 {
-			return fmt.Errorf("systemctl %s: %s: %w (installation rolled back)", strings.Join(a, " "), bounded(strings.TrimSpace(out)), errorIfNil(err, code, a))
+			retErr = fmt.Errorf("systemctl %s: %s: %w (installation rolled back)", strings.Join(a, " "), bounded(strings.TrimSpace(out)), errorIfNil(err, code, a))
+			return retErr
 		}
 	}
 	installOK = true
 	_ = os.Remove(BinaryPath + ".preinstall")
 	return nil
+}
+
+// restorableEnabledWord reports whether a prior is-enabled word can be
+// recreated exactly by the rollback enablement sequence. Persistent enablement
+// (enabled), runtime-only enablement (enabled-runtime) and their absence
+// (disabled) are restorable. Masked/static/linked/generated/transient and other
+// unit-file states are refused before mutation because enable/disable cannot
+// reproduce them.
+func restorableEnabledWord(word string) bool {
+	switch word {
+	case "enabled", "enabled-runtime", "disabled":
+		return true
+	}
+	return false
+}
+
+// restorableActiveWord reports whether a prior is-active word can be recreated
+// exactly by the rollback activation sequence. Running and stopped are
+// restorable; transient, failed, reloading and unknown states are not.
+func restorableActiveWord(word string) bool {
+	switch word {
+	case "active", "inactive":
+		return true
+	}
+	return false
+}
+
+// restorablePriorState reports whether the enablement/active pair can be
+// reproduced exactly. Only the states restorableEnabledWord and
+// restorableActiveWord accept are combined here; this guard exists so any
+// future widening of the accept sets must also prove the pair is restorable.
+func restorablePriorState(enabledWord, activeWord string) bool {
+	return restorableEnabledWord(enabledWord) && restorableActiveWord(activeWord)
+}
+
+// enableRestoreSteps returns the systemctl calls that reproduce a prior
+// is-enabled word exactly. Enablement is normalized first: the persistent
+// enablement link created by the attempted install is removed with disable,
+// then the intended persistent or runtime link is recreated, so a runtime-only
+// prior never leaves a persistent enablement behind.
+func enableRestoreSteps(word, unit string) [][]string {
+	switch word {
+	case "enabled":
+		return [][]string{{"disable", unit}, {"enable", unit}}
+	case "enabled-runtime":
+		return [][]string{{"disable", unit}, {"enable", "--runtime", unit}}
+	default: // disabled
+		return [][]string{{"disable", unit}}
+	}
+}
+
+// activeRestoreArgs returns the systemctl call that reproduces a prior
+// is-active word exactly.
+func activeRestoreArgs(word, unit string) []string {
+	if word == "active" {
+		return []string{"restart", unit}
+	}
+	return []string{"stop", unit}
 }
 
 func errorIfNil(err error, code int, args []string) error {
@@ -674,6 +784,56 @@ func lookupServiceIDs() (int, int, error) {
 	}
 	uid, _ := strconv.Atoi(u.Uid)
 	return uid, gid, nil
+}
+
+// serviceUID returns the numeric UID of the service account. It is a variable
+// so tests can simulate the account without a real system user.
+var serviceUID = func() (int, error) {
+	uid, _, e := lookupServiceIDs()
+	return uid, e
+}
+
+// systemDataRoots are filesystem and system-prefix directories the service
+// installer must never adopt as a data directory. Passing one of these as
+// `service install --data` is refused before any mutation.
+var systemDataRoots = map[string]bool{
+	"/": true, "/bin": true, "/boot": true, "/dev": true, "/etc": true,
+	"/home": true, "/lib": true, "/lib64": true, "/opt": true, "/proc": true,
+	"/root": true, "/run": true, "/sbin": true, "/srv": true, "/sys": true,
+	"/tmp": true, "/usr": true, "/var": true,
+}
+
+// validateDataDirPath rejects data-directory paths that are dangerous system
+// roots or would require adopting a parent directory. It must run before any
+// ownership or mode mutation.
+func validateDataDirPath(path string) error {
+	clean := filepath.Clean(path)
+	if systemDataRoots[clean] {
+		return fmt.Errorf("data directory %q is a system directory and cannot be adopted as a service data directory", path)
+	}
+	return nil
+}
+
+// requireServiceOwned validates that an existing data directory is already
+// owned by the service account, so the installer never silently adopts an
+// unrelated directory. It is a variable so tests can simulate ownership
+// without real chown privileges.
+var requireServiceOwned = func(path string) error { return requireServiceOwnedReal(path) }
+
+func requireServiceOwnedReal(path string) error {
+	info, e := os.Lstat(path)
+	if e != nil {
+		return e
+	}
+	uid, e := serviceUID()
+	if e != nil {
+		return e
+	}
+	owner := fileUID(info)
+	if owner != uid {
+		return fmt.Errorf("data directory %q already exists and is owned by UID %d; the %s service requires it to be owned by %s:%s with mode 0700. Move existing data under %s or re-home it; the installer will not adopt an existing directory", path, owner, ServiceUser, ServiceUser, ServiceGroup, DefaultDataDir)
+	}
+	return nil
 }
 
 func lifecycle(verb string) error {
