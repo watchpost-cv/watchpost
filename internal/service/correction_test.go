@@ -474,3 +474,372 @@ func TestRecoveryTimeMarkerProvesTiming(t *testing.T) {
 		}
 	}
 }
+
+// mutationCounters records whether any mutating operation was invoked, so a
+// refusal can prove zero account/mkdir/chmod/chown mutation.
+type mutationCounters struct {
+	account bool
+	mkdir   bool
+	chmod   bool
+	chown   bool
+}
+
+func watchMutations(t *testing.T) *mutationCounters {
+	t.Helper()
+	c := &mutationCounters{}
+	oldAccount, oldMkdir, oldChmod, oldChown := ensureAccount, mkdirData, chmodPath, chownData
+	ensureAccount = func() error { c.account = true; return nil }
+	mkdirData = func(string, os.FileMode) error { c.mkdir = true; return nil }
+	chmodPath = func(string, os.FileMode) error { c.chmod = true; return nil }
+	chownData = func(string) error { c.chown = true; return nil }
+	t.Cleanup(func() { ensureAccount, mkdirData, chmodPath, chownData = oldAccount, oldMkdir, oldChmod, oldChown })
+	return c
+}
+
+func (c *mutationCounters) any() bool {
+	return c.account || c.mkdir || c.chmod || c.chown
+}
+
+// TestInstallRefusalCausesZeroMutation proves every preflight refusal occurs
+// before any account, mkdir, chmod, chown, binary, unit or lifecycle mutation.
+func TestInstallRefusalCausesZeroMutation(t *testing.T) {
+	refusalCases := []struct {
+		name  string
+		setup func(t *testing.T, r *fakeRunner) // returns after arranging the failure
+	}{
+		{
+			name: "foreign-unit",
+			setup: func(t *testing.T, r *fakeRunner) {
+				writeFileAtomic(UnitPath, []byte("[Unit]\nDescription=admin\n[Service]\nExecStart=/usr/bin/x\n[Install]\nWantedBy=multi-user.target\n"), 0o644)
+			},
+		},
+		{
+			name: "tampered-unit",
+			setup: func(t *testing.T, r *fakeRunner) {
+				installManagedUnit(t)
+				u := string(mustRead(t, UnitPath))
+				writeFileAtomic(UnitPath, []byte(strings.Replace(u, "127.0.0.1:8080", "127.0.0.1:9999", 1)), 0o644)
+			},
+		},
+		{
+			name: "unsupported-enabled-state",
+			setup: func(t *testing.T, r *fakeRunner) {
+				installManagedUnit(t)
+				setState(r, "masked", "inactive")
+			},
+		},
+		{
+			name: "unsupported-active-state",
+			setup: func(t *testing.T, r *fakeRunner) {
+				installManagedUnit(t)
+				setState(r, "enabled", "reloading")
+			},
+		},
+		{
+			name: "state-query-failure",
+			setup: func(t *testing.T, r *fakeRunner) {
+				installManagedUnit(t)
+				r.script["systemctl is-enabled watchpost.service"] = fakeResult{out: "", code: 1, err: fmt.Errorf("query failed")}
+			},
+		},
+		{
+			name: "invalid-incoming-executable",
+			setup: func(t *testing.T, r *fakeRunner) {
+				installManagedUnit(t)
+				setState(r, "enabled", "inactive")
+			},
+		},
+		{
+			name: "invalid-env-file",
+			setup: func(t *testing.T, r *fakeRunner) {
+				installManagedUnit(t)
+				setState(r, "enabled", "inactive")
+			},
+		},
+		{
+			name: "unacceptable-data-dir",
+			setup: func(t *testing.T, r *fakeRunner) {
+				installManagedUnit(t)
+				setState(r, "enabled", "inactive")
+				oldOwned := requireServiceOwned
+				requireServiceOwned = func(path string) error { return fmt.Errorf("owned by UID 1000") }
+				t.Cleanup(func() { requireServiceOwned = oldOwned })
+			},
+		},
+	}
+	for _, tc := range refusalCases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newStrictService(t)
+			c := watchMutations(t)
+			tc.setup(t, r)
+			exe := filepath.Join(t.TempDir(), "wp")
+			os.WriteFile(exe, []byte("#!/bin/sh\nexit 0\n"), 0o755)
+			dataDir := "/var/lib/watchpost"
+			envfile := ""
+			badEnv := false
+			if tc.name == "invalid-incoming-executable" {
+				os.Remove(exe)
+			}
+			if tc.name == "invalid-env-file" {
+				envfile = filepath.Join(t.TempDir(), "bad.env")
+				os.WriteFile(envfile, []byte("X=1\n"), 0o644) // not 0600
+				badEnv = true
+			}
+			if tc.name == "unacceptable-data-dir" {
+				// A data directory that exists and is not service-owned must be
+				// refused in preflight.
+				dataDir = filepath.Join(t.TempDir(), "existing")
+				os.MkdirAll(dataDir, 0o755)
+			}
+			beforeBin, _ := os.ReadFile(BinaryPath)
+			e := Install(exe, dataDir, "127.0.0.1:9090", false, envfile)
+			_ = badEnv
+			if e == nil {
+				t.Fatalf("refusal case %s unexpectedly succeeded", tc.name)
+			}
+			if c.any() {
+				t.Fatalf("refusal case %s performed account/mkdir/chmod/chown mutation: %+v", tc.name, c)
+			}
+			afterBin, _ := os.ReadFile(BinaryPath)
+			if !bytes.Equal(beforeBin, afterBin) {
+				t.Fatalf("refusal case %s mutated the binary", tc.name)
+			}
+			// Read-only state queries (is-enabled/is-active) are non-mutating
+			// and permitted; any mutating lifecycle verb is a violation.
+			for _, call := range r.log {
+				if strings.HasPrefix(call, "systemctl enable ") || strings.HasPrefix(call, "systemctl disable ") ||
+					strings.HasPrefix(call, "systemctl start ") || strings.HasPrefix(call, "systemctl stop ") ||
+					strings.HasPrefix(call, "systemctl restart ") || call == "systemctl daemon-reload" {
+					t.Fatalf("refusal case %s performed a lifecycle mutation: %s", tc.name, call)
+				}
+			}
+		})
+	}
+}
+
+func TestDataDirRefusesAncestorSymlinkEscape(t *testing.T) {
+	r := newStrictService(t)
+	base := t.TempDir()
+	protected := filepath.Join(base, "protected")
+	os.MkdirAll(protected, 0o755)
+	// /base/link -> protected; a lexical /base/link/project would resolve into
+	// the protected target if the ancestor symlink were followed.
+	link := filepath.Join(base, "link")
+	if e := os.Symlink(protected, link); e != nil {
+		t.Fatal(e)
+	}
+	exe := filepath.Join(t.TempDir(), "wp")
+	os.WriteFile(exe, []byte("#!/bin/sh\nexit 0\n"), 0o755)
+	dataDir := filepath.Join(link, "project")
+	if e := Install(exe, dataDir, "127.0.0.1:8080", false, ""); e == nil {
+		t.Fatal("install followed an ancestor symlink escape")
+	}
+	// No leaf is created at the resolved target.
+	if _, e := os.Lstat(filepath.Join(protected, "project")); !os.IsNotExist(e) {
+		t.Fatalf("leaf created at resolved protected target: %v", e)
+	}
+	if _, e := os.Lstat(dataDir); !os.IsNotExist(e) {
+		t.Fatalf("leaf created through the symlink: %v", e)
+	}
+	if len(r.log) != 0 {
+		t.Fatalf("ancestor-symlink install touched systemctl: %v", r.log)
+	}
+	// A legitimate non-symlink ancestor chain is accepted.
+	real := filepath.Join(base, "real")
+	os.MkdirAll(real, 0o755)
+	if e := validateAncestorChain(filepath.Join(real, "project")); e != nil {
+		t.Fatalf("legitimate ancestor chain refused: %v", e)
+	}
+}
+
+func TestDataDirChmodFailureOnNewLeaf(t *testing.T) {
+	newStrictService(t)
+	parent := t.TempDir()
+	newData := filepath.Join(parent, "wp-data")
+	exe := filepath.Join(t.TempDir(), "wp")
+	os.WriteFile(exe, []byte("#!/bin/sh\nexit 0\n"), 0o755)
+	oldMkdir := mkdirData
+	oldChmod := chmodPath
+	mkdirData = func(p string, mode os.FileMode) error { return os.Mkdir(p, mode) }
+	chmodPath = func(p string, mode os.FileMode) error { return fmt.Errorf("chmod failed") }
+	defer func() { mkdirData, chmodPath = oldMkdir, oldChmod }()
+	if e := Install(exe, newData, "127.0.0.1:8080", false, ""); e == nil {
+		t.Fatal("install succeeded despite data-dir chmod failure")
+	} else if !strings.Contains(e.Error(), "0700") {
+		t.Fatalf("chmod failure not surfaced: %v", e)
+	}
+	// The partial freshly-created leaf must have been cleaned up.
+	if _, e := os.Lstat(newData); !os.IsNotExist(e) {
+		t.Fatalf("partial leaf left behind after chmod failure: %v", e)
+	}
+}
+
+func TestDataDirChmodFailureOnExistingLeaf(t *testing.T) {
+	newStrictService(t)
+	dir := t.TempDir()
+	existing := filepath.Join(dir, "wp-data")
+	os.MkdirAll(existing, 0o755)
+	oldChmod := chmodPath
+	chmodPath = func(p string, mode os.FileMode) error { return fmt.Errorf("chmod failed") }
+	defer func() { chmodPath = oldChmod }()
+	exe := filepath.Join(t.TempDir(), "wp")
+	os.WriteFile(exe, []byte("#!/bin/sh\nexit 0\n"), 0o755)
+	if e := Install(exe, existing, "127.0.0.1:8080", false, ""); e == nil {
+		t.Fatal("install succeeded despite existing data-dir chmod failure")
+	} else if !strings.Contains(e.Error(), "0700") {
+		t.Fatalf("existing-leaf chmod failure not surfaced: %v", e)
+	}
+}
+
+func TestInstallRollbackSurfacesNeutralizationFailures(t *testing.T) {
+	// Forward failure + rollback stop failure.
+	{
+		r := newStrictService(t)
+		installManagedUnit(t)
+		setState(r, "enabled", "active")
+		exe := filepath.Join(t.TempDir(), "wp")
+		os.WriteFile(exe, []byte("#!/bin/sh\nexit 0\n"), 0o755)
+		r.script["systemctl daemon-reload"] = fakeResult{}
+		r.script["systemctl disable watchpost.service"] = fakeResult{}
+		r.script["systemctl enable watchpost.service"] = fakeResult{}
+		// Forward restart fails; rollback neutralization stop also fails.
+		r.script["systemctl restart watchpost.service"] = fakeResult{out: "activation failed", code: 1}
+		r.script["systemctl stop watchpost.service"] = fakeResult{out: "cannot stop", code: 1}
+		e := Install(exe, "/var/lib/watchpost", "127.0.0.1:9090", false, "")
+		if e == nil {
+			t.Fatal("install succeeded despite forward failure")
+		}
+		if !strings.Contains(e.Error(), "neutralize stop") {
+			t.Fatalf("rollback stop failure not surfaced: %v", e)
+		}
+		if !strings.Contains(e.Error(), "rollback incomplete") {
+			t.Fatalf("rollback incomplete not reported: %v", e)
+		}
+	}
+	// Forward failure + rollback disable failure.
+	{
+		r := newStrictService(t)
+		installManagedUnit(t)
+		setState(r, "enabled", "inactive")
+		exe := filepath.Join(t.TempDir(), "wp")
+		os.WriteFile(exe, []byte("#!/bin/sh\nexit 0\n"), 0o755)
+		r.script["systemctl daemon-reload"] = fakeResult{}
+		r.script["systemctl disable watchpost.service"] = fakeResult{out: "cannot disable", code: 1}
+		r.script["systemctl enable watchpost.service"] = fakeResult{}
+		r.script["systemctl stop watchpost.service"] = fakeResult{}
+		e := Install(exe, "/var/lib/watchpost", "127.0.0.1:9090", false, "")
+		if e == nil {
+			t.Fatal("install succeeded despite forward failure")
+		}
+		if !strings.Contains(e.Error(), "neutralize disable") {
+			t.Fatalf("rollback disable failure not surfaced: %v", e)
+		}
+	}
+}
+
+// TestUnchangedReinstallPreservesPriorState proves an UNCHANGED existing
+// reinstall (identical unit and binary) also preserves the exact prior state,
+// including the previously-divergent disabled/inactive and
+// enabled-runtime/inactive cases.
+func TestUnchangedReinstallPreservesPriorState(t *testing.T) {
+	matrix := []stateMatrixEntry{
+		{name: "enabled+active", enabled: "enabled", active: "active", wantEnableSeq: []string{"systemctl enable watchpost.service"}, wantActive: "restart"},
+		{name: "enabled+inactive", enabled: "enabled", active: "inactive", wantEnableSeq: []string{"systemctl enable watchpost.service"}, wantActive: "stop"},
+		{name: "enabled-runtime+active", enabled: "enabled-runtime", active: "active", wantEnableSeq: []string{"systemctl enable --runtime watchpost.service"}, wantActive: "restart"},
+		{name: "enabled-runtime+inactive", enabled: "enabled-runtime", active: "inactive", wantEnableSeq: []string{"systemctl enable --runtime watchpost.service"}, wantActive: "stop"},
+		{name: "disabled+active", enabled: "disabled", active: "active", wantEnableSeq: []string{}, wantActive: "restart"},
+		{name: "disabled+inactive", enabled: "disabled", active: "inactive", wantEnableSeq: []string{}, wantActive: "stop"},
+	}
+	for _, tc := range matrix {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newStrictService(t)
+			installManagedUnit(t)
+			setState(r, tc.enabled, tc.active)
+			// Identical unit (default listen, no change) and identical binary.
+			exe := filepath.Join(t.TempDir(), "wp2")
+			os.WriteFile(exe, mustRead(t, BinaryPath), 0o755)
+			r.script["systemctl enable watchpost.service"] = fakeResult{}
+			r.script["systemctl enable --runtime watchpost.service"] = fakeResult{}
+			r.script["systemctl disable watchpost.service"] = fakeResult{}
+			r.script["systemctl restart watchpost.service"] = fakeResult{}
+			r.script["systemctl stop watchpost.service"] = fakeResult{}
+			if e := Install(exe, "/var/lib/watchpost", "127.0.0.1:8080", false, ""); e != nil {
+				t.Fatalf("unchanged reinstall failed: %v", e)
+			}
+			// Genuine no-op for the already-preserved enabled+active case: read-only state
+			// queries (is-enabled/is-active) are permitted; no lifecycle mutation.
+			if tc.enabled == "enabled" && tc.active == "active" {
+				for _, call := range r.log {
+					if strings.HasPrefix(call, "systemctl enable ") || strings.HasPrefix(call, "systemctl disable ") ||
+						strings.HasPrefix(call, "systemctl start ") || strings.HasPrefix(call, "systemctl stop ") ||
+						strings.HasPrefix(call, "systemctl restart ") || call == "systemctl daemon-reload" {
+						t.Fatalf("unchanged enabled+active reinstall performed a lifecycle mutation: %s", call)
+					}
+				}
+				return
+			}
+			for _, want := range tc.wantEnableSeq {
+				if !contains(r.log, want) {
+					t.Fatalf("unchanged reinstall did not apply enablement %q: log=%v", tc.enabled, r.log)
+				}
+			}
+			if tc.enabled == "enabled-runtime" {
+				if contains(r.log, "systemctl enable watchpost.service") {
+					t.Fatalf("enabled-runtime prior was converted to persistent enable: log=%v", r.log)
+				}
+			}
+			if tc.enabled == "disabled" {
+				if contains(r.log, "systemctl enable watchpost.service") || contains(r.log, "systemctl enable --runtime watchpost.service") {
+					t.Fatalf("disabled prior was enabled by unchanged reinstall: log=%v", r.log)
+				}
+			}
+			if tc.wantActive == "restart" && !contains(r.log, "systemctl restart watchpost.service") {
+				t.Fatalf("active prior not restarted on unchanged reinstall: log=%v", r.log)
+			}
+			if tc.wantActive == "stop" && !contains(r.log, "systemctl stop watchpost.service") {
+				t.Fatalf("inactive prior not stopped on unchanged reinstall: log=%v", r.log)
+			}
+		})
+	}
+}
+
+// TestNoOpRepairsMissingDataLeaf proves a safely missing data leaf is repaired
+// (established) even when unit/binary are identical and state is preserved,
+// rather than being reported as already-correct.
+func TestNoOpRepairsMissingDataLeaf(t *testing.T) {
+	r := newStrictService(t)
+	// The data leaf does not exist; the parent (temp dir) does.
+	dataDir := filepath.Join(t.TempDir(), "wp-data")
+	// Install a managed unit that matches the data dir so the unit is identical.
+	if e := writeFileAtomic(UnitPath, []byte(Unit(dataDir, "127.0.0.1:8080", false, "")), 0o644); e != nil {
+		t.Fatal(e)
+	}
+	setState(r, "enabled", "active")
+	exe := filepath.Join(t.TempDir(), "wp2")
+	os.WriteFile(exe, mustRead(t, BinaryPath), 0o755)
+	created := ""
+	oldMkdir := mkdirData
+	mkdirData = func(p string, mode os.FileMode) error {
+		created = p
+		return os.Mkdir(p, mode)
+	}
+	defer func() { mkdirData = oldMkdir }()
+	if e := Install(exe, dataDir, "127.0.0.1:8080", false, ""); e != nil {
+		t.Fatalf("repair install failed: %v", e)
+	}
+	if created != dataDir {
+		t.Fatalf("missing data leaf not repaired: created=%q want %q", created, dataDir)
+	}
+	if _, e := os.Lstat(dataDir); e != nil {
+		t.Fatalf("repaired leaf not created: %v", e)
+	}
+	// The unit/binary are identical and state preserved, so no lifecycle
+	// mutation should have occurred (read-only state queries are permitted).
+	for _, call := range r.log {
+		if strings.HasPrefix(call, "systemctl enable ") || strings.HasPrefix(call, "systemctl disable ") ||
+			strings.HasPrefix(call, "systemctl start ") || strings.HasPrefix(call, "systemctl stop ") ||
+			strings.HasPrefix(call, "systemctl restart ") || call == "systemctl daemon-reload" {
+			t.Fatalf("repair install performed a lifecycle mutation: %s", call)
+		}
+	}
+}

@@ -70,6 +70,7 @@ func setupService(t *testing.T) *fakeRunner {
 	oldRoot, oldAccount, oldChown := isRoot, ensureAccount, chownData
 	oldMkdir := mkdirData
 	oldUID, oldOwned := serviceUID, requireServiceOwned
+	oldChmod := chmodPath
 	oldRunner := defaultRunner
 	oldHealth := healthWindow
 	oldPriorRead := priorStateFileRead
@@ -80,6 +81,7 @@ func setupService(t *testing.T) *fakeRunner {
 	ensureAccount = func() error { return nil }
 	chownData = func(string) error { return nil }
 	mkdirData = func(string, os.FileMode) error { return nil }
+	chmodPath = func(string, os.FileMode) error { return nil }
 	serviceUID = func() (int, error) { return 4242, nil }
 	requireServiceOwned = func(string) error { return nil }
 	r := &fakeRunner{script: map[string]fakeResult{}, seq: map[string][]fakeResult{}}
@@ -88,6 +90,7 @@ func setupService(t *testing.T) *fakeRunner {
 		UnitPath, BinaryPath = oldUnit, oldBin
 		isRoot, ensureAccount, chownData = oldRoot, oldAccount, oldChown
 		mkdirData = oldMkdir
+		chmodPath = oldChmod
 		serviceUID, requireServiceOwned = oldUID, oldOwned
 		healthWindow = oldHealth
 		priorStateFileRead = oldPriorRead
