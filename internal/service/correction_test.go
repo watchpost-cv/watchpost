@@ -65,10 +65,12 @@ func TestInstallStateMatrix(t *testing.T) {
 			exe := filepath.Join(t.TempDir(), "wp")
 			os.WriteFile(exe, []byte("#!/bin/sh\nexit 0\n"), 0o755)
 			if tc.accepted {
-				// The reinstall changes the listen, so activation path runs;
-				// script the forward steps. enable/restart fail to force rollback.
-				r.script["systemctl daemon-reload"] = fakeResult{}
-				r.script["systemctl enable watchpost.service"] = fakeResult{out: "failed to enable", code: 1}
+				// The reinstall changes the listen, so the forward path runs.
+				// Force a rollback state-independently: the forward daemon-reload
+				// fails (1st call), the rollback daemon-reload succeeds (2nd call).
+				r.seq["systemctl daemon-reload"] = []fakeResult{{out: "reload failed", code: 1}, {}}
+				r.script["systemctl enable watchpost.service"] = fakeResult{}
+				r.script["systemctl enable --runtime watchpost.service"] = fakeResult{}
 				r.script["systemctl restart watchpost.service"] = fakeResult{}
 				r.script["systemctl stop watchpost.service"] = fakeResult{}
 				r.script["systemctl disable watchpost.service"] = fakeResult{}
@@ -120,11 +122,87 @@ func TestInstallStateMatrix(t *testing.T) {
 	}
 }
 
+func TestSuccessfulReinstallPreservesPriorState(t *testing.T) {
+	// A successful changed reinstall must preserve the exact prior enablement
+	// and activity states, NOT convert every service to enabled+active. This
+	// exercises the real forward Install() path (no induced failure).
+	matrix := []stateMatrixEntry{
+		{name: "enabled+active", enabled: "enabled", active: "active", wantEnableSeq: []string{"systemctl enable watchpost.service"}, wantActive: "restart"},
+		{name: "enabled+inactive", enabled: "enabled", active: "inactive", wantEnableSeq: []string{"systemctl enable watchpost.service"}, wantActive: "stop"},
+		{name: "enabled-runtime+active", enabled: "enabled-runtime", active: "active", wantEnableSeq: []string{"systemctl enable --runtime watchpost.service"}, wantActive: "restart"},
+		{name: "enabled-runtime+inactive", enabled: "enabled-runtime", active: "inactive", wantEnableSeq: []string{"systemctl enable --runtime watchpost.service"}, wantActive: "stop"},
+		{name: "disabled+active", enabled: "disabled", active: "active", wantEnableSeq: []string{}, wantActive: "restart"},
+		{name: "disabled+inactive", enabled: "disabled", active: "inactive", wantEnableSeq: []string{}, wantActive: "stop"},
+	}
+	for _, tc := range matrix {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newStrictService(t)
+			installManagedUnit(t)
+			setState(r, tc.enabled, tc.active)
+			exe := filepath.Join(t.TempDir(), "wp2")
+			os.WriteFile(exe, []byte("#!/bin/sh\n# changed binary\nexit 0\n"), 0o755)
+			// Script the full forward path; it must SUCCEED (no induced failure).
+			r.script["systemctl daemon-reload"] = fakeResult{}
+			r.script["systemctl enable watchpost.service"] = fakeResult{}
+			r.script["systemctl enable --runtime watchpost.service"] = fakeResult{}
+			r.script["systemctl disable watchpost.service"] = fakeResult{}
+			r.script["systemctl restart watchpost.service"] = fakeResult{}
+			r.script["systemctl stop watchpost.service"] = fakeResult{}
+			// The listen changes so the unit changes (a real changed reinstall).
+			if e := Install(exe, "/var/lib/watchpost", "127.0.0.1:9090", false, ""); e != nil {
+				t.Fatalf("successful reinstall failed: %v", e)
+			}
+			// The forward path must reproduce the exact prior enablement: the
+			// runtime-only prior must NOT be converted to a persistent enable.
+			for _, want := range tc.wantEnableSeq {
+				if !contains(r.log, want) {
+					t.Fatalf("reinstall did not apply enablement %q: log=%v", tc.enabled, r.log)
+				}
+			}
+			if tc.enabled == "enabled-runtime" {
+				if contains(r.log, "systemctl enable watchpost.service") {
+					t.Fatalf("enabled-runtime prior was converted to persistent enable: log=%v", r.log)
+				}
+			}
+			if tc.enabled == "disabled" {
+				if contains(r.log, "systemctl enable watchpost.service") || contains(r.log, "systemctl enable --runtime watchpost.service") {
+					t.Fatalf("disabled prior was enabled by reinstall: log=%v", r.log)
+				}
+			}
+			// The forward path must reproduce the exact prior activity.
+			if tc.wantActive == "restart" && !contains(r.log, "systemctl restart watchpost.service") {
+				t.Fatalf("active prior not restarted on successful reinstall: log=%v", r.log)
+			}
+			if tc.wantActive == "stop" && !contains(r.log, "systemctl stop watchpost.service") {
+				t.Fatalf("inactive prior not stopped on successful reinstall: log=%v", r.log)
+			}
+		})
+	}
+}
+
+func TestFreshInstallEstablishesDefaultState(t *testing.T) {
+	// A fresh install (no existing unit) establishes enabled + active.
+	r := newStrictService(t)
+	exe := filepath.Join(t.TempDir(), "wp")
+	os.WriteFile(exe, []byte("#!/bin/sh\nexit 0\n"), 0o755)
+	r.script["systemctl daemon-reload"] = fakeResult{}
+	r.script["systemctl enable watchpost.service"] = fakeResult{}
+	r.script["systemctl restart watchpost.service"] = fakeResult{}
+	if e := Install(exe, "/var/lib/watchpost", "127.0.0.1:8080", false, ""); e != nil {
+		t.Fatal(e)
+	}
+	if !contains(r.log, "systemctl enable watchpost.service") {
+		t.Fatal("fresh install did not enable the service")
+	}
+	if !contains(r.log, "systemctl restart watchpost.service") {
+		t.Fatal("fresh install did not start the service")
+	}
+}
+
 func TestInstallStateQueryFailureAborts(t *testing.T) {
 	r := newStrictService(t)
 	installManagedUnit(t)
 	beforeBin, _ := os.ReadFile(BinaryPath)
-	// is-enabled query failure must abort before mutation.
 	r.script["systemctl is-enabled watchpost.service"] = fakeResult{out: "", code: 1, err: fmt.Errorf("is-enabled failed")}
 	exe := filepath.Join(t.TempDir(), "wp")
 	os.WriteFile(exe, []byte("#!/bin/sh\nexit 0\n"), 0o755)
@@ -247,24 +325,79 @@ func TestDataDirRefusesUnrelatedExistingDirectory(t *testing.T) {
 	}
 }
 
-func TestDataDirNewLeafAdopted(t *testing.T) {
+func TestDataDirLeafOnlyCreation(t *testing.T) {
 	r := newStrictService(t)
-	dir := t.TempDir()
-	newData := filepath.Join(dir, "leaf", "watchpost-data")
+	// The parent must already exist; only the final leaf is created.
+	parent := t.TempDir()
+	newData := filepath.Join(parent, "watchpost-data")
 	exe := filepath.Join(t.TempDir(), "wp")
 	os.WriteFile(exe, []byte("#!/bin/sh\nexit 0\n"), 0o755)
+	created := ""
+	oldMkdir := mkdirData
+	mkdirData = func(p string, mode os.FileMode) error {
+		created = p
+		return os.Mkdir(p, mode)
+	}
 	oldChown := chownData
 	chowned := ""
 	chownData = func(p string) error { chowned = p; return nil }
-	defer func() { chownData = oldChown }()
+	defer func() { mkdirData, chownData = oldMkdir, oldChown }()
 	r.script["systemctl daemon-reload"] = fakeResult{}
 	r.script["systemctl enable watchpost.service"] = fakeResult{}
 	r.script["systemctl restart watchpost.service"] = fakeResult{}
 	if e := Install(exe, newData, "127.0.0.1:8080", false, ""); e != nil {
 		t.Fatal(e)
 	}
+	if created != newData {
+		t.Fatalf("created path = %q, want the leaf %q (no parents)", created, newData)
+	}
 	if chowned != newData {
 		t.Fatalf("leaf data dir not handed to the service account: chowned=%q", chowned)
+	}
+	if _, e := os.Stat(newData); e != nil {
+		t.Fatalf("leaf was not actually created: %v", e)
+	}
+}
+
+func TestDataDirRefusesMissingParent(t *testing.T) {
+	r := newStrictService(t)
+	dir := t.TempDir()
+	missingParent := filepath.Join(dir, "does-not-exist")
+	dataDir := filepath.Join(missingParent, "watchpost-data")
+	exe := filepath.Join(t.TempDir(), "wp")
+	os.WriteFile(exe, []byte("#!/bin/sh\nexit 0\n"), 0o755)
+	if e := Install(exe, dataDir, "127.0.0.1:8080", false, ""); e == nil {
+		t.Fatal("install created a data directory under a missing parent")
+	}
+	if _, e := os.Lstat(missingParent); !os.IsNotExist(e) {
+		t.Fatalf("missing parent %q was created by the installer", missingParent)
+	}
+	if len(r.log) != 0 {
+		t.Fatalf("missing-parent install still ran systemctl: %v", r.log)
+	}
+}
+
+func TestDataDirRejectsUnderSystemTree(t *testing.T) {
+	r := newStrictService(t)
+	for _, root := range []string{"/etc/watchpost-data", "/usr/local/watchpost", "/bin/watchpost"} {
+		exe := filepath.Join(t.TempDir(), "wp")
+		os.WriteFile(exe, []byte("#!/bin/sh\nexit 0\n"), 0o755)
+		if e := Install(exe, root, "127.0.0.1:8080", false, ""); e == nil {
+			t.Fatalf("install accepted data directory %q beneath a system tree", root)
+		}
+		if len(r.log) != 0 {
+			t.Fatalf("install of %q touched systemctl", root)
+		}
+	}
+	// The canonical /var/lib and /srv locations are accepted (under /var and
+	// /srv, which are not protected trees).
+	exe := filepath.Join(t.TempDir(), "wp")
+	os.WriteFile(exe, []byte("#!/bin/sh\nexit 0\n"), 0o755)
+	if e := validateDataDirPath("/var/lib/watchpost"); e != nil {
+		t.Fatalf("canonical /var/lib/watchpost rejected: %v", e)
+	}
+	if e := validateDataDirPath("/srv/watchpost"); e != nil {
+		t.Fatalf("canonical /srv/watchpost rejected: %v", e)
 	}
 }
 

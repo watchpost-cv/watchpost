@@ -354,9 +354,11 @@ func TestReinstallRestoresExactNegativeState(t *testing.T) {
 	setState(r, "disabled", "inactive")
 	exe := filepath.Join(t.TempDir(), "wp2")
 	os.WriteFile(exe, []byte("#!/bin/sh\n# new\nexit 0\n"), 0o755)
+	// Forward path for a disabled+inactive prior: daemon-reload, disable, stop.
+	// Force the forward stop to fail (1st call); rollback's stop succeeds (2nd).
 	r.script["systemctl daemon-reload"] = fakeResult{}
-	r.script["systemctl enable watchpost.service"] = fakeResult{}
-	r.script["systemctl restart watchpost.service"] = fakeResult{out: "activation failed", code: 1}
+	r.script["systemctl disable watchpost.service"] = fakeResult{}
+	r.seq["systemctl stop watchpost.service"] = []fakeResult{{out: "activation failed", code: 1}, {}}
 	if e := Install(exe, "/var/lib/watchpost", "127.0.0.1:9090", false, ""); e == nil {
 		t.Fatal("failed reinstall returned nil")
 	}
