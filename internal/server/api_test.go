@@ -48,6 +48,9 @@ func TestSetupLoginCSRFAndPostAPI(t *testing.T) {
 	if setup.Code != 201 {
 		t.Fatalf("setup: %d %s", setup.Code, setup.Body.String())
 	}
+	if len(setup.Result().Cookies()) != 1 || !bytes.Contains(setup.Body.Bytes(), []byte(`"csrf_token"`)) || !bytes.Contains(setup.Body.Bytes(), []byte(`"user"`)) {
+		t.Fatalf("setup did not establish an authenticated session: cookies=%d body=%s", len(setup.Result().Cookies()), setup.Body.String())
+	}
 	login := apiRequest(t, handler, "POST", "/api/v1/login", map[string]string{"email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
 	if login.Code != 200 {
 		t.Fatalf("login: %d", login.Code)

@@ -247,7 +247,13 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 409, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, 201, user)
+	session, err := s.auth.Login(r.Context(), in.Email, in.Password, audit.Entry{ActorID: user.ID, Action: "login", ObjectType: "session", Detail: "automatic login after setup"})
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": "administrator created, but the initial session could not be established; sign in to continue"})
+		return
+	}
+	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: session.Token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil || s.cfg.SecureCookies, MaxAge: 86400})
+	writeJSON(w, 201, map[string]any{"user": session.User, "csrf_token": session.CSRF})
 }
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var in struct{ Email, Password string }
