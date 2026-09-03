@@ -11,7 +11,7 @@ import (
 // byte-identical to its content file. Edit the source and run `nift build` in
 // the web directory, then commit the regenerated dist.
 func TestDistMatchesCanonicalSource(t *testing.T) {
-	for _, name := range []string{"index.html", "app.css", "app-extra.css", "script.js"} {
+	for _, name := range []string{"index.html", "app.css", "app-extra.css", "script.js", "favicon.svg"} {
 		content, err := os.ReadFile("content/" + name)
 		if err != nil {
 			t.Fatalf("%s: canonical source missing: %v", name, err)
