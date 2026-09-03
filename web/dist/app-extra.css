@@ -63,7 +63,8 @@ textarea:focus,
 button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,[tabindex]:focus-visible{outline:3px solid #f0f2ef;outline-offset:3px}
 #page:focus-visible{outline:none}
 .resize-handle::after{display:none}
-select{appearance:none;-webkit-appearance:none;padding-right:44px;background-color:var(--input);background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5 6 6.5 11 1.5' fill='none' stroke='%23a4aca5' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-position:right 16px center;background-size:12px 8px;background-repeat:no-repeat}
+select{appearance:none;-webkit-appearance:none;padding-right:44px;background-color:var(--input);background-image:url("/select-chevron.svg");background-position:right 16px center;background-size:12px 8px;background-repeat:no-repeat}
+.topbar .account button{width:86px;padding:10px 14px}
 #check-schedules{margin-top:18px}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
 @media (forced-colors:active){.health-meter i,.health-state i{forced-color-adjust:none;border:1px solid CanvasText}.health-meter.safe i{background:Highlight}.health-meter.warning i{background:Mark}.health-meter.critical i{background:LinkText}}

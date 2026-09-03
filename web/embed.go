@@ -8,5 +8,5 @@ import "embed"
 // The explicit file list keeps Nift build metadata (dist/*.info.json) out of
 // the embedded binary.
 //
-//go:embed dist/index.html dist/app.css dist/app-extra.css dist/script.js
+//go:embed dist/index.html dist/app.css dist/app-extra.css dist/script.js dist/select-chevron.svg
 var Files embed.FS
