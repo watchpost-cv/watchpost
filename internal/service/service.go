@@ -164,6 +164,20 @@ func systemctlSuccess(args ...string) error {
 	return nil
 }
 
+// resetFailed clears accumulated failure/start-limit state immediately before
+// an operator-controlled start or restart. A not-loaded response is a benign
+// no-op: there is no failed state to clear.
+func resetFailed() error {
+	out, code, err := systemctl("reset-failed", "watchpost.service")
+	if err != nil {
+		return fmt.Errorf("cannot run systemctl reset-failed watchpost.service: %w", err)
+	}
+	if code == 0 || strings.Contains(strings.ToLower(out), "not loaded") {
+		return nil
+	}
+	return fmt.Errorf("systemctl reset-failed watchpost.service exited %d: %s", code, bounded(strings.TrimSpace(out)))
+}
+
 // unitStateWord runs a state verb (is-enabled/is-active), tolerating a nonzero
 // exit for legitimate negative answers and returning the trimmed word.
 func unitStateWord(verb string) (string, error) {
@@ -387,7 +401,9 @@ func unitBody(o Options) string {
 	b.WriteString("[Unit]\n")
 	b.WriteString("Description=Watchpost monitoring service\n")
 	b.WriteString("After=network-online.target\n")
-	b.WriteString("Wants=network-online.target\n\n")
+	b.WriteString("Wants=network-online.target\n")
+	b.WriteString("StartLimitIntervalSec=60\n")
+	b.WriteString("StartLimitBurst=5\n\n")
 	b.WriteString("[Service]\n")
 	b.WriteString("Type=simple\n")
 	b.WriteString("User=" + ServiceUser + "\n")
@@ -758,6 +774,11 @@ func InstallOptions(exe string, o Options) (retErr error) {
 					break
 				}
 			}
+			if priorActive == "active" {
+				if e := resetFailed(); e != nil {
+					errs = append(errs, fmt.Sprintf("reset failed state: %v", e))
+				}
+			}
 			if e := systemctlSuccess(activeRestoreArgs(priorActive, "watchpost.service")...); e != nil {
 				errs = append(errs, fmt.Sprintf("restore active state %q: %v", priorActive, e))
 			}
@@ -795,6 +816,12 @@ func InstallOptions(exe string, o Options) (retErr error) {
 	} else {
 		steps = append(steps, enableRestoreSteps(priorEnabled, "watchpost.service")...)
 		steps = append(steps, activeRestoreArgs(priorActive, "watchpost.service"))
+	}
+	if len(steps) > 0 {
+		last := steps[len(steps)-1]
+		if last[0] == "start" || last[0] == "restart" {
+			steps = append(steps[:len(steps)-1], []string{"reset-failed", "watchpost.service"}, last)
+		}
 	}
 	for _, a := range steps {
 		if out, code, err := systemctl(a...); err != nil || code != 0 {
@@ -952,6 +979,11 @@ func lifecycle(verb string) error {
 	}
 	if e := requireManaged(verb); e != nil {
 		return e
+	}
+	if verb == "start" || verb == "restart" {
+		if e := resetFailed(); e != nil {
+			return e
+		}
 	}
 	if err := systemctlSuccess(verb, "watchpost.service"); err != nil {
 		return err
@@ -1171,6 +1203,9 @@ func Update(artifact, want string) error {
 	if !wasActive {
 		return nil
 	}
+	if e := resetFailed(); e != nil {
+		return updateFailureWithRecovery(fmt.Errorf("reset failed state before update restart: %w", e), restoreAfterFailedUpdate())
+	}
 	if out, code, err := systemctl("restart", "watchpost.service"); err != nil || code != 0 {
 		updateErr := fmt.Errorf("restart after update: %s: %w", bounded(strings.TrimSpace(out)), errorIfNil(err, code, nil))
 		return updateFailureWithRecovery(updateErr, restoreAfterFailedUpdate())
@@ -1230,6 +1265,9 @@ func restoreAfterFailedUpdate() error {
 		return fmt.Errorf("recovery: restore old binary: %w", e)
 	}
 	if priorActive == "active" {
+		if e := resetFailed(); e != nil {
+			return fmt.Errorf("recovery: reset failed state: %w", e)
+		}
 		if e := systemctlSuccess("restart", "watchpost.service"); e != nil {
 			return fmt.Errorf("recovery: restart old service: %w", e)
 		}
@@ -1264,6 +1302,11 @@ func Rollback() error {
 		return fmt.Errorf("rollback: invalid prior-state marker %q", priorActive)
 	}
 	wasActive := priorActive == "active"
+	if wasActive {
+		if e := resetFailed(); e != nil {
+			return e
+		}
+	}
 	cur := BinaryPath + ".failed"
 	_ = os.Remove(cur)
 	if e := os.Rename(BinaryPath, cur); e != nil {

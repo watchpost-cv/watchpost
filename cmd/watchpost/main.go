@@ -234,7 +234,7 @@ func runService(args []string) int {
 	cmd := "status"
 	// Flags that consume a following value are recorded as pairs so their value
 	// is never misclassified as a positional argument.
-	valueFlags := map[string]bool{"--data": true, "--host": true, "--port": true, "--listen": true, "--env-file": true}
+	valueFlags := map[string]bool{"--data": true, "--data-dir": true, "--host": true, "--port": true, "--listen": true, "--env-file": true}
 	var flags, positional []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -261,7 +261,7 @@ func runService(args []string) int {
 		case "install":
 			for i := 0; i < len(flags); i++ {
 				switch flags[i] {
-				case "--data":
+				case "--data", "--data-dir":
 					if i+1 < len(flags) {
 						i++
 					} else {
@@ -315,7 +315,7 @@ func runService(args []string) int {
 		envfile, secureCookies := "", false
 		for i := 0; i < len(flags); i++ {
 			switch flags[i] {
-			case "--data":
+			case "--data", "--data-dir":
 				if i+1 < len(flags) {
 					i++
 					data = flags[i]
@@ -373,7 +373,7 @@ func runService(args []string) int {
 			fmt.Fprintln(os.Stderr, "watchpost service install:", err)
 			return 1
 		}
-		fmt.Fprintln(os.Stdout, "watchpost.service installed and active.")
+		fmt.Fprintln(os.Stdout, "watchpost.service installed.")
 		return 0
 	case "uninstall":
 		if len(positional) != 0 {
@@ -393,7 +393,7 @@ func runService(args []string) int {
 			fmt.Fprintln(os.Stderr, "watchpost service "+cmd+":", err)
 			return 1
 		}
-		fmt.Fprintln(os.Stdout, "watchpost.service "+cmd+"ed.")
+		fmt.Fprintln(os.Stdout, serviceLifecycleSuccess(cmd))
 		return 0
 	case "status":
 		if len(positional) != 0 {
@@ -422,7 +422,7 @@ func runService(args []string) int {
 			fmt.Fprintln(os.Stderr, "watchpost service update:", err)
 			return 1
 		}
-		fmt.Fprintln(os.Stdout, "watchpost.service updated and restarted.")
+		fmt.Fprintln(os.Stdout, "watchpost.service updated.")
 		return 0
 	case "rollback":
 		if len(positional) != 0 {
@@ -432,12 +432,20 @@ func runService(args []string) int {
 			fmt.Fprintln(os.Stderr, "watchpost service rollback:", err)
 			return 1
 		}
-		fmt.Fprintln(os.Stdout, "watchpost.service rolled back and restarted.")
+		fmt.Fprintln(os.Stdout, "watchpost.service rolled back.")
 		return 0
 	default:
 		fmt.Fprintf(os.Stderr, "watchpost: unknown service command %q\n\nUsage: watchpost service <install|uninstall|start|stop|restart|status|enable|disable|logs|update|rollback> [flags]\n", cmd)
 		return 2
 	}
+}
+
+func serviceLifecycleSuccess(verb string) string {
+	words := map[string]string{
+		"start": "started", "stop": "stopped", "restart": "restarted",
+		"enable": "enabled", "disable": "disabled",
+	}
+	return "watchpost.service " + words[verb] + "."
 }
 
 func lifecycleErr(verb string) error {

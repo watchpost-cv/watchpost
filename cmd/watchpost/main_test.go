@@ -61,6 +61,21 @@ func TestRunServiceInstallValidFlagsReachRootCheck(t *testing.T) {
 	}
 }
 
+func TestServiceLifecycleSuccessGrammar(t *testing.T) {
+	want := map[string]string{
+		"start": "watchpost.service started.",
+		"stop": "watchpost.service stopped.",
+		"restart": "watchpost.service restarted.",
+		"enable": "watchpost.service enabled.",
+		"disable": "watchpost.service disabled.",
+	}
+	for verb, expected := range want {
+		if got := serviceLifecycleSuccess(verb); got != expected {
+			t.Fatalf("%s message = %q, want %q", verb, got, expected)
+		}
+	}
+}
+
 func TestRunServiceLegacyInstallFlagsReachRootCheck(t *testing.T) {
 	out, code := captureStderr(t, func() int { return runService([]string{"install", "--listen", "127.0.0.1:8080"}) })
 	if code != 1 {

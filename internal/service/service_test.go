@@ -99,6 +99,7 @@ func setupService(t *testing.T) *fakeRunner {
 	unlinkAtSeam = func(int, string) error { return nil }
 	closeFdSeam = func(int) error { return nil }
 	r := &fakeRunner{script: map[string]fakeResult{}, seq: map[string][]fakeResult{}}
+	r.script["systemctl reset-failed watchpost.service"] = fakeResult{}
 	defaultRunner = r
 	t.Cleanup(func() {
 		UnitPath, BinaryPath = oldUnit, oldBin
