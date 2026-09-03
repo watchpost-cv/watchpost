@@ -4,24 +4,6 @@
       "name": "/",
       "title": "Watchpost",
       "template": "templates/template.html"
-    },
-    {
-      "name": "app",
-      "title": "app",
-      "content-ext": ".css",
-      "output-ext": ".css"
-    },
-    {
-      "name": "app-extra",
-      "title": "app-extra",
-      "content-ext": ".css",
-      "output-ext": ".css"
-    },
-    {
-      "name": "script",
-      "title": "script",
-      "content-ext": ".js",
-      "output-ext": ".js"
     }
   ]
 }

@@ -1,5 +1,14 @@
 # Watchpost engineering handover
 
+## Frontend asset ownership
+
+Nift tracks and builds HTML pages only. CSS, JavaScript, images, icons and other
+static assets are canonical in the generated web root (`public/`, `web/dist/`
+or the repository's embedded-public directory). Edit those files directly.
+Do not recreate asset copies under `content/`, do not add asset entries to
+`.nift/tracked.json`, and do not let a Nift build overwrite them. After changing
+HTML templates or content, run Nift and verify that direct assets are unchanged.
+
 Current execution: WP01R through WP18R are complete as of 2026-08-28. The
 recovery programme is closed as a local Linux development candidate, not a
 public production release. `hardening/complete-gate.sh` is authoritative and
@@ -8,13 +17,10 @@ guided enrollment-to-confirmation flow.
 
 ## Operational SPA canonical source
 
-R20 establishes canonical Nift source for the embedded operational SPA. The
-SPA lives in `web/content` and `web/templates`; `web/dist` is generated output
-that must be committed after every `nift build`. Never hand-edit `web/dist`.
-The application script is tracked as `script.js`: Nift requires unique tracked
-names, and `app.js`/`app.css` share the basename `app` so both cannot be
-tracked. `web/embed_test.go` enforces that committed dist matches the source
-in CI and `hardening/spa-gate.sh` proves a full regeneration produces no diff.
+Nift owns HTML composition in `web/content/index.html` and `web/templates/`.
+Static assets are maintained directly in `web/dist/` and are deliberately
+absent from `web/content/` and `web/.nift/tracked.json`. `web/embed_test.go`
+and `hardening/spa-gate.sh` must preserve this split.
 
 ## Retention
 

@@ -1,5 +1,19 @@
 # Watchpost
 
+Watchpost is a self-hosted monitoring and operations service for posts, evidence, checks, alerts and incidents.
+
+## Command line
+
+```sh
+watchpost version
+watchpost --version
+watchpost service status
+```
+
+Unknown commands and unsupported options fail with a non-zero exit status.
+Run the binary without a subcommand to start the integrated server, or use
+`watchpost serve` where that compatibility alias is supported.
+
 Watchpost is an open-source, web-based monitoring and operations platform with
 an evidence-grounded agent designed in from the beginning.
 
