@@ -2,9 +2,9 @@ package web
 
 import "embed"
 
-// Files contains the Nift-built frontend distribution. The dist directory is
-// generated from canonical Nift source under web/content and web/templates;
-// edit the source, run `nift build` in this directory, and commit the result.
+// Files contains the frontend distribution. Nift generates tracked HTML from
+// web/content and web/templates; CSS, JavaScript and image assets are maintained
+// directly in dist. Run `nift build` after changing tracked source.
 // The explicit file list keeps Nift build metadata (dist/*.info.json) out of
 // the embedded binary.
 //

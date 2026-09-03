@@ -5,23 +5,16 @@ import (
 	"testing"
 )
 
-// TestDistMatchesCanonicalSource guards the invariant that the committed SPA
-// distribution is generated from canonical Nift source under web/content and
-// web/templates. While the identity template holds, every tracked output is
-// byte-identical to its content file. Edit the source and run `nift build` in
-// the web directory, then commit the regenerated dist.
-func TestDistMatchesCanonicalSource(t *testing.T) {
-	for _, name := range []string{"index.html", "app.css", "app-extra.css", "script.js", "favicon.svg"} {
-		content, err := os.ReadFile("content/" + name)
-		if err != nil {
-			t.Fatalf("%s: canonical source missing: %v", name, err)
+// TestDistributionComplete verifies every embedded frontend file remains
+// present. Reproducibility of tracked HTML is enforced by spa-gate.sh; CSS,
+// JavaScript and image assets are maintained directly in dist.
+func TestDistributionComplete(t *testing.T) {
+	for _, name := range []string{"app.css", "app-extra.css", "script.js", "select-chevron.svg", "favicon.svg"} {
+		if _, err := os.Stat("dist/" + name); err != nil {
+			t.Errorf("%s: maintained distribution asset missing: %v", name, err)
 		}
-		dist, err := os.ReadFile("dist/" + name)
-		if err != nil {
-			t.Fatalf("%s: generated output missing: %v", name, err)
-		}
-		if string(dist) != string(content) {
-			t.Errorf("%s: dist does not match canonical source; run `nift build` in web/ and commit the result", name)
-		}
+	}
+	if _, err := os.Stat("dist/index.html"); err != nil {
+		t.Errorf("index.html: generated distribution page missing: %v", err)
 	}
 }

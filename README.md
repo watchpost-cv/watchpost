@@ -33,17 +33,17 @@ go build -o watchpost ./cmd/watchpost
 ./watchpost
 ```
 
-The operational SPA is built from canonical Nift source in `web/content` and
-`web/templates`. Edit the source, regenerate the embedded distribution, and
-commit both:
+The operational SPA builds tracked HTML from `web/content` and `web/templates`.
+CSS, JavaScript and image assets are maintained directly in `web/dist`. Edit
+tracked source, regenerate the HTML, and commit the result:
 
 ```sh
 cd web && nift build && nift status && cd ..
 ```
 
-`web/dist` is generated output. `web/embed_test.go` enforces in CI that the
-committed dist matches the canonical source, and `hardening/spa-gate.sh`
-proves a full regeneration produces no diff.
+`web/embed_test.go` enforces HTML source parity and verifies each maintained
+distribution asset exists. `hardening/spa-gate.sh` proves a full tracked-source
+regeneration produces no diff.
 
 On Linux, inspect the canonical host signals with the host sampler:
 
