@@ -8,12 +8,14 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with: {go-version: '1.25.x'}
       - run: go test ./...
       - run: go test -race ./...
       - run: go vet ./...
+      - run: ./packaging/action-pins.sh
+      - run: ./packaging/test-action-pins.sh
       - run: ./packaging/release-smoke.sh
       - run: ./hardening/host-journey.sh
       - run: ./hardening/recovery-drill.sh
@@ -31,19 +33,19 @@ jobs:
           - {os: windows, arch: arm64, ext: '.exe'}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with: {go-version: '1.25.x'}
       - run: GOOS=${{ matrix.os }} GOARCH=${{ matrix.arch }} go build -trimpath -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" -o watchpost-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }} ./cmd/watchpost
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
           name: watchpost-${{ matrix.os }}-${{ matrix.arch }}
           path: watchpost-*
   systemd-lifecycle:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with: {go-version: '1.25.x'}
       - name: Build the binary under test
         run: CGO_ENABLED=0 go build -o /tmp/wp ./cmd/watchpost
