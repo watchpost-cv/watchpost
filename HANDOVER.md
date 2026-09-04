@@ -516,3 +516,18 @@ with no writes implemented (C14).
 The public website documents this status on the Posts, Security model,
 Verification and hardening, and Current limitations pages; those pages must
 stay aligned with `PLAN.md` when a checkpoint lands.
+# Release procedure
+
+Watchpost releases are tag-driven. Before pushing `vX.Y.Z`, deploy changed
+website scripts first and compare the live `install.sh`, `download.sh`, and
+`update.sh` from `https://watchpost.cv` with the generated repository. Run
+formatting, tests, race tests, vet, database matrices, real systemd lifecycle,
+six-target builds, release-contract checks, and require a clean pushed tree.
+
+Rehearse with an RC tag. The workflow must publish only the expected archives,
+platform executables and `SHA256SUMS`, with all checksums and GitHub provenance
+verified against the exact tag commit. On a clean Linux host exercise SQLite
+and PostgreSQL setup, public install/download/update/rollback, service
+install/status/restart/uninstall, first administrator creation, one post and one
+check. After approval, publish stable from the reviewed commit and repeat the
+public smoke. Never mutate a tag or overwrite an existing asset.
