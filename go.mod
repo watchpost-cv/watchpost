@@ -1,4 +1,4 @@
-module github.com/watchpost-ops/watchpost
+module github.com/watchpost-cv/watchpost
 
 go 1.25.0
 

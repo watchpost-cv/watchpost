@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/gosnmp/gosnmp"
-	"github.com/watchpost-ops/watchpost/internal/contract"
+	"github.com/watchpost-cv/watchpost/internal/contract"
 )
 
 type fakeGetter struct{}

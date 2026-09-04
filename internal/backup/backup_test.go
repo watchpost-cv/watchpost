@@ -14,9 +14,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/watchpost-ops/watchpost/internal/devices"
-	"github.com/watchpost-ops/watchpost/internal/secrets"
-	"github.com/watchpost-ops/watchpost/internal/store"
+	"github.com/watchpost-cv/watchpost/internal/devices"
+	"github.com/watchpost-cv/watchpost/internal/secrets"
+	"github.com/watchpost-cv/watchpost/internal/store"
 )
 
 func testStore(t *testing.T) *store.Store {

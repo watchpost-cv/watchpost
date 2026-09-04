@@ -13,13 +13,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/watchpost-ops/watchpost/internal/backup"
-	"github.com/watchpost-ops/watchpost/internal/config"
-	"github.com/watchpost-ops/watchpost/internal/devices"
-	"github.com/watchpost-ops/watchpost/internal/hostcollector"
-	"github.com/watchpost-ops/watchpost/internal/server"
-	"github.com/watchpost-ops/watchpost/internal/service"
-	"github.com/watchpost-ops/watchpost/internal/store"
+	"github.com/watchpost-cv/watchpost/internal/backup"
+	"github.com/watchpost-cv/watchpost/internal/config"
+	"github.com/watchpost-cv/watchpost/internal/devices"
+	"github.com/watchpost-cv/watchpost/internal/hostcollector"
+	"github.com/watchpost-cv/watchpost/internal/server"
+	"github.com/watchpost-cv/watchpost/internal/service"
+	"github.com/watchpost-cv/watchpost/internal/store"
 )
 
 var version = "0.1.0"

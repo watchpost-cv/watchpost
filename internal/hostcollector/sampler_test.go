@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/watchpost-ops/watchpost/internal/host"
+	"github.com/watchpost-cv/watchpost/internal/host"
 )
 
 func TestSamplerProducesCanonicalHostSignals(t *testing.T) {

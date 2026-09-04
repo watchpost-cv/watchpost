@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/watchpost-ops/watchpost/internal/audit"
-	"github.com/watchpost-ops/watchpost/internal/ingest"
-	"github.com/watchpost-ops/watchpost/internal/posts"
-	"github.com/watchpost-ops/watchpost/internal/store"
+	"github.com/watchpost-cv/watchpost/internal/audit"
+	"github.com/watchpost-cv/watchpost/internal/ingest"
+	"github.com/watchpost-cv/watchpost/internal/posts"
+	"github.com/watchpost-cv/watchpost/internal/store"
 )
 
 func TestCollectorHealthTransitions(t *testing.T) {

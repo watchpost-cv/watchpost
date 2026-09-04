@@ -5,8 +5,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/watchpost-ops/watchpost/internal/collectorcontract"
-	"github.com/watchpost-ops/watchpost/internal/host"
+	"github.com/watchpost-cv/watchpost/internal/collectorcontract"
+	"github.com/watchpost-cv/watchpost/internal/host"
 )
 
 type SnapshotSource func() (host.Snapshot, error)

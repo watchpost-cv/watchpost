@@ -3,9 +3,9 @@ package actions
 import (
 	"context"
 	"errors"
-	"github.com/watchpost-ops/watchpost/internal/audit"
-	"github.com/watchpost-ops/watchpost/internal/auth"
-	"github.com/watchpost-ops/watchpost/internal/store"
+	"github.com/watchpost-cv/watchpost/internal/audit"
+	"github.com/watchpost-cv/watchpost/internal/auth"
+	"github.com/watchpost-cv/watchpost/internal/store"
 	"testing"
 )
 

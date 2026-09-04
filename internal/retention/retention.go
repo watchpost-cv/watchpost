@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/watchpost-ops/watchpost/internal/config"
-	"github.com/watchpost-ops/watchpost/internal/history"
-	"github.com/watchpost-ops/watchpost/internal/store"
+	"github.com/watchpost-cv/watchpost/internal/config"
+	"github.com/watchpost-cv/watchpost/internal/history"
+	"github.com/watchpost-cv/watchpost/internal/store"
 )
 
 // maxPasses bounds the rows removed per category in one pass so a backlogged

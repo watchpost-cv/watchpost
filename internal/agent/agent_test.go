@@ -2,10 +2,10 @@ package agent
 
 import (
 	"context"
-	"github.com/watchpost-ops/watchpost/internal/audit"
-	"github.com/watchpost-ops/watchpost/internal/auth"
-	"github.com/watchpost-ops/watchpost/internal/posts"
-	"github.com/watchpost-ops/watchpost/internal/store"
+	"github.com/watchpost-cv/watchpost/internal/audit"
+	"github.com/watchpost-cv/watchpost/internal/auth"
+	"github.com/watchpost-cv/watchpost/internal/posts"
+	"github.com/watchpost-cv/watchpost/internal/store"
 	"testing"
 )
 

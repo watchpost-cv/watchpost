@@ -3,7 +3,7 @@ package history
 import (
 	"context"
 	"fmt"
-	"github.com/watchpost-ops/watchpost/internal/store"
+	"github.com/watchpost-cv/watchpost/internal/store"
 	"path/filepath"
 	"testing"
 	"time"

@@ -7,7 +7,7 @@ import (
 	"github.com/gosnmp/gosnmp"
 	"time"
 
-	"github.com/watchpost-ops/watchpost/internal/contract"
+	"github.com/watchpost-cv/watchpost/internal/contract"
 )
 
 type OID struct{ Name, OID, Unit string }

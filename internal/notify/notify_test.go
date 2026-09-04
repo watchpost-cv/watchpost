@@ -3,9 +3,9 @@ package notify
 import (
 	"context"
 	"errors"
-	"github.com/watchpost-ops/watchpost/internal/audit"
-	"github.com/watchpost-ops/watchpost/internal/posts"
-	"github.com/watchpost-ops/watchpost/internal/store"
+	"github.com/watchpost-cv/watchpost/internal/audit"
+	"github.com/watchpost-cv/watchpost/internal/posts"
+	"github.com/watchpost-cv/watchpost/internal/store"
 	"testing"
 	"time"
 )

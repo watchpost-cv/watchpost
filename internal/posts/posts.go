@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/watchpost-ops/watchpost/internal/audit"
-	"github.com/watchpost-ops/watchpost/internal/store"
+	"github.com/watchpost-cv/watchpost/internal/audit"
+	"github.com/watchpost-cv/watchpost/internal/store"
 )
 
 var idPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)

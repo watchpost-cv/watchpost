@@ -27,7 +27,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/watchpost-ops/watchpost/internal/store"
+	"github.com/watchpost-cv/watchpost/internal/store"
 )
 
 // encryptedMagicV1 and encryptedMagicV2 are versioned container headers. They

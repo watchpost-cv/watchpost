@@ -487,7 +487,7 @@ arm64 unless a target is deliberately unsupported and documented.
 
 ## Repository neighbours
 
-The public website lives in the sibling `watchpost-ops.github.io` repository.
+The public website lives in the sibling `watchpost-cv.github.io` repository.
 Its `HANDOVER.md` governs website changes. Product claims on that site must stay
 aligned with actual milestones recorded here and in `PLAN.md`.
 

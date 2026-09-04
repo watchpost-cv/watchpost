@@ -63,10 +63,10 @@ func TestRunServiceInstallValidFlagsReachRootCheck(t *testing.T) {
 
 func TestServiceLifecycleSuccessGrammar(t *testing.T) {
 	want := map[string]string{
-		"start": "watchpost.service started.",
-		"stop": "watchpost.service stopped.",
+		"start":   "watchpost.service started.",
+		"stop":    "watchpost.service stopped.",
 		"restart": "watchpost.service restarted.",
-		"enable": "watchpost.service enabled.",
+		"enable":  "watchpost.service enabled.",
 		"disable": "watchpost.service disabled.",
 	}
 	for verb, expected := range want {

@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/watchpost-ops/watchpost/internal/collectorcontract"
+	"github.com/watchpost-cv/watchpost/internal/collectorcontract"
 )
 
 // TestV1BatchMapsLosslesslyIntoCanonicalObservations proves the established

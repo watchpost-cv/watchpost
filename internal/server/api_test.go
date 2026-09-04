@@ -14,14 +14,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/watchpost-ops/watchpost/internal/audit"
-	"github.com/watchpost-ops/watchpost/internal/backup"
-	"github.com/watchpost-ops/watchpost/internal/checks"
-	"github.com/watchpost-ops/watchpost/internal/config"
-	"github.com/watchpost-ops/watchpost/internal/devices"
-	"github.com/watchpost-ops/watchpost/internal/posts"
-	"github.com/watchpost-ops/watchpost/internal/rules"
-	"github.com/watchpost-ops/watchpost/internal/store"
+	"github.com/watchpost-cv/watchpost/internal/audit"
+	"github.com/watchpost-cv/watchpost/internal/backup"
+	"github.com/watchpost-cv/watchpost/internal/checks"
+	"github.com/watchpost-cv/watchpost/internal/config"
+	"github.com/watchpost-cv/watchpost/internal/devices"
+	"github.com/watchpost-cv/watchpost/internal/posts"
+	"github.com/watchpost-cv/watchpost/internal/rules"
+	"github.com/watchpost-cv/watchpost/internal/store"
 )
 
 func apiRequest(t *testing.T, handler http.Handler, method, path string, body any, cookie *http.Cookie, csrf string) *httptest.ResponseRecorder {

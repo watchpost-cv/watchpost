@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"time"
 
-	"github.com/watchpost-ops/watchpost/internal/store"
+	"github.com/watchpost-cv/watchpost/internal/store"
 )
 
 type Health struct {

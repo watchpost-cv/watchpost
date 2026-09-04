@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/watchpost-ops/watchpost/internal/audit"
-	"github.com/watchpost-ops/watchpost/internal/secrets"
-	"github.com/watchpost-ops/watchpost/internal/store"
+	"github.com/watchpost-cv/watchpost/internal/audit"
+	"github.com/watchpost-cv/watchpost/internal/secrets"
+	"github.com/watchpost-cv/watchpost/internal/store"
 )
 
 func testStore(t *testing.T) *store.Store {

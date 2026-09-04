@@ -2,8 +2,8 @@ package posts
 
 import (
 	"context"
-	"github.com/watchpost-ops/watchpost/internal/audit"
-	"github.com/watchpost-ops/watchpost/internal/store"
+	"github.com/watchpost-cv/watchpost/internal/audit"
+	"github.com/watchpost-cv/watchpost/internal/store"
 	"testing"
 )
 

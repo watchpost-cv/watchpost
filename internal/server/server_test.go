@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/watchpost-ops/watchpost/internal/config"
-	"github.com/watchpost-ops/watchpost/internal/store"
+	"github.com/watchpost-cv/watchpost/internal/config"
+	"github.com/watchpost-cv/watchpost/internal/store"
 )
 
 func testServer(t *testing.T) *Server {
