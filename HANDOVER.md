@@ -516,6 +516,13 @@ with no writes implemented (C14).
 The public website documents this status on the Posts, Security model,
 Verification and hardening, and Current limitations pages; those pages must
 stay aligned with `PLAN.md` when a checkpoint lands.
+## Current release state
+
+- Released stable: **v0.1.0** (stable public preview).
+- Current development: **0.1.1** on `main`. An ordinary development build
+  reports 0.1.1 with commit `unknown`; release builds override the default via
+  `-ldflags -X main.version` and are never confused with the released version.
+
 # Release procedure
 
 Watchpost releases are tag-driven. Before pushing `vX.Y.Z`, deploy changed
