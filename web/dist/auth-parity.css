@@ -1,3 +1,4 @@
 .auth-brand { font-size: 20px; font-weight: 750; gap: 11px; }
 .auth-brand .brand-mark { width: 36px; height: 36px; font-size: 15px; }
 #login button { display: block; margin: 5px auto 0; }
+.form-message:empty { display: none; }
