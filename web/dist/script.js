@@ -28,6 +28,7 @@ function title(value) { return String(value || "unknown").replaceAll("_", " ").r
 function setBusy(form, busy) { const button = $("button[type=submit]", form); if (button) { button.disabled = busy; button.dataset.label ||= button.textContent; button.textContent = busy ? "Working…" : button.dataset.label; } }
 function showMessage(text, kind = "success") { const node = $("#global-message"); node.textContent = text; node.className = `toast ${kind === "error" ? "error" : ""}`; node.hidden = false; clearTimeout(showMessage.timer); showMessage.timer = setTimeout(() => { node.hidden = true; }, 6000); }
 function stateBox(titleText, detail, kind = "empty") { return `<div class="state-box ${kind === "loading" ? "loading" : ""} ${kind === "permission" ? "permission-state" : ""}"><h2>${escapeHTML(titleText)}</h2><p>${escapeHTML(detail)}</p></div>`; }
+function finishAuthentication() { const target = new URLSearchParams(location.search).get("return"); if (target && target.startsWith("/") && !target.startsWith("//")) { location.assign(target); return true; } return false; }
 
 async function bootstrap() {
   try {
@@ -57,6 +58,7 @@ function showAuth(mode, email = "", tokenRequired = false) {
 
 async function enterApp(session) {
   state.csrf = session.csrf_token; state.user = session.user;
+  if (finishAuthentication()) return;
   $("#auth-shell").hidden = true; $("#app").hidden = false;
   $("#account-name").textContent = session.user.email;
   await loadCore(); route();

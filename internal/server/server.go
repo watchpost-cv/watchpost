@@ -232,6 +232,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/version", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"version": s.version})
 	})
+	mux.HandleFunc("GET /api/launcher/instances", s.handleLauncherInstances)
+	mux.HandleFunc("PUT /api/launcher/config", s.handleLauncherConfig)
 	mux.HandleFunc("GET /api/v1/diagnostics", s.handleDiagnostics)
 	mux.HandleFunc("GET /api/v1/storage", s.require("viewer", s.handleStorage))
 	mux.HandleFunc("GET /api/v1/backup-status", s.require("viewer", s.handleBackupStatus))
@@ -240,7 +242,13 @@ func (s *Server) Handler() http.Handler {
 	if err != nil {
 		panic(err)
 	}
-	mux.Handle("/", http.FileServer(http.FS(assets)))
+	static := http.FileServer(http.FS(assets))
+	for _, asset := range []string{"/app.css", "/app-extra.css", "/auth-parity.css", "/script.js", "/select-chevron.svg", "/favicon.svg", "/launcher.css", "/launcher.js"} {
+		mux.Handle(asset, static)
+	}
+	mux.HandleFunc("/app", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/app/", http.StatusPermanentRedirect) })
+	mux.Handle("/app/", http.StripPrefix("/app", static))
+	mux.Handle("/", s.launcherRoot(static))
 	return securityHeaders(mux)
 }
 

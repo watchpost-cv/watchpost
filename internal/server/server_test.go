@@ -42,7 +42,7 @@ func TestOperationalEndpoints(t *testing.T) {
 }
 
 func TestEmbeddedDashboard(t *testing.T) {
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r := httptest.NewRequest(http.MethodGet, "/app/", nil)
 	w := httptest.NewRecorder()
 	testServer(t).Handler().ServeHTTP(w, r)
 	if w.Code != http.StatusOK || !contains(w.Body.String(), "Add a post") {
@@ -61,7 +61,7 @@ func TestDashboardUXContracts(t *testing.T) {
 		}
 		return w.Body.String()
 	}
-	html := read("/")
+	html := read("/app/")
 	for _, required := range []string{"id=\"logout\"", "minlength=\"7\"", "data-view=\"enroll\"", "data-view=\"checks\"", "starter_rules", "data-view=\"devices\"", "data-view=\"fleet\"", "class=\"resize-handle\""} {
 		if !strings.Contains(html, required) {
 			t.Errorf("dashboard missing %s", required)
