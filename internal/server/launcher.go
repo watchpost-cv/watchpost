@@ -19,7 +19,7 @@ func (s *Server) launcherRoot(static http.Handler) http.HandlerFunc {
 		}
 		if r.URL.Query().Has("config") {
 			if status := s.launcherAccessStatus(r); status != 0 {
-				corelauncher.WriteAccessError(w, status, "Watchpost", "W")
+				corelauncher.WriteAccessError(w, status, "Watchpost", "W", "#9fcb78")
 				return
 			}
 			s.serveLauncher(static, w, r)
