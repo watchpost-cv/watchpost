@@ -3,7 +3,7 @@ module github.com/watchpost-cv/watchpost
 go 1.25.0
 
 require (
-	github.com/gantry-tools/gantry-core v0.0.0-20260910193252-9290f2e15d44
+	github.com/gantry-tools/gantry-core v0.0.0-20260910205531-38c69c0e6321
 	github.com/gosnmp/gosnmp v1.44.0
 	golang.org/x/net v0.58.0
 	golang.org/x/sys v0.47.0
