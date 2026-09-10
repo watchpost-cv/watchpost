@@ -18,10 +18,6 @@ func (s *Server) launcherRoot(static http.Handler) http.HandlerFunc {
 			return
 		}
 		if r.URL.Query().Has("config") {
-			if _, ok := s.launcherSession(r, false); !ok {
-				http.Redirect(w, r, "/app/?return=%2F%3Fconfig", http.StatusFound)
-				return
-			}
 			s.serveLauncher(static, w, r)
 			return
 		}
