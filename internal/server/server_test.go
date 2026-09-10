@@ -50,6 +50,14 @@ func TestEmbeddedDashboard(t *testing.T) {
 	}
 }
 
+func TestLauncherConfigRequiresAuthenticationWithoutRenderingControls(t *testing.T) {
+	w := httptest.NewRecorder()
+	testServer(t).Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/?config", nil))
+	if w.Code != http.StatusUnauthorized || !strings.Contains(w.Body.String(), "Authentication required") || strings.Contains(w.Body.String(), "Current instances") {
+		t.Fatalf("config denial: %d %q", w.Code, w.Body.String())
+	}
+}
+
 func TestDashboardUXContracts(t *testing.T) {
 	handler := testServer(t).Handler()
 	read := func(path string) string {

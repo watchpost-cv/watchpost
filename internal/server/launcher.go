@@ -18,6 +18,10 @@ func (s *Server) launcherRoot(static http.Handler) http.HandlerFunc {
 			return
 		}
 		if r.URL.Query().Has("config") {
+			if status := s.launcherAccessStatus(r); status != 0 {
+				corelauncher.WriteAccessError(w, status, "Watchpost", "W")
+				return
+			}
 			s.serveLauncher(static, w, r)
 			return
 		}
@@ -40,6 +44,21 @@ func (s *Server) launcherRoot(static http.Handler) http.HandlerFunc {
 			s.serveLauncher(static, w, r)
 		}
 	}
+}
+
+func (s *Server) launcherAccessStatus(r *http.Request) int {
+	cookie, err := r.Cookie(sessionCookie)
+	if err != nil {
+		return http.StatusUnauthorized
+	}
+	session, err := s.auth.Authenticate(r.Context(), cookie.Value)
+	if err != nil {
+		return http.StatusUnauthorized
+	}
+	if session.User.Role != "admin" {
+		return http.StatusForbidden
+	}
+	return 0
 }
 
 func (s *Server) serveLauncher(static http.Handler, w http.ResponseWriter, r *http.Request) {
