@@ -3,7 +3,6 @@ package cluster
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -40,23 +39,20 @@ func NewPairingService(s *store.Store, identity *IdentityService) *PairingServic
 }
 
 func (s *PairingService) Invite(ctx context.Context, entry audit.Entry) (Invitation, error) {
-	id, err := randomID("inv_", 12)
-	if err != nil {
-		return Invitation{}, err
-	}
-	token, err := corecluster.NewSecret(32)
-	if err != nil {
-		return Invitation{}, err
-	}
-	hash := sha256.Sum256([]byte(token))
 	now := s.now().UTC()
-	expires := now.Add(PairingLifetime)
+	invitation, token, err := corecluster.NewInvitation(now)
+	if err != nil {
+		return Invitation{}, err
+	}
+	id := invitation.ID
+	hash := corecluster.SecretDigest(token)
+	expires := invitation.ExpiresAt
 	tx, err := s.s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return Invitation{}, err
 	}
 	defer tx.Rollback()
-	if _, err = tx.ExecContext(ctx, `INSERT INTO cluster_invitations(id,token_hash,state,expires_at,created_at) VALUES(?,?,'pending',?,?)`, id, hash[:], expires.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO cluster_invitations(id,token_hash,state,expires_at,created_at) VALUES(?,?,'pending',?,?)`, id, hash, expires.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 		return Invitation{}, err
 	}
 	entry.Action = "cluster_invite_create"
@@ -83,7 +79,7 @@ func (s *PairingService) SubmitJoin(ctx context.Context, in JoinSubmission) (Joi
 	if err != nil {
 		return JoinReceipt{}, err
 	}
-	tokenHash := sha256.Sum256([]byte(in.InvitationToken))
+	tokenHash := corecluster.SecretDigest(in.InvitationToken)
 	now := s.now().UTC()
 	tx, err := s.s.DB.BeginTx(ctx, nil)
 	if err != nil {
@@ -91,7 +87,7 @@ func (s *PairingService) SubmitJoin(ctx context.Context, in JoinSubmission) (Joi
 	}
 	defer tx.Rollback()
 	var inviteID, expiresText, state string
-	if err = tx.QueryRowContext(ctx, `SELECT id,expires_at,state FROM cluster_invitations WHERE token_hash=?`, tokenHash[:]).Scan(&inviteID, &expiresText, &state); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT id,expires_at,state FROM cluster_invitations WHERE token_hash=?`, tokenHash).Scan(&inviteID, &expiresText, &state); err != nil {
 		return JoinReceipt{}, errors.New("invitation unavailable")
 	}
 	expires, _ := time.Parse(time.RFC3339Nano, expiresText)
@@ -110,14 +106,14 @@ func (s *PairingService) SubmitJoin(ctx context.Context, in JoinSubmission) (Joi
 	if err != nil {
 		return JoinReceipt{}, err
 	}
-	requestHash := sha256.Sum256([]byte(requestSecret))
-	caps, _ := json.Marshal(uniqueStrings(in.Identity.Capabilities))
+	requestHash := corecluster.SecretDigest(requestSecret)
+	caps, _ := json.Marshal(corecluster.NormalizeCapabilities(in.Identity.Capabilities))
 	pub, err := base64.RawURLEncoding.DecodeString(in.Identity.PublicKey)
 	if err != nil {
 		return JoinReceipt{}, errors.New("invalid node public key")
 	}
 	requestExpires := now.Add(PairingLifetime)
-	_, err = tx.ExecContext(ctx, `INSERT INTO cluster_join_requests(id,request_secret_hash,invitation_id,node_id,installation_id,display_name,public_endpoint,public_key,capabilities_json,protocol_version,product_version,credential_for_local,state,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?, 'pending',?,?)`, requestID, requestHash[:], inviteID, in.Identity.NodeID, in.Identity.InstallationID, in.Identity.DisplayName, strings.TrimRight(in.Identity.PublicEndpoint, "/"), pub, string(caps), in.Identity.ProtocolVersion, in.Identity.ProductVersion, in.CredentialForHost, requestExpires.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
+	_, err = tx.ExecContext(ctx, `INSERT INTO cluster_join_requests(id,request_secret_hash,invitation_id,node_id,installation_id,display_name,public_endpoint,public_key,capabilities_json,protocol_version,product_version,credential_for_local,state,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?, 'pending',?,?)`, requestID, requestHash, inviteID, in.Identity.NodeID, in.Identity.InstallationID, in.Identity.DisplayName, strings.TrimRight(in.Identity.PublicEndpoint, "/"), pub, string(caps), in.Identity.ProtocolVersion, in.Identity.ProductVersion, in.CredentialForHost, requestExpires.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
 	if err != nil {
 		return JoinReceipt{}, err
 	}
@@ -173,8 +169,8 @@ func (s *PairingService) Decide(ctx context.Context, id string, approve bool, en
 		if err != nil {
 			return "", err
 		}
-		inboundHash := sha256.Sum256([]byte(responseCredential))
-		_, err = tx.ExecContext(ctx, `INSERT INTO cluster_members(node_id,installation_id,display_name,public_endpoint,public_key,capabilities_json,protocol_version,product_version,inbound_secret_hash,outbound_secret,state,created_at,paired_at) VALUES(?,?,?,?,?,?,?,?,?,?,'active',?,?) ON CONFLICT(node_id) DO UPDATE SET installation_id=excluded.installation_id,display_name=excluded.display_name,public_endpoint=excluded.public_endpoint,public_key=excluded.public_key,capabilities_json=excluded.capabilities_json,protocol_version=excluded.protocol_version,product_version=excluded.product_version,inbound_secret_hash=excluded.inbound_secret_hash,outbound_secret=excluded.outbound_secret,state='active',paired_at=excluded.paired_at,revoked_at=NULL`, nodeID, installationID, name, endpoint, public, caps, protocol, product, inboundHash[:], credentialForLocal, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
+		inboundHash := corecluster.SecretDigest(responseCredential)
+		_, err = tx.ExecContext(ctx, `INSERT INTO cluster_members(node_id,installation_id,display_name,public_endpoint,public_key,capabilities_json,protocol_version,product_version,inbound_secret_hash,outbound_secret,state,created_at,paired_at) VALUES(?,?,?,?,?,?,?,?,?,?,'active',?,?) ON CONFLICT(node_id) DO UPDATE SET installation_id=excluded.installation_id,display_name=excluded.display_name,public_endpoint=excluded.public_endpoint,public_key=excluded.public_key,capabilities_json=excluded.capabilities_json,protocol_version=excluded.protocol_version,product_version=excluded.product_version,inbound_secret_hash=excluded.inbound_secret_hash,outbound_secret=excluded.outbound_secret,state='active',paired_at=excluded.paired_at,revoked_at=NULL`, nodeID, installationID, name, endpoint, public, caps, protocol, product, inboundHash, credentialForLocal, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
 		if err != nil {
 			return "", err
 		}
@@ -200,7 +196,7 @@ func (s *PairingService) Poll(ctx context.Context, id, secret string) (PairingRe
 	if err != nil {
 		return PairingResult{}, err
 	}
-	hash := sha256.Sum256([]byte(secret))
+	hash := corecluster.SecretDigest(secret)
 	now := s.now().UTC()
 	tx, err := s.s.DB.BeginTx(ctx, nil)
 	if err != nil {
@@ -211,7 +207,7 @@ func (s *PairingService) Poll(ctx context.Context, id, secret string) (PairingRe
 	var public []byte
 	var protocol int
 	var consumed sql.NullString
-	err = tx.QueryRowContext(ctx, `SELECT state,node_id,installation_id,display_name,public_endpoint,public_key,capabilities_json,protocol_version,product_version,expires_at,response_consumed_at FROM cluster_join_requests WHERE id=? AND request_secret_hash=?`, id, hash[:]).Scan(&state, &nodeID, &installationID, &name, &endpoint, &public, &caps, &protocol, &product, &expiresText, &consumed)
+	err = tx.QueryRowContext(ctx, `SELECT state,node_id,installation_id,display_name,public_endpoint,public_key,capabilities_json,protocol_version,product_version,expires_at,response_consumed_at FROM cluster_join_requests WHERE id=? AND request_secret_hash=?`, id, hash).Scan(&state, &nodeID, &installationID, &name, &endpoint, &public, &caps, &protocol, &product, &expiresText, &consumed)
 	if err != nil {
 		return PairingResult{}, errors.New("join request unavailable")
 	}
@@ -238,8 +234,8 @@ func (s *PairingService) Poll(ctx context.Context, id, secret string) (PairingRe
 	if err != nil {
 		return PairingResult{}, err
 	}
-	newHash := sha256.Sum256([]byte(credential))
-	if _, err = tx.ExecContext(ctx, `UPDATE cluster_members SET inbound_secret_hash=? WHERE node_id=?`, newHash[:], nodeID); err != nil {
+	newHash := corecluster.SecretDigest(credential)
+	if _, err = tx.ExecContext(ctx, `UPDATE cluster_members SET inbound_secret_hash=? WHERE node_id=?`, newHash, nodeID); err != nil {
 		return PairingResult{}, err
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE cluster_join_requests SET state='consumed',response_consumed_at=? WHERE id=?`, now.Format(time.RFC3339Nano), id); err != nil {
@@ -268,10 +264,10 @@ func (s *PairingService) AcceptRemote(ctx context.Context, remote Identity, outb
 	if err != nil {
 		return err
 	}
-	caps, _ := json.Marshal(uniqueStrings(remote.Capabilities))
-	hash := sha256.Sum256([]byte(inboundCredential))
+	caps, _ := json.Marshal(corecluster.NormalizeCapabilities(remote.Capabilities))
+	hash := corecluster.SecretDigest(inboundCredential)
 	now := s.now().UTC().Format(time.RFC3339Nano)
-	_, err = s.s.DB.ExecContext(ctx, `INSERT INTO cluster_members(node_id,installation_id,display_name,public_endpoint,public_key,capabilities_json,protocol_version,product_version,inbound_secret_hash,outbound_secret,state,created_at,paired_at) VALUES(?,?,?,?,?,?,?,?,?,?,'active',?,?) ON CONFLICT(node_id) DO UPDATE SET installation_id=excluded.installation_id,display_name=excluded.display_name,public_endpoint=excluded.public_endpoint,public_key=excluded.public_key,capabilities_json=excluded.capabilities_json,protocol_version=excluded.protocol_version,product_version=excluded.product_version,inbound_secret_hash=excluded.inbound_secret_hash,outbound_secret=excluded.outbound_secret,state='active',paired_at=excluded.paired_at,revoked_at=NULL`, remote.NodeID, remote.InstallationID, remote.DisplayName, remote.PublicEndpoint, public, string(caps), remote.ProtocolVersion, remote.ProductVersion, hash[:], outboundCredential, now, now)
+	_, err = s.s.DB.ExecContext(ctx, `INSERT INTO cluster_members(node_id,installation_id,display_name,public_endpoint,public_key,capabilities_json,protocol_version,product_version,inbound_secret_hash,outbound_secret,state,created_at,paired_at) VALUES(?,?,?,?,?,?,?,?,?,?,'active',?,?) ON CONFLICT(node_id) DO UPDATE SET installation_id=excluded.installation_id,display_name=excluded.display_name,public_endpoint=excluded.public_endpoint,public_key=excluded.public_key,capabilities_json=excluded.capabilities_json,protocol_version=excluded.protocol_version,product_version=excluded.product_version,inbound_secret_hash=excluded.inbound_secret_hash,outbound_secret=excluded.outbound_secret,state='active',paired_at=excluded.paired_at,revoked_at=NULL`, remote.NodeID, remote.InstallationID, remote.DisplayName, remote.PublicEndpoint, public, string(caps), remote.ProtocolVersion, remote.ProductVersion, hash, outboundCredential, now, now)
 	return err
 }
 
@@ -284,14 +280,11 @@ func scanJoin(scanner interface{ Scan(...any) error }) (JoinRequest, error) {
 	}
 	v.PublicKey = base64.RawURLEncoding.EncodeToString(pub)
 	_ = json.Unmarshal([]byte(caps), &v.Capabilities)
+	v.Capabilities = corecluster.NormalizeCapabilities(v.Capabilities)
 	v.ExpiresAt, _ = time.Parse(time.RFC3339Nano, expires)
 	v.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
-	v.Fingerprint = fingerprint(pub)
+	v.Fingerprint = (Identity{PublicKey: v.PublicKey}).Fingerprint()
 	return v, nil
-}
-func fingerprint(public []byte) string {
-	sum := sha256.Sum256(public)
-	return fmt.Sprintf("%x", sum[:8])
 }
 
 type OutboundJoin struct {

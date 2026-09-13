@@ -86,3 +86,50 @@ func TestOpenRejectsCorruptDatabase(t *testing.T) {
 		t.Fatal("corrupt database accepted")
 	}
 }
+
+func TestPhase1DatabaseUpgradesWithoutLosingAgentPairing(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	s, err := Open(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.DB.Exec(`INSERT INTO posts(id,name,kind,created_at,updated_at) VALUES('agent-host','Agent Host','host','now','now')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.DB.Exec(`INSERT INTO agent_connections(installation_id,post_id,hostname,platform,agent_version,created_at) VALUES('agent-install','agent-host','host','linux','0.1.0','now')`); err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`DROP TABLE cluster_outbound_joins`,
+		`DROP TABLE cluster_nonces`,
+		`DROP TABLE cluster_members`,
+		`DROP TABLE cluster_join_requests`,
+		`DROP TABLE cluster_invitations`,
+		`DROP TABLE cluster_identity`,
+		`DELETE FROM schema_migrations WHERE version>=16`,
+	} {
+		if _, err = s.DB.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err = Open(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	var agentCount, version int
+	if err = s.DB.QueryRow(`SELECT COUNT(*) FROM agent_connections WHERE installation_id='agent-install' AND post_id='agent-host'`).Scan(&agentCount); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.DB.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if agentCount != 1 || version != SchemaVersion {
+		t.Fatalf("agent pairing or schema lost during upgrade: agents=%d version=%d", agentCount, version)
+	}
+}

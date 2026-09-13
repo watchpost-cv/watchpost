@@ -3,7 +3,6 @@ package cluster
 import (
 	"context"
 	"crypto/ed25519"
-	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -51,7 +50,7 @@ func (s *IdentityService) Update(ctx context.Context, displayName, endpoint stri
 	if _, _, err := s.ensureWithPrivate(ctx, productVersion); err != nil {
 		return Identity{}, err
 	}
-	encoded, _ := json.Marshal(uniqueStrings(capabilities))
+	encoded, _ := json.Marshal(corecluster.NormalizeCapabilities(capabilities))
 	_, err := s.s.DB.ExecContext(ctx, `UPDATE cluster_identity SET display_name=?,public_endpoint=?,capabilities_json=?,product_version=? WHERE singleton=1`, strings.TrimSpace(displayName), strings.TrimRight(endpoint, "/"), string(encoded), productVersion)
 	if err != nil {
 		return Identity{}, err
@@ -71,21 +70,18 @@ func (s *IdentityService) ensureWithPrivate(ctx context.Context, productVersion 
 	if !errors.Is(err, sql.ErrNoRows) {
 		return Identity{}, nil, err
 	}
-	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	generated, err := corecluster.GenerateIdentity("wp_", "wi_", DefaultCapabilities, ProtocolVersion, productVersion, s.now().UTC())
 	if err != nil {
 		return Identity{}, nil, err
 	}
-	nodeID, err := randomID("wp_", 16)
+	publicKey, err := base64.RawURLEncoding.DecodeString(generated.Identity.PublicKey)
 	if err != nil {
 		return Identity{}, nil, err
 	}
-	installID, err := randomID("wi_", 16)
-	if err != nil {
-		return Identity{}, nil, err
-	}
-	caps, _ := json.Marshal(DefaultCapabilities)
-	now := s.now().UTC().Format(time.RFC3339Nano)
-	_, err = s.s.DB.ExecContext(ctx, `INSERT INTO cluster_identity(singleton,node_id,installation_id,public_key,private_key,capabilities_json,protocol_version,product_version,created_at) VALUES(1,?,?,?,?,?,?,?,?)`, nodeID, installID, []byte(publicKey), []byte(privateKey), string(caps), ProtocolVersion, productVersion, now)
+	privateKey = ed25519.PrivateKey(generated.PrivateKey)
+	caps, _ := json.Marshal(generated.Identity.Capabilities)
+	now := generated.Identity.CreatedAt.Format(time.RFC3339Nano)
+	_, err = s.s.DB.ExecContext(ctx, `INSERT INTO cluster_identity(singleton,node_id,installation_id,public_key,private_key,capabilities_json,protocol_version,product_version,created_at) VALUES(1,?,?,?,?,?,?,?,?)`, generated.Identity.NodeID, generated.Identity.InstallationID, publicKey, []byte(privateKey), string(caps), ProtocolVersion, productVersion, now)
 	if err != nil {
 		identity, privateKey, loadErr := s.loadWithPrivate(ctx)
 		return identity, privateKey, loadErr
@@ -115,13 +111,7 @@ func (s *IdentityService) loadWithPrivate(ctx context.Context) (Identity, ed2551
 	return i, ed25519.PrivateKey(private), nil
 }
 
-func randomID(prefix string, n int) (string, error) {
-	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return prefix + base64.RawURLEncoding.EncodeToString(b), nil
-}
+func randomID(prefix string, n int) (string, error) { return corecluster.NewID(prefix, n) }
 func parseNullTime(v sql.NullString) *time.Time {
 	if !v.Valid {
 		return nil
@@ -131,16 +121,4 @@ func parseNullTime(v sql.NullString) *time.Time {
 		return nil
 	}
 	return &t
-}
-func uniqueStrings(values []string) []string {
-	seen := map[string]bool{}
-	out := make([]string, 0, len(values))
-	for _, v := range values {
-		v = strings.TrimSpace(v)
-		if v != "" && !seen[v] {
-			seen[v] = true
-			out = append(out, v)
-		}
-	}
-	return out
 }

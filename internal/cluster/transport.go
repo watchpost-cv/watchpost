@@ -3,8 +3,6 @@ package cluster
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -67,46 +65,42 @@ func (t *Transport) Authenticate(r *http.Request, requiredCapability string) (Au
 		return AuthenticatedRequest{}, errors.New("cluster authentication required")
 	}
 	protocol, err := strconv.Atoi(r.Header.Get(headerProtocol))
-	if err != nil || protocol != ProtocolVersion {
+	if err != nil {
 		return AuthenticatedRequest{}, errors.New("incompatible cluster protocol")
 	}
 	at, err := time.Parse(time.RFC3339Nano, timestamp)
-	if err != nil || at.Before(t.now().Add(-ClockSkew)) || at.After(t.now().Add(ClockSkew)) {
-		return AuthenticatedRequest{}, errors.New("cluster request outside clock-skew window")
+	if err != nil {
+		return AuthenticatedRequest{}, errors.New("invalid cluster timestamp")
 	}
 	var hash, pendingHash []byte
 	var state, caps string
 	var pendingExpires sql.NullString
-	if err = t.s.DB.QueryRowContext(r.Context(), `SELECT inbound_secret_hash,pending_inbound_secret_hash,pending_inbound_expires_at,state,capabilities_json FROM cluster_members WHERE node_id=?`, nodeID).Scan(&hash, &pendingHash, &pendingExpires, &state, &caps); err != nil || state != "active" {
+	if err = t.s.DB.QueryRowContext(r.Context(), `SELECT inbound_secret_hash,pending_inbound_secret_hash,pending_inbound_expires_at,state,capabilities_json FROM cluster_members WHERE node_id=?`, nodeID).Scan(&hash, &pendingHash, &pendingExpires, &state, &caps); err != nil {
 		return AuthenticatedRequest{}, errors.New("cluster member unavailable")
-	}
-	if requiredCapability != "" && !capabilityJSONContains(caps, requiredCapability) {
-		return AuthenticatedRequest{}, errors.New("cluster capability unavailable")
-	}
-	if requested := r.Header.Get(headerCapability); requested != "" && requested != requiredCapability {
-		return AuthenticatedRequest{}, errors.New("cluster capability mismatch")
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, MaxRequestBytes+1))
 	if err != nil {
 		return AuthenticatedRequest{}, err
 	}
-	if int64(len(body)) > MaxRequestBytes {
-		return AuthenticatedRequest{}, errors.New("cluster request too large")
+	var capabilities []string
+	_ = json.Unmarshal([]byte(caps), &capabilities)
+	var pendingExpiry *time.Time
+	if pendingExpires.Valid {
+		if parsed, parseErr := time.Parse(time.RFC3339Nano, pendingExpires.String); parseErr == nil {
+			pendingExpiry = &parsed
+		}
 	}
 	secret := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	actual := sha256.Sum256([]byte(secret))
-	current := secret != "" && hmac.Equal(hash, actual[:])
-	pending := false
-	if !current && secret != "" && len(pendingHash) > 0 && hmac.Equal(pendingHash, actual[:]) && pendingExpires.Valid {
-		expires, parseErr := time.Parse(time.RFC3339Nano, pendingExpires.String)
-		pending = parseErr == nil && expires.After(t.now())
+	verified, err := corecluster.VerifyIncoming(corecluster.VerifyRequestInput{
+		Material:           corecluster.AuthMaterial{State: state, Protocol: protocol, Capabilities: capabilities, CurrentHash: hash, PendingHash: pendingHash, PendingExpires: pendingExpiry},
+		RequiredCapability: requiredCapability, PresentedSecret: secret, Method: r.Method, RequestURI: r.URL.RequestURI(),
+		Envelope: corecluster.RequestEnvelope{NodeID: nodeID, Timestamp: at, Nonce: nonce, RequestID: requestID, Protocol: protocol, Capability: r.Header.Get(headerCapability), Signature: signature},
+		Body:     body, Now: t.now(),
+	})
+	if err != nil {
+		return AuthenticatedRequest{}, err
 	}
-	if !current && !pending {
-		return AuthenticatedRequest{}, errors.New("cluster credential rejected")
-	}
-	if !corecluster.VerifySignature(secret, signature, r.Method, r.URL.RequestURI(), timestamp, nonce, requestID, requiredCapability, body) {
-		return AuthenticatedRequest{}, errors.New("invalid cluster signature")
-	}
+	pending := verified.PromotePending
 	if pending {
 		if _, err = t.s.DB.ExecContext(r.Context(), `UPDATE cluster_members SET inbound_secret_hash=pending_inbound_secret_hash,pending_inbound_secret_hash=NULL,pending_inbound_expires_at=NULL,credential_version=credential_version+1 WHERE node_id=?`, nodeID); err != nil {
 			return AuthenticatedRequest{}, err
@@ -178,17 +172,4 @@ func (t *Transport) Do(ctx context.Context, nodeID, method, path, capability str
 	}
 	_, _ = t.s.DB.ExecContext(ctx, `UPDATE cluster_members SET last_seen_at=?,last_latency_ms=? WHERE node_id=?`, t.now().UTC().Format(time.RFC3339Nano), latency.Milliseconds(), nodeID)
 	return resp, nil
-}
-
-func capabilityJSONContains(encoded, required string) bool {
-	var values []string
-	if json.Unmarshal([]byte(encoded), &values) != nil {
-		return false
-	}
-	for _, value := range values {
-		if value == required {
-			return true
-		}
-	}
-	return false
 }
