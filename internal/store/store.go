@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const SchemaVersion = 16
+const SchemaVersion = 17
 
 type Store struct{ DB *sql.DB }
 
@@ -291,6 +291,22 @@ func (s *Store) migrate(ctx context.Context) error {
 			return err
 		}
 		version = 16
+	}
+	if version == 16 {
+		statements := []string{
+			`CREATE TABLE cluster_invitations(id TEXT PRIMARY KEY,token_hash BLOB NOT NULL UNIQUE,state TEXT NOT NULL CHECK(state IN ('pending','consumed','expired')),expires_at TEXT NOT NULL,created_at TEXT NOT NULL,consumed_at TEXT)`,
+			`CREATE TABLE cluster_join_requests(id TEXT PRIMARY KEY,request_secret_hash BLOB NOT NULL UNIQUE,invitation_id TEXT NOT NULL REFERENCES cluster_invitations(id),node_id TEXT NOT NULL,installation_id TEXT NOT NULL,display_name TEXT NOT NULL DEFAULT '',public_endpoint TEXT NOT NULL,public_key BLOB NOT NULL,capabilities_json TEXT NOT NULL DEFAULT '[]',protocol_version INTEGER NOT NULL,product_version TEXT NOT NULL DEFAULT '',credential_for_local TEXT NOT NULL,state TEXT NOT NULL CHECK(state IN ('pending','approved','rejected','consumed')),expires_at TEXT NOT NULL,created_at TEXT NOT NULL,decided_at TEXT,response_consumed_at TEXT)`,
+			`CREATE TABLE cluster_members(node_id TEXT PRIMARY KEY,installation_id TEXT NOT NULL UNIQUE,display_name TEXT NOT NULL DEFAULT '',public_endpoint TEXT NOT NULL,public_key BLOB NOT NULL,capabilities_json TEXT NOT NULL DEFAULT '[]',protocol_version INTEGER NOT NULL,product_version TEXT NOT NULL DEFAULT '',inbound_secret_hash BLOB NOT NULL,outbound_secret TEXT NOT NULL,state TEXT NOT NULL CHECK(state IN ('active','disabled','revoked')),created_at TEXT NOT NULL,paired_at TEXT NOT NULL,last_seen_at TEXT,last_latency_ms INTEGER,revoked_at TEXT,credential_version INTEGER NOT NULL DEFAULT 1,pending_inbound_secret_hash BLOB,pending_inbound_expires_at TEXT)`,
+		}
+		for _, statement := range statements {
+			if _, err = tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("migration 17: %w", err)
+			}
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations(version,applied_at) VALUES(17,?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return err
+		}
+		version = 17
 	}
 	return tx.Commit()
 }
