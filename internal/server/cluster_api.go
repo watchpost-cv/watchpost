@@ -9,6 +9,7 @@ import (
 )
 
 func (s *Server) registerClusterAPI(mux *http.ServeMux) {
+	s.registerPropagationAPI(mux)
 	mux.HandleFunc("GET /api/v1/cluster/identity", s.require("viewer", s.handleClusterIdentity))
 	mux.HandleFunc("PUT /api/v1/cluster/identity", s.require("admin", s.handleClusterIdentityUpdate))
 	mux.HandleFunc("POST /api/v1/cluster/invitations", s.require("admin", s.handleClusterInvite))

@@ -17,7 +17,7 @@ import (
 
 const ProtocolVersion = corecluster.ProtocolVersion
 
-var DefaultCapabilities = []string{"cluster.health", "cluster.summary"}
+var DefaultCapabilities = []string{"cluster.health", "cluster.summary", "cluster.propagation"}
 
 type Identity = corecluster.Identity
 

@@ -16,7 +16,6 @@ var policies = map[string]KindPolicy{
 	"monitor":             {Kind: "monitor", Reversible: true, Permission: "monitor.update"},
 	"alert-policy":        {Kind: "alert-policy", Reversible: true, Permission: "alert.update"},
 	"notification-config": {Kind: "notification-config", Reversible: true, Permission: "notification.update"},
-	"agent-policy":        {Kind: "agent-policy", Reversible: true, Permission: "agent.update"},
 }
 
 func Policy(kind string) (KindPolicy, bool) { p, ok := policies[kind]; return p, ok }
@@ -31,5 +30,5 @@ func ValidateEnvelope(e core.Envelope) error {
 	return e.Validate()
 }
 func Kinds() []string {
-	return []string{"agent-policy", "alert-policy", "monitor", "notification-config"}
+	return []string{"alert-policy", "monitor", "notification-config"}
 }

@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	coreprop "github.com/gantry-tools/gantry-core/propagation"
 	"github.com/watchpost-cv/watchpost/internal/actions"
 	"github.com/watchpost-cv/watchpost/internal/agent"
 	"github.com/watchpost-cv/watchpost/internal/agentpairing"
@@ -36,6 +37,7 @@ import (
 	"github.com/watchpost-cv/watchpost/internal/notify"
 	"github.com/watchpost-cv/watchpost/internal/pairing"
 	"github.com/watchpost-cv/watchpost/internal/posts"
+	productprop "github.com/watchpost-cv/watchpost/internal/propagation"
 	"github.com/watchpost-cv/watchpost/internal/retention"
 	"github.com/watchpost-cv/watchpost/internal/rules"
 	"github.com/watchpost-cv/watchpost/internal/secrets"
@@ -74,6 +76,7 @@ type Server struct {
 	clusterMembers     *cluster.MemberService
 	clusterTransport   *cluster.Transport
 	clusterDistributed *cluster.DistributedService
+	propagation        *coreprop.Manager
 	secrets            *secrets.Box
 	backupStatus       backupStatus
 }
@@ -131,6 +134,7 @@ func New(cfg config.Config, version string, logger *slog.Logger, database *store
 	server.clusterMembers = cluster.NewMemberService(database)
 	server.clusterTransport = cluster.NewTransport(database, server.clusterIdentity)
 	server.clusterDistributed = cluster.NewDistributedService(database, server.clusterIdentity, server.clusterMembers, server.clusterTransport)
+	server.propagation = &coreprop.Manager{Adapter: productprop.New(database), Store: productprop.NewStateStore(database)}
 	_, _ = server.clusterIdentity.Ensure(context.Background(), version)
 	server.secrets = secrets.New(cfg.MasterKey)
 	server.devices = devices.NewProfileStoreWithKey(database, server.secrets)
