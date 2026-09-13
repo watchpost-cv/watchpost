@@ -22,7 +22,7 @@ import (
 	"github.com/watchpost-cv/watchpost/internal/store"
 )
 
-var version = "0.1.2"
+var version = "0.1.1"
 
 // installServiceOptions is a seam for command-level tests. Keeping the
 // operating-system mutation behind it lets argument-validation tests verify

@@ -519,8 +519,8 @@ stay aligned with `PLAN.md` when a checkpoint lands.
 ## Current release state
 
 - Released stable: **v0.1.1** (stable public preview).
-- Current development: **0.1.2** on `main`. An ordinary development build
-  reports 0.1.2 with commit `unknown`; release builds override the default via
+- Current development: **0.1.1** on `main`. An ordinary development build
+  reports 0.1.1 with commit `unknown`; release builds override the default via
   `-ldflags -X main.version` and are never confused with the released version.
 
 # Release procedure
