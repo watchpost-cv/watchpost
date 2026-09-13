@@ -9,11 +9,13 @@ import (
 	"errors"
 	"time"
 
+	corecluster "github.com/gantry-tools/gantry-core/cluster"
+
 	"github.com/watchpost-cv/watchpost/internal/audit"
 	"github.com/watchpost-cv/watchpost/internal/store"
 )
 
-const RotationLifetime = 10 * time.Minute
+const RotationLifetime = corecluster.RotationLifetime
 
 type Member struct {
 	NodeID            string     `json:"node_id"`
@@ -68,7 +70,7 @@ func (s *MemberService) List(ctx context.Context) ([]Member, error) {
 			v := latency.Int64
 			m.LastLatencyMS = &v
 		}
-		m.Compatible = m.ProtocolVersion == ProtocolVersion
+		m.Compatible = corecluster.Compatible(ProtocolVersion, m.ProtocolVersion, DefaultCapabilities, m.Capabilities, "") == nil
 		m.Health = memberHealth(m, s.now().UTC())
 		out = append(out, m)
 	}
@@ -175,7 +177,7 @@ func (s *MemberService) Remove(ctx context.Context, nodeID string, entry audit.E
 	return tx.Commit()
 }
 func (s *MemberService) RotateInbound(ctx context.Context, nodeID string, entry audit.Entry) (string, error) {
-	secret, err := randomSecret(32)
+	secret, err := corecluster.NewSecret(32)
 	if err != nil {
 		return "", err
 	}

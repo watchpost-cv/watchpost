@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	corecluster "github.com/gantry-tools/gantry-core/cluster"
+
 	"github.com/watchpost-cv/watchpost/internal/audit"
 	"github.com/watchpost-cv/watchpost/internal/store"
 )
@@ -205,7 +207,7 @@ func signedIncomingRequest(t *testing.T, secret, nodeID, nonce, requestID, path,
 	r.Header.Set(headerRequestID, requestID)
 	r.Header.Set(headerProtocol, "1")
 	r.Header.Set(headerCapability, capability)
-	r.Header.Set(headerSignature, base64.RawURLEncoding.EncodeToString(signRequest(secret, r.Method, r.URL.RequestURI(), at, nonce, requestID, capability, body)))
+	r.Header.Set(headerSignature, corecluster.Signature(secret, r.Method, r.URL.RequestURI(), at, nonce, requestID, capability, body))
 	return r
 }
 

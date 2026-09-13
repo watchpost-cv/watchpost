@@ -3,7 +3,6 @@ package cluster
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
@@ -16,58 +15,24 @@ import (
 	"strings"
 	"time"
 
+	corecluster "github.com/gantry-tools/gantry-core/cluster"
+
 	"github.com/watchpost-cv/watchpost/internal/audit"
 	"github.com/watchpost-cv/watchpost/internal/store"
 )
 
-const PairingLifetime = 10 * time.Minute
+const PairingLifetime = corecluster.PairingLifetime
+
+type Invitation = corecluster.Invitation
+type JoinRequest = corecluster.JoinRequest
+type JoinSubmission = corecluster.JoinSubmission
+type JoinReceipt = corecluster.JoinReceipt
+type PairingResult = corecluster.PairingResult
 
 type PairingService struct {
 	s        *store.Store
 	identity *IdentityService
 	now      func() time.Time
-}
-
-type Invitation struct {
-	ID        string    `json:"id"`
-	Token     string    `json:"token,omitempty"`
-	State     string    `json:"state"`
-	ExpiresAt time.Time `json:"expires_at"`
-	CreatedAt time.Time `json:"created_at"`
-}
-
-type JoinRequest struct {
-	ID              string    `json:"id"`
-	NodeID          string    `json:"node_id"`
-	InstallationID  string    `json:"installation_id"`
-	DisplayName     string    `json:"display_name"`
-	PublicEndpoint  string    `json:"public_endpoint"`
-	PublicKey       string    `json:"public_key"`
-	Capabilities    []string  `json:"capabilities"`
-	ProtocolVersion int       `json:"protocol_version"`
-	ProductVersion  string    `json:"product_version"`
-	Fingerprint     string    `json:"fingerprint"`
-	State           string    `json:"state"`
-	ExpiresAt       time.Time `json:"expires_at"`
-	CreatedAt       time.Time `json:"created_at"`
-}
-
-type JoinSubmission struct {
-	InvitationToken   string   `json:"invitation_token"`
-	Identity          Identity `json:"identity"`
-	CredentialForHost string   `json:"credential_for_host"`
-}
-
-type JoinReceipt struct {
-	RequestID     string `json:"request_id"`
-	RequestSecret string `json:"request_secret"`
-	State         string `json:"state"`
-}
-
-type PairingResult struct {
-	State      string    `json:"state"`
-	Remote     *Identity `json:"remote,omitempty"`
-	Credential string    `json:"credential,omitempty"`
 }
 
 func NewPairingService(s *store.Store, identity *IdentityService) *PairingService {
@@ -79,7 +44,7 @@ func (s *PairingService) Invite(ctx context.Context, entry audit.Entry) (Invitat
 	if err != nil {
 		return Invitation{}, err
 	}
-	token, err := randomSecret(32)
+	token, err := corecluster.NewSecret(32)
 	if err != nil {
 		return Invitation{}, err
 	}
@@ -108,6 +73,9 @@ func (s *PairingService) Invite(ctx context.Context, entry audit.Entry) (Invitat
 }
 
 func (s *PairingService) SubmitJoin(ctx context.Context, in JoinSubmission) (JoinReceipt, error) {
+	if err := corecluster.ValidateJoinSubmission(in, s.now().UTC()); err != nil {
+		return JoinReceipt{}, err
+	}
 	if in.InvitationToken == "" || in.Identity.NodeID == "" || in.Identity.InstallationID == "" || in.Identity.PublicKey == "" || in.Identity.PublicEndpoint == "" || !strings.HasPrefix(in.Identity.PublicEndpoint, "https://") || len(in.CredentialForHost) < 32 {
 		return JoinReceipt{}, errors.New("invalid cluster join request")
 	}
@@ -138,7 +106,7 @@ func (s *PairingService) SubmitJoin(ctx context.Context, in JoinSubmission) (Joi
 	if err != nil {
 		return JoinReceipt{}, err
 	}
-	requestSecret, err := randomSecret(32)
+	requestSecret, err := corecluster.NewSecret(32)
 	if err != nil {
 		return JoinReceipt{}, err
 	}
@@ -201,7 +169,7 @@ func (s *PairingService) Decide(ctx context.Context, id string, approve bool, en
 	responseCredential := ""
 	if approve {
 		state = "approved"
-		responseCredential, err = randomSecret(32)
+		responseCredential, err = corecluster.NewSecret(32)
 		if err != nil {
 			return "", err
 		}
@@ -266,7 +234,7 @@ func (s *PairingService) Poll(ctx context.Context, id, secret string) (PairingRe
 	}
 	// The approval credential is not stored in plaintext. Re-issue it once by rotating
 	// the just-created inbound hash to a fresh secret before collection.
-	credential, err = randomSecret(32)
+	credential, err = corecluster.NewSecret(32)
 	if err != nil {
 		return PairingResult{}, err
 	}
@@ -325,13 +293,6 @@ func fingerprint(public []byte) string {
 	sum := sha256.Sum256(public)
 	return fmt.Sprintf("%x", sum[:8])
 }
-func randomSecret(n int) (string, error) {
-	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
-}
 
 type OutboundJoin struct {
 	ID        string    `json:"id"`
@@ -356,7 +317,7 @@ func (s *PairingService) BeginOutbound(ctx context.Context, remoteURL, invitatio
 	if local.PublicEndpoint == "" {
 		return OutboundJoin{}, errors.New("configure this Watchpost public HTTPS endpoint before joining a cluster")
 	}
-	localCredential, err := randomSecret(32)
+	localCredential, err := corecluster.NewSecret(32)
 	if err != nil {
 		return OutboundJoin{}, err
 	}

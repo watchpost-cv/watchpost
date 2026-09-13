@@ -6,10 +6,8 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"database/sql"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -17,11 +15,13 @@ import (
 	"strings"
 	"time"
 
+	corecluster "github.com/gantry-tools/gantry-core/cluster"
+
 	"github.com/watchpost-cv/watchpost/internal/store"
 )
 
-const MaxRequestBytes int64 = 256 << 10
-const ClockSkew = 5 * time.Minute
+const MaxRequestBytes = corecluster.MaxRequestBytes
+const ClockSkew = corecluster.ClockSkew
 
 const (
 	headerNode       = "X-Watchpost-Node"
@@ -104,9 +104,7 @@ func (t *Transport) Authenticate(r *http.Request, requiredCapability string) (Au
 	if !current && !pending {
 		return AuthenticatedRequest{}, errors.New("cluster credential rejected")
 	}
-	expected := signRequest(secret, r.Method, r.URL.RequestURI(), timestamp, nonce, requestID, requiredCapability, body)
-	received, err := base64.RawURLEncoding.DecodeString(signature)
-	if err != nil || !hmac.Equal(received, expected) {
+	if !corecluster.VerifySignature(secret, signature, r.Method, r.URL.RequestURI(), timestamp, nonce, requestID, requiredCapability, body) {
 		return AuthenticatedRequest{}, errors.New("invalid cluster signature")
 	}
 	if pending {
@@ -155,7 +153,7 @@ func (t *Transport) Do(ctx context.Context, nodeID, method, path, capability str
 		return nil, err
 	}
 	timestamp := t.now().UTC().Format(time.RFC3339Nano)
-	nonce, err := randomSecret(18)
+	nonce, err := corecluster.NewSecret(18)
 	if err != nil {
 		return nil, err
 	}
@@ -170,7 +168,7 @@ func (t *Transport) Do(ctx context.Context, nodeID, method, path, capability str
 	req.Header.Set(headerRequestID, requestID)
 	req.Header.Set(headerProtocol, strconv.Itoa(ProtocolVersion))
 	req.Header.Set(headerCapability, capability)
-	req.Header.Set(headerSignature, base64.RawURLEncoding.EncodeToString(signRequest(secret, method, req.URL.RequestURI(), timestamp, nonce, requestID, capability, body)))
+	req.Header.Set(headerSignature, corecluster.Signature(secret, method, req.URL.RequestURI(), timestamp, nonce, requestID, capability, body))
 	req.Header.Set("Content-Type", "application/json")
 	started := t.now()
 	resp, err := t.client.Do(req)
@@ -182,12 +180,6 @@ func (t *Transport) Do(ctx context.Context, nodeID, method, path, capability str
 	return resp, nil
 }
 
-func signRequest(secret, method, path, timestamp, nonce, requestID, capability string, body []byte) []byte {
-	bodyHash := sha256.Sum256(body)
-	mac := hmac.New(sha256.New, []byte(secret))
-	fmt.Fprintf(mac, "%s\n%s\n%s\n%s\n%s\n%s\n%x", method, path, timestamp, nonce, requestID, capability, bodyHash)
-	return mac.Sum(nil)
-}
 func capabilityJSONContains(encoded, required string) bool {
 	var values []string
 	if json.Unmarshal([]byte(encoded), &values) != nil {

@@ -4,36 +4,23 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
+
+	corecluster "github.com/gantry-tools/gantry-core/cluster"
 
 	"github.com/watchpost-cv/watchpost/internal/store"
 )
 
-const ProtocolVersion = 1
+const ProtocolVersion = corecluster.ProtocolVersion
 
 var DefaultCapabilities = []string{"cluster.health", "cluster.summary"}
 
-type Identity struct {
-	NodeID          string     `json:"node_id"`
-	InstallationID  string     `json:"installation_id"`
-	DisplayName     string     `json:"display_name"`
-	PublicEndpoint  string     `json:"public_endpoint"`
-	PublicKey       string     `json:"public_key"`
-	Capabilities    []string   `json:"capabilities"`
-	ProtocolVersion int        `json:"protocol_version"`
-	ProductVersion  string     `json:"product_version"`
-	CreatedAt       time.Time  `json:"created_at"`
-	PairedAt        *time.Time `json:"paired_at,omitempty"`
-	LastSeenAt      *time.Time `json:"last_seen_at,omitempty"`
-	RevokedAt       *time.Time `json:"revoked_at,omitempty"`
-}
+type Identity = corecluster.Identity
 
 type IdentityService struct {
 	s   *store.Store
@@ -156,13 +143,4 @@ func uniqueStrings(values []string) []string {
 		}
 	}
 	return out
-}
-
-func (i Identity) Fingerprint() string {
-	key, _ := base64.RawURLEncoding.DecodeString(i.PublicKey)
-	if len(key) == 0 {
-		return ""
-	}
-	sum := sha256.Sum256(key)
-	return fmt.Sprintf("%x", sum[:8])
 }

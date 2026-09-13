@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
-	"sync"
+
+	corecluster "github.com/gantry-tools/gantry-core/cluster"
 )
 
 type NodeSummary struct {
@@ -20,9 +20,9 @@ type NodeSummary struct {
 }
 
 type SummaryReport struct {
-	RequestID string                    `json:"request_id"`
-	Partial   bool                      `json:"partial"`
-	Results   []NodeResult[NodeSummary] `json:"results"`
+	RequestID string                                `json:"request_id"`
+	Partial   bool                                  `json:"partial"`
+	Results   []corecluster.NodeResult[NodeSummary] `json:"results"`
 }
 
 func (s *DistributedService) LocalSummary(ctx context.Context, productVersion string) (NodeSummary, error) {
@@ -48,56 +48,36 @@ func (s *DistributedService) LocalSummary(ctx context.Context, productVersion st
 
 func (s *DistributedService) ClusterSummary(ctx context.Context, productVersion, target string) SummaryReport {
 	requestID, _ := randomID("fan_", 10)
-	results := []NodeResult[NodeSummary]{}
+	results := []corecluster.NodeResult[NodeSummary]{}
 	local, localErr := s.LocalSummary(ctx, productVersion)
 	if localErr == nil {
-		results = append(results, NodeResult[NodeSummary]{NodeID: local.NodeID, OwnerNode: local.NodeID, OK: true, Value: &local})
+		results = append(results, corecluster.NodeResult[NodeSummary]{NodeID: local.NodeID, OwnerNode: local.NodeID, OK: true, Value: &local})
 	}
 	members, listErr := s.members.List(ctx)
 	if listErr != nil {
 		return SummaryReport{RequestID: requestID, Partial: true, Results: results}
 	}
 	selected := selectMembers(members, target)
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, 4)
+	ids := make([]string, 0, len(selected))
 	for _, member := range selected {
-		member := member
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			result := NodeResult[NodeSummary]{NodeID: member.NodeID, OwnerNode: member.NodeID}
-			resp, err := s.transport.Do(ctx, member.NodeID, http.MethodGet, "/api/cluster/v1/rpc/summary", "cluster.summary", nil)
-			if err != nil {
-				result.Error = err.Error()
-			} else {
-				defer resp.Body.Close()
-				if resp.StatusCode != http.StatusOK {
-					result.Error = fmt.Sprintf("remote status %d", resp.StatusCode)
-				} else {
-					var value NodeSummary
-					if err = json.NewDecoder(io.LimitReader(resp.Body, MaxRequestBytes)).Decode(&value); err != nil {
-						result.Error = err.Error()
-					} else {
-						result.OK = true
-						result.Value = &value
-					}
-				}
-			}
-			mu.Lock()
-			results = append(results, result)
-			mu.Unlock()
-		}()
+		ids = append(ids, member.NodeID)
 	}
-	wg.Wait()
-	sort.Slice(results, func(i, j int) bool { return results[i].NodeID < results[j].NodeID })
-	partial := localErr != nil
-	for _, r := range results {
-		if !r.OK {
-			partial = true
+	remote := corecluster.FanOut(ctx, ids, 4, func(ctx context.Context, nodeID string) (NodeSummary, error) {
+		resp, err := s.transport.Do(ctx, nodeID, http.MethodGet, "/api/cluster/v1/rpc/summary", "cluster.summary", nil)
+		if err != nil {
+			return NodeSummary{}, err
 		}
-	}
-	return SummaryReport{RequestID: requestID, Partial: partial, Results: results}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return NodeSummary{}, fmt.Errorf("remote status %d", resp.StatusCode)
+		}
+		var value NodeSummary
+		if err = json.NewDecoder(io.LimitReader(resp.Body, MaxRequestBytes)).Decode(&value); err != nil {
+			return NodeSummary{}, err
+		}
+		return value, nil
+	})
+	results = append(results, remote...)
+	sortNodeResults(results)
+	return SummaryReport{RequestID: requestID, Partial: localErr != nil || corecluster.IsPartial(results), Results: results}
 }

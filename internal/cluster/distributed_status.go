@@ -3,13 +3,13 @@ package cluster
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"sort"
-	"sync"
 	"time"
+
+	corecluster "github.com/gantry-tools/gantry-core/cluster"
 
 	"github.com/watchpost-cv/watchpost/internal/store"
 )
@@ -23,18 +23,10 @@ type NodeStatus struct {
 	DatabaseReady   bool      `json:"database_ready"`
 }
 
-type NodeResult[T any] struct {
-	NodeID    string `json:"node_id"`
-	OwnerNode string `json:"owner_node"`
-	OK        bool   `json:"ok"`
-	Error     string `json:"error,omitempty"`
-	Value     *T     `json:"value,omitempty"`
-}
-
 type StatusReport struct {
-	RequestID string                   `json:"request_id"`
-	Partial   bool                     `json:"partial"`
-	Results   []NodeResult[NodeStatus] `json:"results"`
+	RequestID string                               `json:"request_id"`
+	Partial   bool                                 `json:"partial"`
+	Results   []corecluster.NodeResult[NodeStatus] `json:"results"`
 }
 
 type DistributedService struct {
@@ -57,84 +49,56 @@ func (s *DistributedService) LocalStatus(ctx context.Context, productVersion str
 func (s *DistributedService) ClusterStatus(ctx context.Context, productVersion string, target string) StatusReport {
 	requestID, _ := randomID("fan_", 10)
 	local := s.LocalStatus(ctx, productVersion)
-	results := []NodeResult[NodeStatus]{{NodeID: local.NodeID, OwnerNode: local.NodeID, OK: true, Value: &local}}
+	results := []corecluster.NodeResult[NodeStatus]{{NodeID: local.NodeID, OwnerNode: local.NodeID, OK: true, Value: &local}}
 	members, listErr := s.members.List(ctx)
 	if listErr != nil {
 		return StatusReport{RequestID: requestID, Partial: true, Results: results}
 	}
 	selected := selectMembers(members, target)
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, 4)
+	ids := make([]string, 0, len(selected))
 	for _, member := range selected {
-		member := member
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			result := NodeResult[NodeStatus]{NodeID: member.NodeID, OwnerNode: member.NodeID}
-			resp, err := s.transport.Do(ctx, member.NodeID, http.MethodGet, "/api/cluster/v1/rpc/status", "cluster.health", nil)
-			if err != nil {
-				result.Error = err.Error()
-			} else {
-				defer resp.Body.Close()
-				if resp.StatusCode != http.StatusOK {
-					result.Error = fmt.Sprintf("remote status %d", resp.StatusCode)
-				} else {
-					var value NodeStatus
-					if err = json.NewDecoder(io.LimitReader(resp.Body, MaxRequestBytes)).Decode(&value); err != nil {
-						result.Error = err.Error()
-					} else {
-						result.OK = true
-						result.Value = &value
-					}
-				}
-			}
-			mu.Lock()
-			results = append(results, result)
-			mu.Unlock()
-		}()
+		ids = append(ids, member.NodeID)
 	}
-	wg.Wait()
-	sort.Slice(results, func(i, j int) bool { return results[i].NodeID < results[j].NodeID })
-	partial := false
-	for _, r := range results {
-		if !r.OK {
-			partial = true
-			break
+	remote := corecluster.FanOut(ctx, ids, 4, func(ctx context.Context, nodeID string) (NodeStatus, error) {
+		resp, err := s.transport.Do(ctx, nodeID, http.MethodGet, "/api/cluster/v1/rpc/status", "cluster.health", nil)
+		if err != nil {
+			return NodeStatus{}, err
 		}
-	}
-	return StatusReport{RequestID: requestID, Partial: partial, Results: results}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return NodeStatus{}, fmt.Errorf("remote status %d", resp.StatusCode)
+		}
+		var value NodeStatus
+		if err = json.NewDecoder(io.LimitReader(resp.Body, MaxRequestBytes)).Decode(&value); err != nil {
+			return NodeStatus{}, err
+		}
+		return value, nil
+	})
+	results = append(results, remote...)
+	sortNodeResults(results)
+	return StatusReport{RequestID: requestID, Partial: corecluster.IsPartial(results), Results: results}
+}
+
+func sortNodeResults[T any](results []corecluster.NodeResult[T]) {
+	sort.Slice(results, func(i, j int) bool { return results[i].NodeID < results[j].NodeID })
 }
 
 func selectMembers(members []Member, target string) []Member {
-	if target == "" || target == "all" || target == "members" {
-		out := []Member{}
-		for _, m := range members {
-			if m.State == "active" {
-				out = append(out, m)
-			}
-		}
-		return out
-	}
-	for _, m := range members {
-		if m.NodeID == target {
-			if m.State == "active" {
-				return []Member{m}
-			}
-			return nil
-		}
-	}
-	return nil
-}
-
-func ValidateTarget(target string) error {
-	if target == "" || target == "all" || target == "members" {
+	parsed, err := corecluster.ParseTarget(target)
+	if err != nil || parsed.Kind == corecluster.TargetLocal {
 		return nil
 	}
-	if len(target) < 4 {
-		return errors.New("invalid cluster target")
+	out := []Member{}
+	for _, m := range members {
+		if m.State != corecluster.MemberActive {
+			continue
+		}
+		if parsed.Kind == corecluster.TargetNode && m.NodeID != parsed.NodeID {
+			continue
+		}
+		out = append(out, m)
 	}
-	return nil
+	return out
 }
+
+func ValidateTarget(target string) error { _, err := corecluster.ParseTarget(target); return err }

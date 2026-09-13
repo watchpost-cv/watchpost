@@ -51,3 +51,15 @@ Those features require evidence from the narrower model first. Configuration pro
 ## Phase 2 proving sequence
 
 The implementation order is identity, pairing, transport, membership/health, a read-only distributed health call, Watchpost-specific aggregate reads/ownership, UI parity, and then failure/recovery testing. Only after those behaviours survive real tests may their generic pieces be considered for `gantry-core` extraction.
+
+## Phase 3 extraction boundary
+
+After CP17, the proven generic pieces are consumed from `github.com/gantry-tools/gantry-core/cluster`:
+
+- shared node identity and pairing value types;
+- protocol version, pairing/rotation lifetimes and credential generation;
+- canonical HMAC request signing and verification;
+- target parsing, bounded fan-out and deterministic per-node result envelopes;
+- shared cluster CLI and presentation contracts for future adopters.
+
+Watchpost still owns its SQLite schema and transaction boundaries, audit persistence, HTTP route registration, human permissions, Watchpost object ownership, Agent pairing, and monitor/alert/incident summary queries. Existing `X-Watchpost-*` wire headers are retained during the extraction so Phase 3 does not silently create a second protocol while moving implementation code.
