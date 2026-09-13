@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,6 +18,8 @@ type propagationRequest struct {
 	Target    string          `json:"target,omitempty"`
 	Envelopes []core.Envelope `json:"envelopes,omitempty"`
 	PlanID    string          `json:"plan_id,omitempty"`
+	Selector  core.Selector   `json:"selector,omitempty"`
+	DryRun    bool            `json:"dry_run,omitempty"`
 }
 
 func propActor(r *http.Request) core.Actor {
@@ -29,6 +32,7 @@ func (s *Server) registerPropagationAPI(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/cluster/propagation/export", s.require("admin", s.handlePropagationExport))
 	mux.HandleFunc("POST /api/v1/cluster/propagation/preview", s.require("admin", s.handlePropagationPreview))
 	mux.HandleFunc("POST /api/v1/cluster/propagation/apply", s.require("admin", s.handlePropagationApply))
+	mux.HandleFunc("POST /api/v1/cluster/propagation/propagate", s.require("admin", s.handlePropagationPropagate))
 	mux.HandleFunc("GET /api/v1/cluster/propagation/history", s.require("viewer", s.handlePropagationHistory))
 	mux.HandleFunc("GET /api/v1/cluster/propagation/profiles", s.require("viewer", s.handlePropagationProfiles))
 	mux.HandleFunc("PUT /api/v1/cluster/propagation/profiles/{id}", s.require("admin", s.handlePropagationProfilePut))
@@ -155,4 +159,76 @@ func (s *Server) handlePropagationRPCApply(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, 200, v)
+}
+
+func (s *Server) remotePropagationPreview(ctx context.Context, node string, env []core.Envelope, actor core.Actor) (core.Preview, error) {
+	b, _ := json.Marshal(propagationRequest{Envelopes: env})
+	resp, e := s.clusterTransport.Do(ctx, node, http.MethodPost, "/api/cluster/v1/rpc/propagation/preview", "cluster.propagation", b)
+	if e != nil {
+		return core.Preview{}, e
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return core.Preview{}, fmt.Errorf("remote status %d", resp.StatusCode)
+	}
+	var v core.Preview
+	e = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&v)
+	return v, e
+}
+func (s *Server) remotePropagationApply(ctx context.Context, node, plan string, env []core.Envelope, actor core.Actor) (core.ApplyBundleResult, error) {
+	b, _ := json.Marshal(propagationRequest{PlanID: plan, Envelopes: env})
+	resp, e := s.clusterTransport.Do(ctx, node, http.MethodPost, "/api/cluster/v1/rpc/propagation/apply", "cluster.propagation", b)
+	if e != nil {
+		return core.ApplyBundleResult{}, e
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return core.ApplyBundleResult{}, fmt.Errorf("remote status %d", resp.StatusCode)
+	}
+	var v core.ApplyBundleResult
+	e = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&v)
+	return v, e
+}
+func (s *Server) handlePropagationPropagate(w http.ResponseWriter, r *http.Request) {
+	var q propagationRequest
+	if !decode(w, r, &q) {
+		return
+	}
+	actor := propActor(r)
+	env, e := s.propagation.Export(r.Context(), q.Kinds, actor, "members")
+	if e != nil {
+		writeJSON(w, 400, map[string]string{"error": e.Error()})
+		return
+	}
+	members, e := s.clusterMembers.List(r.Context())
+	if e != nil {
+		writeJSON(w, 500, map[string]string{"error": e.Error()})
+		return
+	}
+	ms := make([]core.Member, 0, len(members))
+	for _, m := range members {
+		ms = append(ms, core.Member{ID: m.NodeID, Capabilities: m.Capabilities, Enabled: m.State == "active"})
+	}
+	nodes, e := core.Select(q.Selector, ms)
+	if e != nil {
+		writeJSON(w, 400, map[string]string{"error": e.Error()})
+		return
+	}
+	pre := core.PreviewNodes(r.Context(), nodes, env, actor, 4, s.remotePropagationPreview)
+	blocked := false
+	for _, x := range pre {
+		if x.Error != "" || !x.Preview.Applicable {
+			blocked = true
+		}
+	}
+	if q.DryRun || blocked {
+		writeJSON(w, 200, map[string]any{"preview": pre, "applicable": !blocked})
+		return
+	}
+	if q.PlanID == "" {
+		q.PlanID = fmt.Sprintf("plan-%d", time.Now().UnixNano())
+	}
+	results := core.ApplyNodes(r.Context(), nodes, q.PlanID, env, actor, 4, s.remotePropagationApply)
+	s.audit(r, "propagation_fanout", "cluster", "members", q.PlanID)
+	writeJSON(w, 200, map[string]any{"plan_id": q.PlanID, "preview": pre, "results": results})
 }
