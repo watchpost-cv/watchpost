@@ -114,6 +114,9 @@ func TestChangePasswordRevokesOtherSessions(t *testing.T) {
 func TestUserManagementValidation(t *testing.T) {
 	ctx := context.Background()
 	m := New(testDB(t))
+	if _, err := m.Setup(ctx, "admin@example.com", "administrator-password", ""); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := m.CreateUser(ctx, "op@example.com", "1234567", "operator", audit.Entry{Action: "test"}); err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +130,7 @@ func TestUserManagementValidation(t *testing.T) {
 		t.Fatal("invalid role accepted")
 	}
 	items, err := m.ListUsers(ctx)
-	if err != nil || len(items) != 1 {
+	if err != nil || len(items) != 2 {
 		t.Fatalf("users=%d err=%v", len(items), err)
 	}
 }

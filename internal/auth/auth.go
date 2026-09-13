@@ -30,6 +30,7 @@ type Session struct {
 }
 type Manager struct {
 	store    *store.Store
+	accounts *coreauth.Model
 	mu       sync.Mutex
 	failures map[string][]time.Time
 	// bootstrapTokenRequired gates first-admin setup behind a short-lived
@@ -38,7 +39,13 @@ type Manager struct {
 	bootstrapTokenRequired bool
 }
 
-func New(s *store.Store) *Manager { return &Manager{store: s, failures: map[string][]time.Time{}} }
+func New(s *store.Store) *Manager {
+	accounts, err := coreauth.NewModel(accountPersistence{store: s}, watchpostAccountPolicy())
+	if err != nil {
+		panic(err)
+	}
+	return &Manager{store: s, accounts: accounts, failures: map[string][]time.Time{}}
+}
 
 func (m *Manager) SetBootstrapTokenRequired(required bool) { m.bootstrapTokenRequired = required }
 func (m *Manager) BootstrapTokenRequired() bool            { return m.bootstrapTokenRequired }
@@ -114,34 +121,28 @@ func (m *Manager) Setup(ctx context.Context, email, password, token string) (Use
 	if err = tx.Commit(); err != nil {
 		return User{}, err
 	}
+	if err = m.accounts.Reload(); err != nil {
+		return User{}, err
+	}
 	return User{ID: id, Email: email, Role: "admin"}, nil
 }
 
 func (m *Manager) SetupRequired(ctx context.Context) (bool, error) {
-	var count int
-	if err := m.store.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&count); err != nil {
-		return false, err
-	}
-	return count == 0, nil
+	return m.accounts.Empty(), nil
 }
 
 func validRole(role string) bool { return role == "admin" || role == "operator" || role == "viewer" }
 
 func (m *Manager) ListUsers(ctx context.Context) ([]User, error) {
-	rows, err := m.store.DB.QueryContext(ctx, `SELECT id,email,role FROM users ORDER BY id`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
 	items := []User{}
-	for rows.Next() {
-		var u User
-		if err = rows.Scan(&u.ID, &u.Email, &u.Role); err != nil {
+	for _, account := range m.accounts.Accounts() {
+		u, err := userFromAccount(account)
+		if err != nil {
 			return nil, err
 		}
 		items = append(items, u)
 	}
-	return items, rows.Err()
+	return items, nil
 }
 
 func (m *Manager) CreateUser(ctx context.Context, email, password, role string, entry audit.Entry) (User, error) {
@@ -168,6 +169,9 @@ func (m *Manager) CreateUser(ctx context.Context, email, password, role string, 
 		return User{}, err
 	}
 	if err = tx.Commit(); err != nil {
+		return User{}, err
+	}
+	if err = m.accounts.Reload(); err != nil {
 		return User{}, err
 	}
 	return User{ID: id, Email: strings.TrimSpace(email), Role: role}, nil
@@ -210,7 +214,10 @@ func (m *Manager) SetRole(ctx context.Context, id int64, role string, entry audi
 	if err = audit.Insert(ctx, tx, entry); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	return m.accounts.Reload()
 }
 
 // ResetPassword rotates a user's password, revoking every session for that
@@ -247,7 +254,10 @@ func (m *Manager) ResetPassword(ctx context.Context, id int64, newPassword strin
 	if err = audit.Insert(ctx, tx, entry); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	return m.accounts.Reload()
 }
 
 func (m *Manager) RevokeSessions(ctx context.Context, userID int64, entry audit.Entry) (int64, error) {
@@ -307,7 +317,10 @@ func (m *Manager) ChangePassword(ctx context.Context, userID int64, currentPassw
 	if err = audit.Insert(ctx, tx, entry); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	return m.accounts.Reload()
 }
 
 func (m *Manager) Login(ctx context.Context, email, password string, entry audit.Entry) (Session, error) {
@@ -315,12 +328,14 @@ func (m *Manager) Login(ctx context.Context, email, password string, entry audit
 	if !m.allow(key) {
 		return Session{}, errors.New("login temporarily throttled")
 	}
-	var u User
-	var hash []byte
-	err := m.store.DB.QueryRowContext(ctx, `SELECT id,email,role,password_hash FROM users WHERE email=? COLLATE NOCASE`, strings.TrimSpace(email)).Scan(&u.ID, &u.Email, &u.Role, &hash)
-	if err != nil || !verifyPassword(password, hash) {
+	account, _, valid := m.accounts.AuthenticatePassword(email, password)
+	if !valid {
 		m.failed(key)
 		return Session{}, errors.New("invalid credentials")
+	}
+	u, err := userFromAccount(account)
+	if err != nil {
+		return Session{}, err
 	}
 	m.clear(key)
 	token, err := randomToken(32)
