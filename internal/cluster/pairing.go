@@ -272,11 +272,20 @@ func (s *PairingService) Poll(ctx context.Context, id, secret string) (PairingRe
 	if err = tx.Commit(); err != nil {
 		return PairingResult{}, err
 	}
-	var cc []string
-	_ = json.Unmarshal([]byte(caps), &cc)
-	remote := Identity{NodeID: nodeID, InstallationID: installationID, DisplayName: name, PublicEndpoint: endpoint, PublicKey: base64.RawURLEncoding.EncodeToString(public), Capabilities: cc, ProtocolVersion: protocol, ProductVersion: product}
+	host, err := s.identity.Ensure(ctx, "")
+	if err != nil {
+		return PairingResult{}, err
+	}
+	_ = nodeID
+	_ = installationID
+	_ = name
+	_ = endpoint
+	_ = public
+	_ = caps
+	_ = protocol
+	_ = product
 	_ = outbound
-	return PairingResult{State: "approved", Remote: &remote, Credential: credential}, nil
+	return PairingResult{State: "approved", Remote: &host, Credential: credential}, nil
 }
 
 func (s *PairingService) AcceptRemote(ctx context.Context, remote Identity, outboundCredential, inboundCredential string) error {
