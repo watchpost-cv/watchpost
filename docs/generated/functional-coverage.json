@@ -1,0 +1,1462 @@
+{
+  "schema_version": 1,
+  "project": "watchpost",
+  "operations": [
+    {
+      "operation": "watchpost.actions.approve",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/actions/{id}/approve",
+      "cli": "actions approve",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.admin",
+      "input_schema": "watchpost.actions.approve.request.v1",
+      "output_schema": "watchpost.actions.approve.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.actions.create",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/actions",
+      "cli": "actions create",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.operator",
+      "input_schema": "watchpost.actions.create.request.v1",
+      "output_schema": "watchpost.actions.create.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.actions.execute",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/actions/{id}/execute",
+      "cli": "actions execute",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.operator",
+      "input_schema": "watchpost.actions.execute.request.v1",
+      "output_schema": "watchpost.actions.execute.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.actions.list",
+      "website": true,
+      "method": "GET",
+      "route": "/api/v1/actions",
+      "cli": "actions list",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.viewer",
+      "output_schema": "watchpost.actions.list.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.agent-connections.list",
+      "website": true,
+      "method": "GET",
+      "route": "/api/v1/agent-connections",
+      "cli": "agent-connections list",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.viewer",
+      "output_schema": "watchpost.agent-connections.list.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.agent-connections.revoke",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/agent-connections/{id}/revoke",
+      "cli": "agent-connections revoke",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.admin",
+      "input_schema": "watchpost.agent-connections.revoke.request.v1",
+      "output_schema": "watchpost.agent-connections.revoke.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.agent-pairing-requests.approve",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/agent-pairing-requests/{id}/approve",
+      "cli": "agent-pairing-requests approve",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.admin",
+      "input_schema": "watchpost.agent-pairing-requests.approve.request.v1",
+      "output_schema": "watchpost.agent-pairing-requests.approve.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.agent-pairing-requests.list",
+      "website": true,
+      "method": "GET",
+      "route": "/api/v1/agent-pairing-requests",
+      "cli": "agent-pairing-requests list",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.viewer",
+      "output_schema": "watchpost.agent-pairing-requests.list.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.agent-pairing-requests.reject",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/agent-pairing-requests/{id}/reject",
+      "cli": "agent-pairing-requests reject",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.admin",
+      "input_schema": "watchpost.agent-pairing-requests.reject.request.v1",
+      "output_schema": "watchpost.agent-pairing-requests.reject.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.agent.pairing-requests.create",
+      "website": false,
+      "method": "POST",
+      "route": "/api/agent/v2/pairing-requests",
+      "cli_observed": false,
+      "boundary": "service",
+      "input_schema": "watchpost.agent.pairing-requests.create.request.v1",
+      "output_schema": "watchpost.agent.pairing-requests.create.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.agent.pairing-requests.get",
+      "website": false,
+      "method": "GET",
+      "route": "/api/agent/v2/pairing-requests/{id}",
+      "cli_observed": false,
+      "boundary": "service",
+      "output_schema": "watchpost.agent.pairing-requests.get.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.agent.rotate",
+      "website": false,
+      "method": "POST",
+      "route": "/api/agent/v2/rotate",
+      "cli_observed": false,
+      "boundary": "service",
+      "input_schema": "watchpost.agent.rotate.request.v1",
+      "output_schema": "watchpost.agent.rotate.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.agent.unpair",
+      "website": false,
+      "method": "POST",
+      "route": "/api/agent/v2/unpair",
+      "cli_observed": false,
+      "boundary": "service",
+      "input_schema": "watchpost.agent.unpair.request.v1",
+      "output_schema": "watchpost.agent.unpair.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.alerts.acknowledge",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/alerts/{id}/acknowledge",
+      "cli": "alerts acknowledge",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.operator",
+      "input_schema": "watchpost.alerts.acknowledge.request.v1",
+      "output_schema": "watchpost.alerts.acknowledge.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.alerts.list",
+      "website": true,
+      "method": "GET",
+      "route": "/api/v1/alerts",
+      "cli": "alerts list",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.viewer",
+      "output_schema": "watchpost.alerts.list.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.audit.get",
+      "website": true,
+      "method": "GET",
+      "route": "/api/v1/audit",
+      "cli": "audit get",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.admin",
+      "output_schema": "watchpost.audit.get.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.backup-status.get",
+      "website": true,
+      "method": "GET",
+      "route": "/api/v1/backup-status",
+      "cli": "backup-status get",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.viewer",
+      "output_schema": "watchpost.backup-status.get.response.v1",
+      "tests": [
+        "internal/server/server_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.bootstrap.get",
+      "website": true,
+      "method": "GET",
+      "route": "/api/v1/bootstrap",
+      "cli": "auth bootstrap",
+      "cli_observed": true,
+      "boundary": "public",
+      "output_schema": "watchpost.bootstrap.get.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.changes.create",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/changes",
+      "cli": "changes create",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.operator",
+      "input_schema": "watchpost.changes.create.request.v1",
+      "output_schema": "watchpost.changes.create.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.check-schedules.create",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/check-schedules",
+      "cli": "check-schedules create",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.operator",
+      "input_schema": "watchpost.check-schedules.create.request.v1",
+      "output_schema": "watchpost.check-schedules.create.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.check-schedules.list",
+      "website": true,
+      "method": "GET",
+      "route": "/api/v1/check-schedules",
+      "cli": "check-schedules list",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.viewer",
+      "output_schema": "watchpost.check-schedules.list.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.checks.create",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/checks",
+      "cli": "checks create",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.operator",
+      "input_schema": "watchpost.checks.create.request.v1",
+      "output_schema": "watchpost.checks.create.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.cluster.identity.get",
+      "website": true,
+      "method": "GET",
+      "route": "/api/v1/cluster/identity",
+      "cli": "cluster-identity get",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.viewer",
+      "output_schema": "watchpost.cluster.identity.get.response.v1",
+      "tests": [
+        "internal/cluster/cluster_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.cluster.identity.update",
+      "website": true,
+      "method": "PUT",
+      "route": "/api/v1/cluster/identity",
+      "cli": "cluster-identity update",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.admin",
+      "input_schema": "watchpost.cluster.identity.update.request.v1",
+      "output_schema": "watchpost.cluster.identity.update.response.v1",
+      "tests": [
+        "internal/cluster/cluster_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.cluster.invitations.create",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/cluster/invitations",
+      "cli": "cluster-invitations create",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.admin",
+      "input_schema": "watchpost.cluster.invitations.create.request.v1",
+      "output_schema": "watchpost.cluster.invitations.create.response.v1",
+      "tests": [
+        "internal/cluster/cluster_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.cluster.join.create",
+      "website": false,
+      "method": "POST",
+      "route": "/api/cluster/v1/join",
+      "cli_observed": false,
+      "boundary": "service",
+      "input_schema": "watchpost.cluster.join.create.request.v1",
+      "output_schema": "watchpost.cluster.join.create.response.v1",
+      "tests": [
+        "internal/cluster/cluster_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.cluster.join.get",
+      "website": false,
+      "method": "GET",
+      "route": "/api/cluster/v1/join/{id}",
+      "cli_observed": false,
+      "boundary": "service",
+      "output_schema": "watchpost.cluster.join.get.response.v1",
+      "tests": [
+        "internal/cluster/cluster_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.cluster.joins.approve",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/cluster/joins/{id}/approve",
+      "cli": "cluster-joins approve",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.admin",
+      "input_schema": "watchpost.cluster.joins.approve.request.v1",
+      "output_schema": "watchpost.cluster.joins.approve.response.v1",
+      "tests": [
+        "internal/cluster/cluster_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.cluster.joins.list",
+      "website": true,
+      "method": "GET",
+      "route": "/api/v1/cluster/joins",
+      "cli": "cluster-joins list",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.admin",
+      "output_schema": "watchpost.cluster.joins.list.response.v1",
+      "tests": [
+        "internal/cluster/cluster_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.cluster.joins.reject",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/cluster/joins/{id}/reject",
+      "cli": "cluster-joins reject",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.admin",
+      "input_schema": "watchpost.cluster.joins.reject.request.v1",
+      "output_schema": "watchpost.cluster.joins.reject.response.v1",
+      "tests": [
+        "internal/cluster/cluster_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.cluster.members.delete",
+      "website": true,
+      "method": "DELETE",
+      "route": "/api/v1/cluster/members/{id}",
+      "cli": "cluster-members delete",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.admin",
+      "input_schema": "watchpost.cluster.members.delete.request.v1",
+      "output_schema": "watchpost.cluster.members.delete.response.v1",
+      "tests": [
+        "internal/cluster/cluster_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.cluster.members.disable",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/cluster/members/{id}/disable",
+      "cli": "cluster-members disable",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.admin",
+      "input_schema": "watchpost.cluster.members.disable.request.v1",
+      "output_schema": "watchpost.cluster.members.disable.response.v1",
+      "tests": [
+        "internal/cluster/cluster_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.cluster.members.enable",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/cluster/members/{id}/enable",
+      "cli": "cluster-members enable",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.admin",
+      "input_schema": "watchpost.cluster.members.enable.request.v1",
+      "output_schema": "watchpost.cluster.members.enable.response.v1",
+      "tests": [
+        "internal/cluster/cluster_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.cluster.members.list",
+      "website": true,
+      "method": "GET",
+      "route": "/api/v1/cluster/members",
+      "cli": "cluster-members list",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.viewer",
+      "output_schema": "watchpost.cluster.members.list.response.v1",
+      "tests": [
+        "internal/cluster/cluster_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.cluster.members.outbound-credential.update",
+      "website": true,
+      "method": "PUT",
+      "route": "/api/v1/cluster/members/{id}/outbound-credential",
+      "cli": "cluster-members-outbound-credential update",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.admin",
+      "input_schema": "watchpost.cluster.members.outbound-credential.update.request.v1",
+      "output_schema": "watchpost.cluster.members.outbound-credential.update.response.v1",
+      "tests": [
+        "internal/cluster/cluster_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.cluster.members.revoke",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/cluster/members/{id}/revoke",
+      "cli": "cluster-members revoke",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.admin",
+      "input_schema": "watchpost.cluster.members.revoke.request.v1",
+      "output_schema": "watchpost.cluster.members.revoke.response.v1",
+      "tests": [
+        "internal/cluster/cluster_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.cluster.members.rotate",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/cluster/members/{id}/rotate",
+      "cli": "cluster-members rotate",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.admin",
+      "input_schema": "watchpost.cluster.members.rotate.request.v1",
+      "output_schema": "watchpost.cluster.members.rotate.response.v1",
+      "tests": [
+        "internal/cluster/cluster_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.cluster.outbound-joins.collect",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/cluster/outbound-joins/{id}/collect",
+      "cli": "cluster-outbound-joins collect",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.admin",
+      "input_schema": "watchpost.cluster.outbound-joins.collect.request.v1",
+      "output_schema": "watchpost.cluster.outbound-joins.collect.response.v1",
+      "tests": [
+        "internal/cluster/cluster_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.cluster.outbound-joins.create",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/cluster/outbound-joins",
+      "cli": "cluster-outbound-joins create",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.admin",
+      "input_schema": "watchpost.cluster.outbound-joins.create.request.v1",
+      "output_schema": "watchpost.cluster.outbound-joins.create.response.v1",
+      "tests": [
+        "internal/cluster/cluster_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.cluster.outbound-joins.list",
+      "website": true,
+      "method": "GET",
+      "route": "/api/v1/cluster/outbound-joins",
+      "cli": "cluster-outbound-joins list",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.admin",
+      "output_schema": "watchpost.cluster.outbound-joins.list.response.v1",
+      "tests": [
+        "internal/cluster/cluster_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.cluster.rpc.status.get",
+      "website": false,
+      "method": "GET",
+      "route": "/api/cluster/v1/rpc/status",
+      "cli_observed": false,
+      "boundary": "service",
+      "output_schema": "watchpost.cluster.rpc.status.get.response.v1",
+      "tests": [
+        "internal/cluster/cluster_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.cluster.rpc.summary.get",
+      "website": false,
+      "method": "GET",
+      "route": "/api/cluster/v1/rpc/summary",
+      "cli_observed": false,
+      "boundary": "service",
+      "output_schema": "watchpost.cluster.rpc.summary.get.response.v1",
+      "tests": [
+        "internal/cluster/cluster_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.cluster.status.get",
+      "website": true,
+      "method": "GET",
+      "route": "/api/v1/cluster/status",
+      "cli": "cluster-status get",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.viewer",
+      "output_schema": "watchpost.cluster.status.get.response.v1",
+      "tests": [
+        "internal/cluster/cluster_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.cluster.summary.get",
+      "website": true,
+      "method": "GET",
+      "route": "/api/v1/cluster/summary",
+      "cli": "cluster-summary get",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.viewer",
+      "output_schema": "watchpost.cluster.summary.get.response.v1",
+      "tests": [
+        "internal/cluster/cluster_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.collector.observations.create",
+      "website": false,
+      "method": "POST",
+      "route": "/api/collector/v1/observations",
+      "cli_observed": false,
+      "boundary": "service",
+      "input_schema": "watchpost.collector.observations.create.request.v1",
+      "output_schema": "watchpost.collector.observations.create.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.collector.pair",
+      "website": false,
+      "method": "POST",
+      "route": "/api/collector/v1/pair",
+      "cli_observed": false,
+      "boundary": "service",
+      "input_schema": "watchpost.collector.pair.request.v1",
+      "output_schema": "watchpost.collector.pair.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.collectors.list",
+      "website": true,
+      "method": "GET",
+      "route": "/api/v1/collectors",
+      "cli": "collectors list",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.viewer",
+      "output_schema": "watchpost.collectors.list.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.conversations.create",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/conversations",
+      "cli": "conversations create",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.viewer",
+      "input_schema": "watchpost.conversations.create.request.v1",
+      "output_schema": "watchpost.conversations.create.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.conversations.investigate",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/conversations/{id}/investigate",
+      "cli": "conversations investigate",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.viewer",
+      "input_schema": "watchpost.conversations.investigate.request.v1",
+      "output_schema": "watchpost.conversations.investigate.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.device-adapters.list",
+      "website": true,
+      "method": "GET",
+      "route": "/api/v1/device-adapters",
+      "cli": "device-adapters list",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.viewer",
+      "output_schema": "watchpost.device-adapters.list.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.device-presets.list",
+      "website": true,
+      "method": "GET",
+      "route": "/api/v1/device-presets",
+      "cli": "device-presets list",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.viewer",
+      "output_schema": "watchpost.device-presets.list.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.device-profiles.create",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/device-profiles",
+      "cli": "device-profiles create",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.operator",
+      "input_schema": "watchpost.device-profiles.create.request.v1",
+      "output_schema": "watchpost.device-profiles.create.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.device-profiles.delete",
+      "website": true,
+      "method": "DELETE",
+      "route": "/api/v1/device-profiles/{id}",
+      "cli": "device-profiles delete",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.operator",
+      "input_schema": "watchpost.device-profiles.delete.request.v1",
+      "output_schema": "watchpost.device-profiles.delete.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.device-profiles.list",
+      "website": true,
+      "method": "GET",
+      "route": "/api/v1/device-profiles",
+      "cli": "device-profiles list",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.viewer",
+      "output_schema": "watchpost.device-profiles.list.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.devices.snmp.poll",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/devices/snmp/poll",
+      "cli": "devices-snmp poll",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.operator",
+      "input_schema": "watchpost.devices.snmp.poll.request.v1",
+      "output_schema": "watchpost.devices.snmp.poll.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.diagnostics.get",
+      "website": false,
+      "method": "GET",
+      "route": "/api/v1/diagnostics",
+      "cli": "diagnostics get",
+      "cli_observed": true,
+      "boundary": "public",
+      "output_schema": "watchpost.diagnostics.get.response.v1",
+      "tests": [
+        "internal/server/server_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.evidence.get",
+      "website": true,
+      "method": "GET",
+      "route": "/api/v1/evidence/{kind}/{id}",
+      "cli": "evidence get",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.viewer",
+      "output_schema": "watchpost.evidence.get.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.federation.create",
+      "website": false,
+      "method": "POST",
+      "route": "/api/v1/federation/{peer}",
+      "cli_observed": false,
+      "boundary": "service",
+      "input_schema": "watchpost.federation.create.request.v1",
+      "output_schema": "watchpost.federation.create.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.healthz.get",
+      "website": false,
+      "method": "GET",
+      "route": "/healthz",
+      "cli": "healthz get",
+      "cli_observed": true,
+      "boundary": "public",
+      "output_schema": "watchpost.healthz.get.response.v1",
+      "tests": [
+        "internal/server/server_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.host-snapshot.get",
+      "website": true,
+      "method": "GET",
+      "route": "/api/v1/host-snapshot",
+      "cli": "host-snapshot get",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.viewer",
+      "output_schema": "watchpost.host-snapshot.get.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.incidents.assign",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/incidents/{id}/assign",
+      "cli": "incidents assign",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.operator",
+      "input_schema": "watchpost.incidents.assign.request.v1",
+      "output_schema": "watchpost.incidents.assign.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.incidents.create",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/incidents",
+      "cli": "incidents create",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.operator",
+      "input_schema": "watchpost.incidents.create.request.v1",
+      "output_schema": "watchpost.incidents.create.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.incidents.get",
+      "website": true,
+      "method": "GET",
+      "route": "/api/v1/incidents/{id}",
+      "cli": "incidents get",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.viewer",
+      "output_schema": "watchpost.incidents.get.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.incidents.list",
+      "website": true,
+      "method": "GET",
+      "route": "/api/v1/incidents",
+      "cli": "incidents list",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.viewer",
+      "output_schema": "watchpost.incidents.list.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.incidents.notes",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/incidents/{id}/notes",
+      "cli": "incidents notes",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.operator",
+      "input_schema": "watchpost.incidents.notes.request.v1",
+      "output_schema": "watchpost.incidents.notes.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.incidents.transition",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/incidents/{id}/transition",
+      "cli": "incidents transition",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.operator",
+      "input_schema": "watchpost.incidents.transition.request.v1",
+      "output_schema": "watchpost.incidents.transition.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.launcher.config.update",
+      "website": true,
+      "method": "PUT",
+      "route": "/api/launcher/config",
+      "cli": "launcher-config update",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "launcher.configure.all",
+      "input_schema": "watchpost.launcher.config.update.request.v1",
+      "output_schema": "watchpost.launcher.config.update.response.v1",
+      "tests": [
+        "internal/server/server_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.launcher.instances.list",
+      "website": true,
+      "method": "GET",
+      "route": "/api/launcher/instances",
+      "cli": "launcher-instances list",
+      "cli_observed": true,
+      "boundary": "public",
+      "output_schema": "watchpost.launcher.instances.list.response.v1",
+      "tests": [
+        "internal/server/server_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.login.login",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/login",
+      "cli": "auth login",
+      "cli_observed": true,
+      "boundary": "public",
+      "input_schema": "watchpost.login.login.request.v1",
+      "output_schema": "watchpost.login.login.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.logout.logout",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/logout",
+      "cli": "auth logout",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.viewer",
+      "input_schema": "watchpost.logout.logout.request.v1",
+      "output_schema": "watchpost.logout.logout.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.logs.create",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/logs",
+      "cli": "logs create",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.operator",
+      "input_schema": "watchpost.logs.create.request.v1",
+      "output_schema": "watchpost.logs.create.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.me.password",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/me/password",
+      "cli": "me password",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.viewer",
+      "input_schema": "watchpost.me.password.request.v1",
+      "output_schema": "watchpost.me.password.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.notification-routes.create",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/notification-routes",
+      "cli": "notification-routes create",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.admin",
+      "input_schema": "watchpost.notification-routes.create.request.v1",
+      "output_schema": "watchpost.notification-routes.create.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.notification-routes.list",
+      "website": true,
+      "method": "GET",
+      "route": "/api/v1/notification-routes",
+      "cli": "notification-routes list",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.viewer",
+      "output_schema": "watchpost.notification-routes.list.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.observations.create",
+      "website": false,
+      "method": "POST",
+      "route": "/api/v1/observations",
+      "cli_observed": false,
+      "boundary": "service",
+      "input_schema": "watchpost.observations.create.request.v1",
+      "output_schema": "watchpost.observations.create.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.peers.create",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/peers",
+      "cli": "peers create",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.admin",
+      "input_schema": "watchpost.peers.create.request.v1",
+      "output_schema": "watchpost.peers.create.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.peers.list",
+      "website": true,
+      "method": "GET",
+      "route": "/api/v1/peers",
+      "cli": "peers list",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.viewer",
+      "output_schema": "watchpost.peers.list.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.peers.revoke",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/peers/{id}/revoke",
+      "cli": "peers revoke",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.admin",
+      "input_schema": "watchpost.peers.revoke.request.v1",
+      "output_schema": "watchpost.peers.revoke.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.posts.agent-connections.get",
+      "website": true,
+      "method": "GET",
+      "route": "/api/v1/posts/{id}/agent-connections",
+      "cli": "posts-agent-connections get",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.viewer",
+      "output_schema": "watchpost.posts.agent-connections.get.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.posts.collectors.create",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/posts/{id}/collectors",
+      "cli": "posts-collectors create",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.admin",
+      "input_schema": "watchpost.posts.collectors.create.request.v1",
+      "output_schema": "watchpost.posts.collectors.create.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.posts.create",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/posts",
+      "cli": "posts create",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.admin",
+      "input_schema": "watchpost.posts.create.request.v1",
+      "output_schema": "watchpost.posts.create.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.posts.delete",
+      "website": true,
+      "method": "DELETE",
+      "route": "/api/v1/posts/{id}",
+      "cli": "posts delete",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.admin",
+      "input_schema": "watchpost.posts.delete.request.v1",
+      "output_schema": "watchpost.posts.delete.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.posts.dependencies.create",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/posts/{id}/dependencies",
+      "cli": "posts-dependencies create",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.operator",
+      "input_schema": "watchpost.posts.dependencies.create.request.v1",
+      "output_schema": "watchpost.posts.dependencies.create.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.posts.get",
+      "website": true,
+      "method": "GET",
+      "route": "/api/v1/posts/{id}",
+      "cli": "posts get",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.viewer",
+      "output_schema": "watchpost.posts.get.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.posts.history.get",
+      "website": true,
+      "method": "GET",
+      "route": "/api/v1/posts/{id}/history",
+      "cli": "posts-history get",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.viewer",
+      "output_schema": "watchpost.posts.history.get.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.posts.list",
+      "website": true,
+      "method": "GET",
+      "route": "/api/v1/posts",
+      "cli": "posts list",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.viewer",
+      "output_schema": "watchpost.posts.list.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.posts.logs.get",
+      "website": true,
+      "method": "GET",
+      "route": "/api/v1/posts/{id}/logs",
+      "cli": "posts-logs get",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.viewer",
+      "output_schema": "watchpost.posts.logs.get.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.posts.pairing-tokens.create",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/posts/{id}/pairing-tokens",
+      "cli": "posts-pairing-tokens create",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.admin",
+      "input_schema": "watchpost.posts.pairing-tokens.create.request.v1",
+      "output_schema": "watchpost.posts.pairing-tokens.create.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.posts.update",
+      "website": true,
+      "method": "PUT",
+      "route": "/api/v1/posts/{id}",
+      "cli": "posts update",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.operator",
+      "input_schema": "watchpost.posts.update.request.v1",
+      "output_schema": "watchpost.posts.update.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.readyz.get",
+      "website": false,
+      "method": "GET",
+      "route": "/readyz",
+      "cli": "readyz get",
+      "cli_observed": true,
+      "boundary": "public",
+      "output_schema": "watchpost.readyz.get.response.v1",
+      "tests": [
+        "internal/server/server_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.rules.create",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/rules",
+      "cli": "rules create",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.operator",
+      "input_schema": "watchpost.rules.create.request.v1",
+      "output_schema": "watchpost.rules.create.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.rules.list",
+      "website": true,
+      "method": "GET",
+      "route": "/api/v1/rules",
+      "cli": "rules list",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.viewer",
+      "output_schema": "watchpost.rules.list.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.rules.set-enabled",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/rules/{id}/enabled",
+      "cli": "rules set-enabled",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.operator",
+      "input_schema": "watchpost.rules.set-enabled.request.v1",
+      "output_schema": "watchpost.rules.set-enabled.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.setup.setup",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/setup",
+      "cli": "auth setup",
+      "cli_observed": true,
+      "boundary": "public",
+      "input_schema": "watchpost.setup.setup.request.v1",
+      "output_schema": "watchpost.setup.setup.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.storage.get",
+      "website": true,
+      "method": "GET",
+      "route": "/api/v1/storage",
+      "cli": "storage get",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.viewer",
+      "output_schema": "watchpost.storage.get.response.v1",
+      "tests": [
+        "internal/server/server_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.survey.get",
+      "website": true,
+      "method": "GET",
+      "route": "/api/v1/survey",
+      "cli": "survey get",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.viewer",
+      "output_schema": "watchpost.survey.get.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.users.create",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/users",
+      "cli": "users create",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.admin",
+      "input_schema": "watchpost.users.create.request.v1",
+      "output_schema": "watchpost.users.create.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.users.list",
+      "website": true,
+      "method": "GET",
+      "route": "/api/v1/users",
+      "cli": "users list",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.admin",
+      "output_schema": "watchpost.users.list.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.users.reset-password",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/users/{id}/reset-password",
+      "cli": "users reset-password",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.admin",
+      "input_schema": "watchpost.users.reset-password.request.v1",
+      "output_schema": "watchpost.users.reset-password.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.users.revoke-sessions",
+      "website": true,
+      "method": "POST",
+      "route": "/api/v1/users/{id}/revoke-sessions",
+      "cli": "users revoke-sessions",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.admin",
+      "input_schema": "watchpost.users.revoke-sessions.request.v1",
+      "output_schema": "watchpost.users.revoke-sessions.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.users.role.update",
+      "website": true,
+      "method": "PUT",
+      "route": "/api/v1/users/{id}/role",
+      "cli": "users-role update",
+      "cli_observed": true,
+      "boundary": "capability",
+      "permission": "watchpost.role.admin",
+      "input_schema": "watchpost.users.role.update.request.v1",
+      "output_schema": "watchpost.users.role.update.response.v1",
+      "tests": [
+        "internal/server/api_test.go"
+      ]
+    },
+    {
+      "operation": "watchpost.version.get",
+      "website": false,
+      "method": "GET",
+      "route": "/api/v1/version",
+      "cli": "version get",
+      "cli_observed": true,
+      "boundary": "public",
+      "output_schema": "watchpost.version.get.response.v1",
+      "tests": [
+        "internal/server/server_test.go"
+      ]
+    }
+  ]
+}

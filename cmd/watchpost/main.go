@@ -13,10 +13,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gantry-tools/gantry-core/automation"
 	"github.com/watchpost-cv/watchpost/internal/backup"
 	"github.com/watchpost-cv/watchpost/internal/config"
 	"github.com/watchpost-cv/watchpost/internal/devices"
 	"github.com/watchpost-cv/watchpost/internal/hostcollector"
+	"github.com/watchpost-cv/watchpost/internal/operations"
 	"github.com/watchpost-cv/watchpost/internal/server"
 	"github.com/watchpost-cv/watchpost/internal/service"
 	"github.com/watchpost-cv/watchpost/internal/store"
@@ -36,10 +38,22 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "service" {
 		os.Exit(runService(os.Args[2:]))
 	}
+	if len(os.Args) > 1 && functionalCLIResource(os.Args[1]) {
+		os.Exit(automation.Run(os.Args[1:], operations.Contracts, automation.Options{Program: "watchpost", DefaultURL: "http://127.0.0.1:7334", CookieName: "watchpost_session", CSRFHeader: "X-Watchpost-CSRF", CSRFFields: []string{"csrf_token"}, SessionInfoPath: "/api/v1/bootstrap"}))
+	}
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "watchpost:", err)
 		os.Exit(1)
 	}
+}
+
+func functionalCLIResource(resource string) bool {
+	for _, c := range operations.Contracts {
+		if c.CLI != nil && c.CLI.Implemented && c.CLI.Resource == resource {
+			return true
+		}
+	}
+	return false
 }
 
 func run(args []string) error {
