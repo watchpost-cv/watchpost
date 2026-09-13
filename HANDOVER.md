@@ -1,5 +1,9 @@
 # Watchpost engineering handover
 
+## Shared operation campaign
+
+Watchpost follows `gantry-core/docs/CLI_API_CLUSTER_ROADMAP.md`. Phase 1 CP8 adopts the v0.1.1 contract for status, action creation and agent-connection revocation. Its CLI names are reserved, not marked implemented. Phase 2 begins here; Phase 5 later certifies full CLI coverage.
+
 ## Frontend asset ownership
 
 Nift tracks and builds HTML pages only. CSS, JavaScript, images, icons and other
