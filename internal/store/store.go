@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const SchemaVersion = 15
+const SchemaVersion = 16
 
 type Store struct{ DB *sql.DB }
 
@@ -282,6 +282,15 @@ func (s *Store) migrate(ctx context.Context) error {
 			return err
 		}
 		version = 15
+	}
+	if version == 15 {
+		if _, err = tx.ExecContext(ctx, `CREATE TABLE cluster_identity(singleton INTEGER PRIMARY KEY CHECK(singleton=1),node_id TEXT NOT NULL UNIQUE,installation_id TEXT NOT NULL UNIQUE,display_name TEXT NOT NULL DEFAULT '',public_endpoint TEXT NOT NULL DEFAULT '',public_key BLOB NOT NULL,private_key BLOB NOT NULL,capabilities_json TEXT NOT NULL DEFAULT '[]',protocol_version INTEGER NOT NULL,product_version TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,paired_at TEXT,last_seen_at TEXT,revoked_at TEXT)`); err != nil {
+			return fmt.Errorf("migration 16: %w", err)
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations(version,applied_at) VALUES(16,?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return err
+		}
+		version = 16
 	}
 	return tx.Commit()
 }
