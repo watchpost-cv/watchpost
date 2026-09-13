@@ -10,7 +10,6 @@ import (
 	"time"
 
 	core "github.com/gantry-tools/gantry-core/propagation"
-	product "github.com/watchpost-cv/watchpost/internal/propagation"
 )
 
 type propagationRequest struct {
@@ -37,6 +36,7 @@ func (s *Server) registerPropagationAPI(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/cluster/propagation/profiles", s.require("viewer", s.handlePropagationProfiles))
 	mux.HandleFunc("PUT /api/v1/cluster/propagation/profiles/{id}", s.require("admin", s.handlePropagationProfilePut))
 	mux.HandleFunc("DELETE /api/v1/cluster/propagation/profiles/{id}", s.require("admin", s.handlePropagationProfileDelete))
+	mux.HandleFunc("POST /api/v1/cluster/propagation/profiles/run-due", s.require("admin", s.handlePropagationRunDue))
 	mux.HandleFunc("POST /api/cluster/v1/rpc/propagation/preview", s.handlePropagationRPCPreview)
 	mux.HandleFunc("POST /api/cluster/v1/rpc/propagation/apply", s.handlePropagationRPCApply)
 }
@@ -114,7 +114,7 @@ func (s *Server) handlePropagationProfilePut(w http.ResponseWriter, r *http.Requ
 }
 func (s *Server) handlePropagationProfileDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if e := product.NewStateStore(s.store).DeleteProfile(r.Context(), id); e != nil {
+	if e := s.propagation.DeleteProfile(r.Context(), id); e != nil {
 		writeJSON(w, 500, map[string]string{"error": e.Error()})
 		return
 	}
@@ -231,4 +231,65 @@ func (s *Server) handlePropagationPropagate(w http.ResponseWriter, r *http.Reque
 	results := core.ApplyNodes(r.Context(), nodes, q.PlanID, env, actor, 4, s.remotePropagationApply)
 	s.audit(r, "propagation_fanout", "cluster", "members", q.PlanID)
 	writeJSON(w, 200, map[string]any{"plan_id": q.PlanID, "preview": pre, "results": results})
+}
+
+func (s *Server) propagationProfileExecutor(ctx context.Context) (core.ProfileExecutor, error) {
+	members, err := s.clusterMembers.List(ctx)
+	if err != nil {
+		return core.ProfileExecutor{}, err
+	}
+	ms := make([]core.Member, 0, len(members))
+	for _, m := range members {
+		ms = append(ms, core.Member{ID: m.NodeID, Capabilities: m.Capabilities, Enabled: m.State == "active"})
+	}
+	return core.ProfileExecutor{
+		Members: ms,
+		Export:  s.propagation.Export,
+		Preview: s.remotePropagationPreview,
+		Apply:   s.remotePropagationApply,
+	}, nil
+}
+
+func (s *Server) runPropagationProfile(ctx context.Context, p core.Profile) (core.ProfileRunResult, error) {
+	exec, err := s.propagationProfileExecutor(ctx)
+	if err != nil {
+		return core.ProfileRunResult{ProfileID: p.ID}, err
+	}
+	return core.ExecuteProfile(ctx, p, core.Actor{Kind: "system", ID: "scheduler"}, exec)
+}
+
+func (s *Server) runDuePropagationProfiles(ctx context.Context) ([]core.ProfileRunResult, error) {
+	return s.propagation.RunDueProfiles(ctx, s.runPropagationProfile)
+}
+
+func (s *Server) propagationLoop(ctx context.Context) {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			results, err := s.runDuePropagationProfiles(ctx)
+			if err != nil {
+				s.logger.Warn("propagation reconciliation failed", "error", err)
+				continue
+			}
+			for _, result := range results {
+				if result.Error != "" || result.Failed > 0 {
+					s.logger.Warn("propagation profile run incomplete", "profile", result.ProfileID, "action", result.Action, "drift", result.Drift, "failed", result.Failed, "error", result.Error)
+				}
+			}
+		}
+	}
+}
+
+func (s *Server) handlePropagationRunDue(w http.ResponseWriter, r *http.Request) {
+	results, err := s.runDuePropagationProfiles(r.Context())
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	s.audit(r, "propagation_profiles_run", "cluster", "members", fmt.Sprintf("profiles=%d", len(results)))
+	writeJSON(w, 200, results)
 }

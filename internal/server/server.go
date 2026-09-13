@@ -325,6 +325,7 @@ func (s *Server) Run(ctx context.Context) error {
 	go s.snmpLoop(ctx)
 	go s.retentionLoop(ctx)
 	go s.backupLoop(ctx)
+	go s.propagationLoop(ctx)
 	errCh := make(chan error, 1)
 	go func() {
 		s.logger.Info("watchpost listening", "address", s.cfg.Listen, "version", s.version)

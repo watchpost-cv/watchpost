@@ -19,7 +19,7 @@ func (s *StateStore) SaveProfile(ctx context.Context, p core.Profile) error {
 	selector, _ := json.Marshal(p.Selector)
 	kinds, _ := json.Marshal(p.Kinds)
 	now := s.now().UTC().Format(time.RFC3339Nano)
-	_, err := s.db.ExecContext(ctx, `INSERT INTO propagation_profiles(id,name,selector_json,kinds_json,mode,schedule,maintenance_window,enabled,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,selector_json=excluded.selector_json,kinds_json=excluded.kinds_json,mode=excluded.mode,schedule=excluded.schedule,maintenance_window=excluded.maintenance_window,enabled=excluded.enabled,updated_at=excluded.updated_at`, p.ID, p.Name, string(selector), string(kinds), string(p.Mode), p.Schedule, p.MaintenanceWindow, boolInt(p.Enabled), now, now)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO propagation_profiles(id,name,selector_json,kinds_json,mode,schedule,maintenance_window,enabled,last_run_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,selector_json=excluded.selector_json,kinds_json=excluded.kinds_json,mode=excluded.mode,schedule=excluded.schedule,maintenance_window=excluded.maintenance_window,enabled=excluded.enabled,last_run_at=excluded.last_run_at,updated_at=excluded.updated_at`, p.ID, p.Name, string(selector), string(kinds), string(p.Mode), p.Schedule, p.MaintenanceWindow, boolInt(p.Enabled), nullableTime(p.LastRunAt), now, now)
 	return err
 }
 func (s *StateStore) DeleteProfile(ctx context.Context, id string) error {
@@ -27,7 +27,7 @@ func (s *StateStore) DeleteProfile(ctx context.Context, id string) error {
 	return err
 }
 func (s *StateStore) ListProfiles(ctx context.Context) ([]core.Profile, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,selector_json,kinds_json,mode,schedule,maintenance_window,enabled FROM propagation_profiles ORDER BY name,id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,selector_json,kinds_json,mode,schedule,maintenance_window,enabled,last_run_at FROM propagation_profiles ORDER BY name,id`)
 	if err != nil {
 		return nil, err
 	}
@@ -37,13 +37,19 @@ func (s *StateStore) ListProfiles(ctx context.Context) ([]core.Profile, error) {
 		var p core.Profile
 		var sel, kinds, mode string
 		var enabled int
-		if err := rows.Scan(&p.ID, &p.Name, &sel, &kinds, &mode, &p.Schedule, &p.MaintenanceWindow, &enabled); err != nil {
+		var last sql.NullString
+		if err := rows.Scan(&p.ID, &p.Name, &sel, &kinds, &mode, &p.Schedule, &p.MaintenanceWindow, &enabled, &last); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(sel), &p.Selector)
 		_ = json.Unmarshal([]byte(kinds), &p.Kinds)
 		p.Mode = core.ReconcileMode(mode)
 		p.Enabled = enabled != 0
+		if last.Valid {
+			if parsed, err := time.Parse(time.RFC3339Nano, last.String); err == nil {
+				p.LastRunAt = &parsed
+			}
+		}
 		out = append(out, p)
 	}
 	return out, rows.Err()
@@ -69,4 +75,11 @@ func (s *StateStore) ListHistory(ctx context.Context, limit int) ([]core.History
 		out = append(out, h)
 	}
 	return out, rows.Err()
+}
+
+func nullableTime(t *time.Time) any {
+	if t == nil {
+		return nil
+	}
+	return t.UTC().Format(time.RFC3339Nano)
 }
