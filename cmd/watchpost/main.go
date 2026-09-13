@@ -24,6 +24,12 @@ import (
 
 var version = "0.1.1"
 
+// installServiceOptions is a seam for command-level tests. Keeping the
+// operating-system mutation behind it lets argument-validation tests verify
+// the install dispatch without touching accounts, files, or systemd when the
+// test runner happens to be root.
+var installServiceOptions = service.InstallOptions
+
 func main() {
 	// Service-management commands must remain usable even when the application
 	// configuration is unhealthy, so dispatch before any runtime config load.
@@ -378,7 +384,7 @@ func runService(args []string) int {
 			fmt.Fprintln(os.Stderr, "watchpost service install:", err)
 			return 2
 		}
-		if err := service.InstallOptions(service.Executable(), opts); err != nil {
+		if err := installServiceOptions(service.Executable(), opts); err != nil {
 			fmt.Fprintln(os.Stderr, "watchpost service install:", err)
 			return 1
 		}

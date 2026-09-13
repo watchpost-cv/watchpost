@@ -1,11 +1,26 @@
 package main
 
 import (
+	"errors"
 	"io"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/watchpost-cv/watchpost/internal/service"
 )
+
+func stubServiceInstall(t *testing.T, wantLegacy bool) {
+	t.Helper()
+	old := installServiceOptions
+	installServiceOptions = func(_ string, opts service.Options) error {
+		if gotLegacy := opts.Listen != ""; gotLegacy != wantLegacy {
+			t.Fatalf("legacy listen = %v, want %v", gotLegacy, wantLegacy)
+		}
+		return errors.New("service install requires root")
+	}
+	t.Cleanup(func() { installServiceOptions = old })
+}
 
 // captureStderr runs f while capturing os.Stderr, returning the captured text
 // and f's result.
@@ -50,6 +65,7 @@ func TestRunServiceInstallUsageErrors(t *testing.T) {
 }
 
 func TestRunServiceInstallValidFlagsReachRootCheck(t *testing.T) {
+	stubServiceInstall(t, false)
 	out, code := captureStderr(t, func() int { return runService([]string{"install", "--host", "127.0.0.1", "--port", "7404"}) })
 	// The canonical example passes listener validation and proceeds to the
 	// operational root requirement.
@@ -77,6 +93,7 @@ func TestServiceLifecycleSuccessGrammar(t *testing.T) {
 }
 
 func TestRunServiceLegacyInstallFlagsReachRootCheck(t *testing.T) {
+	stubServiceInstall(t, true)
 	out, code := captureStderr(t, func() int { return runService([]string{"install", "--listen", "127.0.0.1:8080"}) })
 	if code != 1 {
 		t.Fatalf("exit = %d want 1 (requires root); output: %s", code, out)
