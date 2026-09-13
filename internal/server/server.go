@@ -23,6 +23,7 @@ import (
 	"github.com/watchpost-cv/watchpost/internal/auth"
 	"github.com/watchpost-cv/watchpost/internal/backup"
 	"github.com/watchpost-cv/watchpost/internal/checks"
+	"github.com/watchpost-cv/watchpost/internal/cluster"
 	"github.com/watchpost-cv/watchpost/internal/collectorhealth"
 	"github.com/watchpost-cv/watchpost/internal/config"
 	"github.com/watchpost-cv/watchpost/internal/contract"
@@ -44,32 +45,37 @@ import (
 )
 
 type Server struct {
-	cfg          config.Config
-	version      string
-	logger       *slog.Logger
-	store        *store.Store
-	auth         *auth.Manager
-	posts        *posts.Store
-	ingest       *ingest.Service
-	history      *history.Store
-	rules        *rules.Engine
-	notify       *notify.Service
-	incidents    *incidents.Store
-	evidence     *evidence.Store
-	agent        *agent.Service
-	agentPairing *agentpairing.Service
-	actions      *actions.Registry
-	fleet        *fleet.Service
-	pairing      *pairing.Service
-	health       *collectorhealth.Store
-	devices      *devices.ProfileStore
-	checks       *checks.ScheduleStore
-	retention    *retention.Store
-	storage      *storage.Checker
-	checkPolicy  *checks.Policy
-	checkLimiter *checkRateLimiter
-	secrets      *secrets.Box
-	backupStatus backupStatus
+	cfg                config.Config
+	version            string
+	logger             *slog.Logger
+	store              *store.Store
+	auth               *auth.Manager
+	posts              *posts.Store
+	ingest             *ingest.Service
+	history            *history.Store
+	rules              *rules.Engine
+	notify             *notify.Service
+	incidents          *incidents.Store
+	evidence           *evidence.Store
+	agent              *agent.Service
+	agentPairing       *agentpairing.Service
+	actions            *actions.Registry
+	fleet              *fleet.Service
+	pairing            *pairing.Service
+	health             *collectorhealth.Store
+	devices            *devices.ProfileStore
+	checks             *checks.ScheduleStore
+	retention          *retention.Store
+	storage            *storage.Checker
+	checkPolicy        *checks.Policy
+	checkLimiter       *checkRateLimiter
+	clusterIdentity    *cluster.IdentityService
+	clusterPairing     *cluster.PairingService
+	clusterMembers     *cluster.MemberService
+	clusterTransport   *cluster.Transport
+	clusterDistributed *cluster.DistributedService
+	secrets            *secrets.Box
+	backupStatus       backupStatus
 }
 
 type backupStatus struct {
@@ -120,6 +126,12 @@ func New(cfg config.Config, version string, logger *slog.Logger, database *store
 	server.checkPolicy = checkPolicy
 	server.checks = checks.NewScheduleStoreWithPolicy(database, checkPolicy)
 	server.checkLimiter = &checkRateLimiter{}
+	server.clusterIdentity = cluster.NewIdentityService(database)
+	server.clusterPairing = cluster.NewPairingService(database, server.clusterIdentity)
+	server.clusterMembers = cluster.NewMemberService(database)
+	server.clusterTransport = cluster.NewTransport(database, server.clusterIdentity)
+	server.clusterDistributed = cluster.NewDistributedService(database, server.clusterIdentity, server.clusterMembers, server.clusterTransport)
+	_, _ = server.clusterIdentity.Ensure(context.Background(), version)
 	server.secrets = secrets.New(cfg.MasterKey)
 	server.devices = devices.NewProfileStoreWithKey(database, server.secrets)
 	server.ingest.SetIngestRate(cfg.IngestRate)
@@ -238,6 +250,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/storage", s.require("viewer", s.handleStorage))
 	mux.HandleFunc("GET /api/v1/backup-status", s.require("viewer", s.handleBackupStatus))
 	s.registerAPI(mux)
+	s.registerClusterAPI(mux)
 	assets, err := fs.Sub(web.Files, "dist")
 	if err != nil {
 		panic(err)

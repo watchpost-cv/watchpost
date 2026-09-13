@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -9,6 +10,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -327,4 +331,136 @@ func randomSecret(n int) (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+type OutboundJoin struct {
+	ID        string    `json:"id"`
+	RemoteURL string    `json:"remote_url"`
+	RequestID string    `json:"request_id"`
+	State     string    `json:"state"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	LastError string    `json:"last_error,omitempty"`
+}
+
+func (s *PairingService) BeginOutbound(ctx context.Context, remoteURL, invitationToken string, client *http.Client) (OutboundJoin, error) {
+	remoteURL = strings.TrimRight(strings.TrimSpace(remoteURL), "/")
+	parsed, err := url.Parse(remoteURL)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+		return OutboundJoin{}, errors.New("remote Watchpost URL must use https")
+	}
+	local, err := s.identity.Ensure(ctx, "")
+	if err != nil {
+		return OutboundJoin{}, err
+	}
+	if local.PublicEndpoint == "" {
+		return OutboundJoin{}, errors.New("configure this Watchpost public HTTPS endpoint before joining a cluster")
+	}
+	localCredential, err := randomSecret(32)
+	if err != nil {
+		return OutboundJoin{}, err
+	}
+	payload, _ := json.Marshal(JoinSubmission{InvitationToken: invitationToken, Identity: local, CredentialForHost: localCredential})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, remoteURL+"/api/cluster/v1/join", bytes.NewReader(payload))
+	if err != nil {
+		return OutboundJoin{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if client == nil {
+		client = &http.Client{Timeout: 15 * time.Second}
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return OutboundJoin{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		return OutboundJoin{}, fmt.Errorf("remote join returned %s", resp.Status)
+	}
+	var receipt JoinReceipt
+	if err = json.NewDecoder(io.LimitReader(resp.Body, MaxRequestBytes)).Decode(&receipt); err != nil {
+		return OutboundJoin{}, err
+	}
+	id, err := randomID("out_", 12)
+	if err != nil {
+		return OutboundJoin{}, err
+	}
+	now := s.now().UTC()
+	_, err = s.s.DB.ExecContext(ctx, `INSERT INTO cluster_outbound_joins(id,remote_url,request_id,request_secret,local_inbound_credential,state,created_at,updated_at) VALUES(?,?,?,?,?,'pending',?,?)`, id, remoteURL, receipt.RequestID, receipt.RequestSecret, localCredential, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
+	if err != nil {
+		return OutboundJoin{}, err
+	}
+	return OutboundJoin{ID: id, RemoteURL: remoteURL, RequestID: receipt.RequestID, State: "pending", CreatedAt: now, UpdatedAt: now}, nil
+}
+
+func (s *PairingService) ListOutbound(ctx context.Context) ([]OutboundJoin, error) {
+	rows, err := s.s.DB.QueryContext(ctx, `SELECT id,remote_url,request_id,state,created_at,updated_at,last_error FROM cluster_outbound_joins ORDER BY created_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []OutboundJoin
+	for rows.Next() {
+		var v OutboundJoin
+		var c, u string
+		if err = rows.Scan(&v.ID, &v.RemoteURL, &v.RequestID, &v.State, &c, &u, &v.LastError); err != nil {
+			return nil, err
+		}
+		v.CreatedAt, _ = time.Parse(time.RFC3339Nano, c)
+		v.UpdatedAt, _ = time.Parse(time.RFC3339Nano, u)
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+func (s *PairingService) CollectOutbound(ctx context.Context, id string, client *http.Client) (OutboundJoin, error) {
+	var v OutboundJoin
+	var requestSecret, localCredential, created, updated string
+	err := s.s.DB.QueryRowContext(ctx, `SELECT id,remote_url,request_id,request_secret,local_inbound_credential,state,created_at,updated_at,last_error FROM cluster_outbound_joins WHERE id=?`, id).Scan(&v.ID, &v.RemoteURL, &v.RequestID, &requestSecret, &localCredential, &v.State, &created, &updated, &v.LastError)
+	if err != nil {
+		return v, errors.New("outbound join unavailable")
+	}
+	v.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+	v.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
+	if v.State != "pending" {
+		return v, nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, v.RemoteURL+"/api/cluster/v1/join/"+url.PathEscape(v.RequestID), nil)
+	if err != nil {
+		return v, err
+	}
+	req.Header.Set("Authorization", "Bearer "+requestSecret)
+	if client == nil {
+		client = &http.Client{Timeout: 15 * time.Second}
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return v, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return v, fmt.Errorf("remote pairing status returned %s", resp.Status)
+	}
+	var result PairingResult
+	if err = json.NewDecoder(io.LimitReader(resp.Body, MaxRequestBytes)).Decode(&result); err != nil {
+		return v, err
+	}
+	now := s.now().UTC()
+	switch result.State {
+	case "approved":
+		if result.Remote == nil || result.Credential == "" {
+			return v, errors.New("remote approval was incomplete")
+		}
+		if err = s.AcceptRemote(ctx, *result.Remote, result.Credential, localCredential); err != nil {
+			return v, err
+		}
+		v.State = "approved"
+	case "rejected", "expired":
+		v.State = result.State
+	default:
+		v.State = "pending"
+	}
+	v.UpdatedAt = now
+	_, err = s.s.DB.ExecContext(ctx, `UPDATE cluster_outbound_joins SET state=?,updated_at=?,last_error='' WHERE id=?`, v.State, now.Format(time.RFC3339Nano), id)
+	return v, err
 }

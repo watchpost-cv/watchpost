@@ -52,6 +52,9 @@ func run(args []string) error {
 	if len(args) > 0 && args[0] == "setup" {
 		return runSetup(args[1:])
 	}
+	if len(args) > 0 && args[0] == "cluster" {
+		return runCluster(args[1:])
+	}
 	if len(args) > 0 && args[0] == "collector" && len(args) == 2 && args[1] == "sample" {
 		// Host diagnostics from the canonical sampler; the bundled collector
 		// lifecycle was removed (see R17). The separate watchpost-agent is the
