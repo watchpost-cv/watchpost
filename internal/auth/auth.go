@@ -2,7 +2,6 @@ package auth
 
 import (
 	"context"
-	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
@@ -15,9 +14,9 @@ import (
 
 	"github.com/watchpost-cv/watchpost/internal/audit"
 	"github.com/watchpost-cv/watchpost/internal/store"
+	coreauth "github.com/gantry-tools/gantry-core/auth"
 )
 
-const passwordRounds = 210_000
 const MinimumPasswordLength = 7
 
 type User struct {
@@ -382,36 +381,11 @@ func (m *Manager) Logout(ctx context.Context, token string, entry audit.Entry) e
 }
 
 func passwordHash(password string) ([]byte, error) {
-	salt := make([]byte, 16)
-	if _, err := rand.Read(salt); err != nil {
-		return nil, err
-	}
-	derived := derive([]byte(password), salt, passwordRounds)
-	return append(salt, derived...), nil
+	encoded, err := coreauth.HashPassword(password)
+	return []byte(encoded), err
 }
 func verifyPassword(password string, encoded []byte) bool {
-	if len(encoded) != 48 {
-		return false
-	}
-	return hmac.Equal(encoded[16:], derive([]byte(password), encoded[:16], passwordRounds))
-}
-func derive(password, salt []byte, rounds int) []byte {
-	block := make([]byte, len(salt)+4)
-	copy(block, salt)
-	block[len(salt)+3] = 1
-	mac := hmac.New(sha256.New, password)
-	mac.Write(block)
-	u := mac.Sum(nil)
-	out := append([]byte{}, u...)
-	for i := 1; i < rounds; i++ {
-		mac = hmac.New(sha256.New, password)
-		mac.Write(u)
-		u = mac.Sum(nil)
-		for j := range out {
-			out[j] ^= u[j]
-		}
-	}
-	return out
+	return coreauth.VerifyPassword(string(encoded), password)
 }
 func randomToken(n int) (string, error) {
 	b := make([]byte, n)
