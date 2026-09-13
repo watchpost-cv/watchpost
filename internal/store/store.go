@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const SchemaVersion = 17
+const SchemaVersion = 18
 
 type Store struct{ DB *sql.DB }
 
@@ -307,6 +307,21 @@ func (s *Store) migrate(ctx context.Context) error {
 			return err
 		}
 		version = 17
+	}
+	if version == 17 {
+		statements := []string{
+			`CREATE TABLE cluster_nonces(node_id TEXT NOT NULL REFERENCES cluster_members(node_id) ON DELETE CASCADE,nonce TEXT NOT NULL,seen_at TEXT NOT NULL,PRIMARY KEY(node_id,nonce))`,
+			`CREATE INDEX cluster_nonces_seen ON cluster_nonces(seen_at)`,
+		}
+		for _, statement := range statements {
+			if _, err = tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("migration 18: %w", err)
+			}
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations(version,applied_at) VALUES(18,?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return err
+		}
+		version = 18
 	}
 	return tx.Commit()
 }
