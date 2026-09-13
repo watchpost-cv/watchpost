@@ -82,7 +82,7 @@ func runCluster(args []string) error {
 			return err
 		}
 		return printValue(map[string]any{"identity": v, "fingerprint": v.Fingerprint()})
-	case "configure":
+	case "configure", "init":
 		if len(pos) != 0 {
 			return errors.New("configure accepts no positional arguments")
 		}

@@ -118,7 +118,11 @@ func (s *MemberService) SetEnabled(ctx context.Context, nodeID string, enabled b
 	if n != 1 {
 		return errors.New("cluster member unavailable")
 	}
-	entry.Action = "cluster_member_" + state
+	if enabled {
+		entry.Action = corecluster.AuditMemberEnable
+	} else {
+		entry.Action = corecluster.AuditMemberDisable
+	}
 	entry.ObjectType = "cluster_member"
 	entry.ObjectID = nodeID
 	entry.Detail = state
@@ -142,7 +146,7 @@ func (s *MemberService) Revoke(ctx context.Context, nodeID string, entry audit.E
 	if n != 1 {
 		return errors.New("cluster member unavailable")
 	}
-	entry.Action = "cluster_member_revoke"
+	entry.Action = corecluster.AuditMemberRevoke
 	entry.ObjectType = "cluster_member"
 	entry.ObjectID = nodeID
 	entry.Detail = "revoked"
@@ -167,7 +171,7 @@ func (s *MemberService) Remove(ctx context.Context, nodeID string, entry audit.E
 	if _, err = tx.ExecContext(ctx, `DELETE FROM cluster_members WHERE node_id=?`, nodeID); err != nil {
 		return err
 	}
-	entry.Action = "cluster_member_remove"
+	entry.Action = corecluster.AuditMemberRemove
 	entry.ObjectType = "cluster_member"
 	entry.ObjectID = nodeID
 	entry.Detail = "removed"
@@ -196,7 +200,7 @@ func (s *MemberService) RotateInbound(ctx context.Context, nodeID string, entry 
 	if n != 1 {
 		return "", errors.New("active cluster member unavailable")
 	}
-	entry.Action = "cluster_credential_rotate_start"
+	entry.Action = corecluster.AuditMemberRotate
 	entry.ObjectType = "cluster_member"
 	entry.ObjectID = nodeID
 	entry.Detail = "overlap credential issued"

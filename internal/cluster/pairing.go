@@ -55,7 +55,7 @@ func (s *PairingService) Invite(ctx context.Context, entry audit.Entry) (Invitat
 	if _, err = tx.ExecContext(ctx, `INSERT INTO cluster_invitations(id,token_hash,state,expires_at,created_at) VALUES(?,?,'pending',?,?)`, id, hash, expires.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 		return Invitation{}, err
 	}
-	entry.Action = "cluster_invite_create"
+	entry.Action = corecluster.AuditInviteCreate
 	entry.ObjectType = "cluster_invitation"
 	entry.ObjectID = id
 	entry.Detail = "short-lived single-use invitation created"
@@ -178,7 +178,11 @@ func (s *PairingService) Decide(ctx context.Context, id string, approve bool, en
 	if _, err = tx.ExecContext(ctx, `UPDATE cluster_join_requests SET state=?,decided_at=? WHERE id=? AND state='pending'`, state, now.Format(time.RFC3339Nano), id); err != nil {
 		return "", err
 	}
-	entry.Action = "cluster_join_" + state
+	if approve {
+		entry.Action = corecluster.AuditJoinApprove
+	} else {
+		entry.Action = corecluster.AuditJoinReject
+	}
 	entry.ObjectType = "cluster_join_request"
 	entry.ObjectID = id
 	entry.Detail = "node=" + nodeID
