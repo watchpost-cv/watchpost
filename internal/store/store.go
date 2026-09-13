@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const SchemaVersion = 19
+const SchemaVersion = 20
 
 type Store struct{ DB *sql.DB }
 
@@ -331,6 +331,22 @@ func (s *Store) migrate(ctx context.Context) error {
 			return err
 		}
 		version = 19
+	}
+	if version == 19 {
+		statements := []string{
+			`CREATE TABLE propagation_profiles(id TEXT PRIMARY KEY,name TEXT NOT NULL,selector_json TEXT NOT NULL,kinds_json TEXT NOT NULL,mode TEXT NOT NULL,schedule TEXT NOT NULL DEFAULT '',maintenance_window TEXT NOT NULL DEFAULT '',enabled INTEGER NOT NULL DEFAULT 1,last_run_at TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)`,
+			`CREATE TABLE propagation_history(id TEXT PRIMARY KEY,plan_id TEXT NOT NULL,actor TEXT NOT NULL,target TEXT NOT NULL,status TEXT NOT NULL,applied INTEGER NOT NULL DEFAULT 0,failed INTEGER NOT NULL DEFAULT 0,rolled_back INTEGER NOT NULL DEFAULT 0,detail TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL)`,
+			`CREATE INDEX propagation_history_created ON propagation_history(created_at DESC)`,
+		}
+		for _, statement := range statements {
+			if _, err = tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("migration 20: %w", err)
+			}
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations(version,applied_at) VALUES(20,?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return err
+		}
+		version = 20
 	}
 	return tx.Commit()
 }
