@@ -101,6 +101,8 @@ func TestPhase1DatabaseUpgradesWithoutLosingAgentPairing(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, statement := range []string{
+		`DROP TABLE propagation_history`,
+		`DROP TABLE propagation_profiles`,
 		`DROP TABLE cluster_outbound_joins`,
 		`DROP TABLE cluster_nonces`,
 		`DROP TABLE cluster_members`,
