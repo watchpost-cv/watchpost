@@ -20,7 +20,7 @@ an evidence-grounded agent designed in from the beginning.
 WP00 through WP18 establish a development candidate with SQLite persistence,
 authentication, posts, collection, checks, history, alerts, notifications,
 incidents, logs, device profiles, read-only investigation, typed actions, and
-federation contracts. Watchpost has a **v0.1.0 stable public-preview release**,
+federation contracts. Watchpost has a **v0.1.1 stable public-preview release**,
 but it remains development-stage / public-preview software and this is not a
 production-readiness claim. See `docs/final-checkpoints.md` for the evidence
 boundary and the post-release validation/backlog that remains.

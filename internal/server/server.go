@@ -246,7 +246,9 @@ func (s *Server) Handler() http.Handler {
 	for _, asset := range []string{"/app.css", "/app-extra.css", "/auth-parity.css", "/script.js", "/select-chevron.svg", "/favicon.svg", "/launcher.css", "/launcher.js", "/manage.css", "/manage.js"} {
 		mux.Handle(asset, static)
 	}
-	mux.HandleFunc("/app", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/app/", http.StatusPermanentRedirect) })
+	mux.HandleFunc("/app", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/app/", http.StatusPermanentRedirect)
+	})
 	mux.Handle("/app/", http.StripPrefix("/app", static))
 	mux.HandleFunc("/manage", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/manage/", http.StatusPermanentRedirect)
