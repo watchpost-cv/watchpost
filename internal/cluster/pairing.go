@@ -111,6 +111,10 @@ func (s *PairingService) SubmitJoin(ctx context.Context, in JoinSubmission) (Joi
 	if in.InvitationToken == "" || in.Identity.NodeID == "" || in.Identity.InstallationID == "" || in.Identity.PublicKey == "" || in.Identity.PublicEndpoint == "" || !strings.HasPrefix(in.Identity.PublicEndpoint, "https://") || len(in.CredentialForHost) < 32 {
 		return JoinReceipt{}, errors.New("invalid cluster join request")
 	}
+	local, err := s.identity.Ensure(ctx, "")
+	if err != nil {
+		return JoinReceipt{}, err
+	}
 	tokenHash := sha256.Sum256([]byte(in.InvitationToken))
 	now := s.now().UTC()
 	tx, err := s.s.DB.BeginTx(ctx, nil)
@@ -126,10 +130,6 @@ func (s *PairingService) SubmitJoin(ctx context.Context, in JoinSubmission) (Joi
 	if state != "pending" || !expires.After(now) {
 		_, _ = tx.ExecContext(ctx, `UPDATE cluster_invitations SET state='expired' WHERE id=? AND state='pending'`, inviteID)
 		return JoinReceipt{}, errors.New("invitation expired or consumed")
-	}
-	local, err := s.identity.Ensure(ctx, "")
-	if err != nil {
-		return JoinReceipt{}, err
 	}
 	if local.NodeID == in.Identity.NodeID || local.InstallationID == in.Identity.InstallationID {
 		return JoinReceipt{}, errors.New("cannot pair node with itself")
@@ -228,6 +228,10 @@ func (s *PairingService) Decide(ctx context.Context, id string, approve bool, en
 }
 
 func (s *PairingService) Poll(ctx context.Context, id, secret string) (PairingResult, error) {
+	host, err := s.identity.Ensure(ctx, "")
+	if err != nil {
+		return PairingResult{}, err
+	}
 	hash := sha256.Sum256([]byte(secret))
 	now := s.now().UTC()
 	tx, err := s.s.DB.BeginTx(ctx, nil)
@@ -274,10 +278,6 @@ func (s *PairingService) Poll(ctx context.Context, id, secret string) (PairingRe
 		return PairingResult{}, err
 	}
 	if err = tx.Commit(); err != nil {
-		return PairingResult{}, err
-	}
-	host, err := s.identity.Ensure(ctx, "")
-	if err != nil {
 		return PairingResult{}, err
 	}
 	_ = nodeID
