@@ -197,3 +197,7 @@ deployment or production-readiness claim.
 
 Public website source lives in the sibling `watchpost-cv.github.io`
 repository.
+
+## Headless administration
+
+Use `watchpost setup --email-file FILE --password-file FILE`, `watchpost config show --json`, and the existing backup, restore, rekey and service commands in scripts. Stop the service before `watchpost reset --auth` or `watchpost reset --all`; confirm with `WATCHPOST AUTH` or `WATCHPOST ALL`. Both modes retain timestamped backups.
