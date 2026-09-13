@@ -128,12 +128,18 @@ func (m *Manager) Setup(ctx context.Context, email, password, token string) (Use
 }
 
 func (m *Manager) SetupRequired(ctx context.Context) (bool, error) {
+	if err := m.accounts.Reload(); err != nil {
+		return false, err
+	}
 	return m.accounts.Empty(), nil
 }
 
 func validRole(role string) bool { return role == "admin" || role == "operator" || role == "viewer" }
 
 func (m *Manager) ListUsers(ctx context.Context) ([]User, error) {
+	if err := m.accounts.Reload(); err != nil {
+		return nil, err
+	}
 	items := []User{}
 	for _, account := range m.accounts.Accounts() {
 		u, err := userFromAccount(account)
@@ -324,6 +330,9 @@ func (m *Manager) ChangePassword(ctx context.Context, userID int64, currentPassw
 }
 
 func (m *Manager) Login(ctx context.Context, email, password string, entry audit.Entry) (Session, error) {
+	if err := m.accounts.Reload(); err != nil {
+		return Session{}, err
+	}
 	key := strings.ToLower(strings.TrimSpace(email))
 	if !m.allow(key) {
 		return Session{}, errors.New("login temporarily throttled")

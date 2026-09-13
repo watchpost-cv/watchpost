@@ -712,7 +712,11 @@ func TestFinalAdministratorCannotBeDemoted(t *testing.T) {
 		t.Fatalf("second admin set: %s", users.Body.String())
 	}
 	// With two administrators, the acting admin may demote the other.
-	if got := apiRequest(t, handler, "PUT", fmt.Sprintf("/api/v1/users/%d/role", listing.Users[1].ID), map[string]string{"role": "viewer"}, adminCookie, session.CSRF); got.Code != 204 {
+	secondAdminID := listing.Users[0].ID
+	if listing.Users[0].Email == "admin@example.com" {
+		secondAdminID = listing.Users[1].ID
+	}
+	if got := apiRequest(t, handler, "PUT", fmt.Sprintf("/api/v1/users/%d/role", secondAdminID), map[string]string{"role": "viewer"}, adminCookie, session.CSRF); got.Code != 204 {
 		t.Fatalf("demote second admin=%d want 204", got.Code)
 	}
 }
