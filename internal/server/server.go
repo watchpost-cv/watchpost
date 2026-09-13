@@ -243,11 +243,23 @@ func (s *Server) Handler() http.Handler {
 		panic(err)
 	}
 	static := http.FileServer(http.FS(assets))
-	for _, asset := range []string{"/app.css", "/app-extra.css", "/auth-parity.css", "/script.js", "/select-chevron.svg", "/favicon.svg", "/launcher.css", "/launcher.js"} {
+	for _, asset := range []string{"/app.css", "/app-extra.css", "/auth-parity.css", "/script.js", "/select-chevron.svg", "/favicon.svg", "/launcher.css", "/launcher.js", "/manage.css", "/manage.js"} {
 		mux.Handle(asset, static)
 	}
 	mux.HandleFunc("/app", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/app/", http.StatusPermanentRedirect) })
 	mux.Handle("/app/", http.StripPrefix("/app", static))
+	mux.HandleFunc("/manage", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/manage/", http.StatusPermanentRedirect)
+	})
+	mux.HandleFunc("/manage/", s.require("admin", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/manage/" {
+			http.NotFound(w, r)
+			return
+		}
+		clone := r.Clone(r.Context())
+		clone.URL.Path = "/manage.html"
+		static.ServeHTTP(w, clone)
+	}))
 	mux.Handle("/", s.launcherRoot(static))
 	return securityHeaders(mux)
 }

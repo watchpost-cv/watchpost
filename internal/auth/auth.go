@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
+	coreauth "github.com/gantry-tools/gantry-core/auth"
 	"github.com/watchpost-cv/watchpost/internal/audit"
 	"github.com/watchpost-cv/watchpost/internal/store"
-	coreauth "github.com/gantry-tools/gantry-core/auth"
 )
 
 const MinimumPasswordLength = 7
