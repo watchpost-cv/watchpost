@@ -229,6 +229,18 @@ func (s *Server) handlePropagationPropagate(w http.ResponseWriter, r *http.Reque
 		q.PlanID = fmt.Sprintf("plan-%d", time.Now().UnixNano())
 	}
 	results := core.ApplyNodes(r.Context(), nodes, q.PlanID, env, actor, 4, s.remotePropagationApply)
+	partial := false
+	for _, result := range results {
+		if result.Error != "" {
+			partial = true
+			break
+		}
+	}
+	if partial {
+		s.audit(r, "propagation_fanout_failed", "cluster", "members", q.PlanID)
+		writeJSON(w, http.StatusMultiStatus, map[string]any{"plan_id": q.PlanID, "preview": pre, "results": results, "partial": true})
+		return
+	}
 	s.audit(r, "propagation_fanout", "cluster", "members", q.PlanID)
 	writeJSON(w, 200, map[string]any{"plan_id": q.PlanID, "preview": pre, "results": results})
 }
@@ -278,6 +290,15 @@ func (s *Server) propagationLoop(ctx context.Context) {
 			for _, result := range results {
 				if result.Error != "" || result.Failed > 0 {
 					s.logger.Warn("propagation profile run incomplete", "profile", result.ProfileID, "action", result.Action, "drift", result.Drift, "failed", result.Failed, "error", result.Error)
+					continue
+				}
+				// Notify-only and approval-required modes must surface detected
+				// drift; a silent no-op hides pending divergence from operators.
+				if result.Drift > 0 {
+					s.auditActor(ctx, 0, "propagation_reconcile_drift", "propagation_profile", result.ProfileID, fmt.Sprintf("action=%s drift=%d", result.Action, result.Drift))
+					s.logger.Info("propagation profile detected drift", "profile", result.ProfileID, "action", result.Action, "drift", result.Drift)
+				} else if result.Action == "apply" && result.Applied > 0 {
+					s.logger.Info("propagation profile reconciled", "profile", result.ProfileID, "applied", result.Applied)
 				}
 			}
 		}
