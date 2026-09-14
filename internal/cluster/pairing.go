@@ -117,8 +117,13 @@ func (s *PairingService) SubmitJoin(ctx context.Context, in JoinSubmission) (Joi
 	if err != nil {
 		return JoinReceipt{}, err
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE cluster_invitations SET state='consumed',consumed_at=? WHERE id=? AND state='pending'`, now.Format(time.RFC3339Nano), inviteID); err != nil {
+	inviteResult, err := tx.ExecContext(ctx, `UPDATE cluster_invitations SET state='consumed',consumed_at=? WHERE id=? AND state='pending'`, now.Format(time.RFC3339Nano), inviteID)
+	if err != nil {
 		return JoinReceipt{}, err
+	}
+	inviteRows, _ := inviteResult.RowsAffected()
+	if inviteRows != 1 {
+		return JoinReceipt{}, errors.New("invitation was already consumed")
 	}
 	if err = tx.Commit(); err != nil {
 		return JoinReceipt{}, err
@@ -222,11 +227,35 @@ func (s *PairingService) Poll(ctx context.Context, id, secret string) (PairingRe
 	if state == "rejected" {
 		return PairingResult{State: "rejected"}, nil
 	}
+	if consumed.Valid {
+		// Recoverable handoff: the credential was consumed but may never have
+		// reached the joiner (response lost or AcceptRemote failed after the
+		// host committed). If the joiner has not yet authenticated with any
+		// credential, rotate the inbound hash to a fresh secret and return it
+		// again. A member that has already authenticated keeps the consumed
+		// result sealed so a duplicate poll cannot rotate a live credential.
+		var used int
+		if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM cluster_nonces WHERE node_id=?`, nodeID).Scan(&used); err != nil {
+			return PairingResult{}, err
+		}
+		if used == 0 {
+			credential, err = corecluster.NewSecret(32)
+			if err != nil {
+				return PairingResult{}, err
+			}
+			newHash := corecluster.SecretDigest(credential)
+			if _, err = tx.ExecContext(ctx, `UPDATE cluster_members SET inbound_secret_hash=? WHERE node_id=?`, newHash, nodeID); err != nil {
+				return PairingResult{}, err
+			}
+			if err = tx.Commit(); err != nil {
+				return PairingResult{}, err
+			}
+			return PairingResult{State: "approved", Remote: &host, Credential: credential}, nil
+		}
+		return PairingResult{}, errors.New("pairing result already collected")
+	}
 	if state != "approved" {
 		return PairingResult{State: state}, nil
-	}
-	if consumed.Valid {
-		return PairingResult{}, errors.New("pairing result already collected")
 	}
 	var outbound string
 	if err = tx.QueryRowContext(ctx, `SELECT inbound_secret_hash FROM cluster_members WHERE node_id=?`, nodeID).Scan(new([]byte)); err != nil {

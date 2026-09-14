@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -168,6 +169,100 @@ func TestStandaloneAndPartialFanout(t *testing.T) {
 	report = distributed.ClusterStatus(ctx, "test", "all")
 	if !report.Partial || len(report.Results) != 2 {
 		t.Fatalf("partition must be visible as per-node partial failure: %#v", report)
+	}
+}
+
+func TestConsumedPairingResultCanBeReissuedAfterLostResponse(t *testing.T) {
+	ctx := context.Background()
+	db := newClusterTestStore(t)
+	identity := NewIdentityService(db)
+	pairing := NewPairingService(db, identity)
+	now := time.Date(2026, 9, 14, 0, 0, 0, 0, time.UTC)
+	pairing.now = func() time.Time { return now }
+	if _, err := identity.Update(ctx, "host", "https://host.test", nil, "test"); err != nil {
+		t.Fatal(err)
+	}
+	invite, err := pairing.Invite(ctx, audit.Entry{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joiner := remoteIdentity("wp_joiner", "wi_joiner", "https://joiner.test")
+	in := JoinSubmission{InvitationToken: invite.Token, Identity: joiner, CredentialForHost: "01234567890123456789012345678901"}
+	receipt, err := pairing.SubmitJoin(ctx, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pairing.Decide(ctx, receipt.RequestID, true, audit.Entry{}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := pairing.Poll(ctx, receipt.RequestID, receipt.RequestSecret)
+	if err != nil {
+		t.Fatalf("first poll failed: %v", err)
+	}
+	if first.Credential == "" {
+		t.Fatal("first poll returned no credential")
+	}
+	// Simulate the response being lost before the joiner persisted it: poll
+	// again. The member has never authenticated, so a fresh credential is
+	// reissued instead of permanently bricking the pairing.
+	second, err := pairing.Poll(ctx, receipt.RequestID, receipt.RequestSecret)
+	if err != nil {
+		t.Fatalf("re-poll after lost response must recover, got: %v", err)
+	}
+	if second.Credential == "" || second.Credential == first.Credential {
+		t.Fatalf("expected a fresh reissued credential, got %q vs %q", second.Credential, first.Credential)
+	}
+	// Once the joiner actually uses a credential, the consumed result stays sealed.
+	transport := NewTransport(db, identity)
+	if _, err = transport.Authenticate(signedIncomingRequest(t, second.Credential, "wp_joiner", "nonce-used", "req-used", "/api/cluster/v1/rpc/status", "cluster.health"), "cluster.health"); err != nil {
+		t.Fatalf("reissued credential not accepted: %v", err)
+	}
+	if _, err = pairing.Poll(ctx, receipt.RequestID, receipt.RequestSecret); err == nil {
+		t.Fatal("consumed pairing result reissued after the credential was used")
+	}
+}
+
+func TestInvitationConcurrentSubmissionMintsSingleJoinRequest(t *testing.T) {
+	ctx := context.Background()
+	db := newClusterTestStore(t)
+	identity := NewIdentityService(db)
+	pairing := NewPairingService(db, identity)
+	now := time.Date(2026, 9, 14, 0, 0, 0, 0, time.UTC)
+	pairing.now = func() time.Time { return now }
+	if _, err := identity.Update(ctx, "host", "https://host.test", nil, "test"); err != nil {
+		t.Fatal(err)
+	}
+	invite, err := pairing.Invite(ctx, audit.Entry{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joiner := remoteIdentity("wp_joiner", "wi_joiner", "https://joiner.test")
+	in := JoinSubmission{InvitationToken: invite.Token, Identity: joiner, CredentialForHost: "01234567890123456789012345678901"}
+	const attempts = 8
+	results := make(chan error, attempts)
+	var wg sync.WaitGroup
+	for i := 0; i < attempts; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := pairing.SubmitJoin(ctx, in)
+			results <- err
+		}()
+	}
+	wg.Wait()
+	close(results)
+	successes := 0
+	for err := range results {
+		if err == nil {
+			successes++
+		}
+	}
+	if successes != 1 {
+		t.Fatalf("single-use invitation produced %d join requests", successes)
+	}
+	var pending int
+	if err := db.DB.QueryRow(`SELECT COUNT(*) FROM cluster_join_requests`).Scan(&pending); err != nil || pending != 1 {
+		t.Fatalf("cluster_join_requests=%d err=%v", pending, err)
 	}
 }
 
