@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/watchpost-cv/watchpost/internal/audit"
+	"github.com/watchpost-cv/watchpost/internal/ingest"
 	"github.com/watchpost-cv/watchpost/internal/posts"
 	"github.com/watchpost-cv/watchpost/internal/store"
 )
@@ -93,4 +94,52 @@ func TestRepairClearsStaleObservationSequenceSpace(t *testing.T) {
 		t.Fatalf("last_sequence=%d err=%v", last, err)
 	}
 	_ = enrollment
+}
+
+// TestRepairThenIngestResumesAtSequenceOne proves that after a re-pair the
+// collector's sequence space restarts cleanly: a fresh batch at sequence 1 is
+// accepted instead of colliding with the pre-re-pair rows.
+func TestRepairThenIngestResumesAtSequenceOne(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	_, _ = posts.New(db).Create(ctx, posts.Post{ID: "host-a", Name: "A", Kind: "host"}, audit.Entry{Action: "test"})
+	pairing := New(db)
+	ingestion := ingest.New(db)
+	now := time.Now().UTC()
+	token, err := pairing.Create(ctx, "host-a", 5*time.Minute, audit.Entry{Action: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	enrollment, err := pairing.Consume(ctx, token.Token, "agent-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	value := 50.0
+	first := []ingest.Observation{{Version: 1, PostID: "host-a", CollectorID: "agent-a", ObservedAt: now, Sequence: 1, Signal: "cpu.percent", Value: &value, Unit: "percent", Quality: "good", Labels: map[string]string{}}}
+	if _, err = ingestion.AcceptBatch(ctx, enrollment.Secret, first, now, "batch-before"); err != nil {
+		t.Fatalf("pre-repair ingest failed: %v", err)
+	}
+
+	rotation, err := pairing.Create(ctx, "host-a", 5*time.Minute, audit.Entry{Action: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rotated, err := pairing.Consume(ctx, rotation.Token, "agent-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A fresh sequence-1 batch must be accepted after the re-pair: the old rows
+	// share the same (collector_id,sequence,signal) key space and were purged.
+	restart := []ingest.Observation{{Version: 1, PostID: "host-a", CollectorID: "agent-a", ObservedAt: now, Sequence: 1, Signal: "cpu.percent", Value: &value, Unit: "percent", Quality: "good", Labels: map[string]string{}}}
+	if _, err = ingestion.AcceptBatch(ctx, rotated.Secret, restart, now, "batch-after"); err != nil {
+		t.Fatalf("post-repair ingest collided with stale rows: %v", err)
+	}
+	var count int
+	if err = db.DB.QueryRow(`SELECT COUNT(*) FROM observations WHERE collector_id='agent-a'`).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("observations=%d err=%v, want exactly the single fresh row", count, err)
+	}
 }
