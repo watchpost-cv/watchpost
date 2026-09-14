@@ -238,11 +238,11 @@ func decode(w http.ResponseWriter, r *http.Request, value any) bool {
 	return true
 }
 func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
-	var in struct{ Email, Password, Token string }
+	var in struct{ Username, Email, Password, Token string }
 	if !decode(w, r, &in) {
 		return
 	}
-	user, err := s.auth.Setup(r.Context(), in.Email, in.Password, in.Token)
+	user, err := s.auth.Setup(r.Context(), in.Username, in.Email, in.Password, in.Token)
 	if err != nil {
 		writeJSON(w, 409, map[string]string{"error": err.Error()})
 		return
@@ -869,12 +869,12 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Email, Password, Role string
+		Username, Email, Password, Role string
 	}
 	if !decode(w, r, &in) {
 		return
 	}
-	user, err := s.auth.CreateUser(r.Context(), in.Email, in.Password, in.Role, audit.Entry{ActorID: currentUser(r).ID, Action: "user_create", ObjectType: "user", ObjectID: "", Detail: in.Email + " role=" + in.Role})
+	user, err := s.auth.CreateUser(r.Context(), in.Username, in.Email, in.Password, in.Role, audit.Entry{ActorID: currentUser(r).ID, Action: "user_create", ObjectType: "user", ObjectID: "", Detail: in.Email + " role=" + in.Role})
 	if err != nil {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return

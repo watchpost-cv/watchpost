@@ -52,7 +52,7 @@ function showAuth(mode, email = "", tokenRequired = false) {
       const input = $("input", field);
       if (input) input.required = tokenRequired;
     }
-    $("#setup-email").focus();
+    $("#setup-username").focus();
   } else { $("#login-email").value = email; (email ? $("#login-password") : $("#login-email")).focus(); }
 }
 

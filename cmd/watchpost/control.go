@@ -27,9 +27,10 @@ func runSetup(args []string) error {
 	data := fs.String("data-dir", "", "data directory")
 	email := fs.String("email", "", "administrator email")
 	emailFile := fs.String("email-file", "", "file containing administrator email")
+	username := fs.String("username", "", "administrator username")
 	passwordFile := fs.String("password-file", "", "file containing password")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || *passwordFile == "" {
-		return fmt.Errorf("usage: watchpost setup (--email ADDRESS|--email-file FILE) --password-file FILE [--data-dir DIR]")
+		return fmt.Errorf("usage: watchpost setup (--email ADDRESS|--email-file FILE) --username NAME --password-file FILE [--data-dir DIR]")
 	}
 	if *emailFile != "" {
 		raw, err := os.ReadFile(*emailFile)
@@ -54,7 +55,7 @@ func runSetup(args []string) error {
 		return err
 	}
 	defer db.Close()
-	_, err = auth.New(db).Setup(context.Background(), *email, strings.TrimRight(string(password), "\r\n"), "")
+	_, err = auth.New(db).Setup(context.Background(), *username, *email, strings.TrimRight(string(password), "\r\n"), "")
 	if err == nil {
 		fmt.Println("Watchpost administrator configured.")
 	}

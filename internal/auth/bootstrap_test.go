@@ -28,20 +28,20 @@ func TestBootstrapTokenRequiredForSetup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = m.Setup(ctx, "admin@example.com", "correct-horse-battery", ""); err == nil {
+	if _, err = m.Setup(ctx, "admin", "admin@example.com", "correct-horse-battery", ""); err == nil {
 		t.Fatal("setup without bootstrap token succeeded")
 	}
-	if _, err = m.Setup(ctx, "admin@example.com", "correct-horse-battery", "wrong-token"); err == nil {
+	if _, err = m.Setup(ctx, "admin", "admin@example.com", "correct-horse-battery", "wrong-token"); err == nil {
 		t.Fatal("setup with wrong bootstrap token succeeded")
 	}
-	user, err := m.Setup(ctx, "admin@example.com", "correct-horse-battery", token)
+	user, err := m.Setup(ctx, "admin", "admin@example.com", "correct-horse-battery", token)
 	if err != nil {
 		t.Fatalf("setup with token failed: %v", err)
 	}
 	if user.Role != "admin" {
 		t.Fatalf("role=%s want admin", user.Role)
 	}
-	if _, err = m.Setup(ctx, "other@example.com", "correct-horse-battery", token); err == nil {
+	if _, err = m.Setup(ctx, "other", "other@example.com", "correct-horse-battery", token); err == nil {
 		t.Fatal("second setup succeeded")
 	}
 }
@@ -54,7 +54,7 @@ func TestBootstrapTokenExpiryAndHashing(t *testing.T) {
 	if err := m.SetBootstrapToken(ctx, "my-operator-token", time.Now().UTC().Add(-time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Setup(ctx, "admin@example.com", "correct-horse-battery", "my-operator-token"); err == nil {
+	if _, err := m.Setup(ctx, "admin", "admin@example.com", "correct-horse-battery", "my-operator-token"); err == nil {
 		t.Fatal("setup with expired token succeeded")
 	}
 	// Only a SHA-256 hash of the token is persisted, never the raw value.
@@ -82,7 +82,7 @@ func TestLoopbackSetupRemainsDirect(t *testing.T) {
 	if m.BootstrapTokenRequired() {
 		t.Fatal("loopback setup unexpectedly requires a token")
 	}
-	if _, err := m.Setup(ctx, "admin@example.com", "correct-horse-battery", ""); err != nil {
+	if _, err := m.Setup(ctx, "admin", "admin@example.com", "correct-horse-battery", ""); err != nil {
 		t.Fatalf("direct loopback setup failed: %v", err)
 	}
 }

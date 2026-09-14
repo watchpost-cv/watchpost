@@ -44,7 +44,7 @@ func apiRequest(t *testing.T, handler http.Handler, method, path string, body an
 }
 func TestSetupLoginCSRFAndPostAPI(t *testing.T) {
 	handler := testServer(t).Handler()
-	setup := apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
+	setup := apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"username": "admin", "email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
 	if setup.Code != 201 {
 		t.Fatalf("setup: %d %s", setup.Code, setup.Body.String())
 	}
@@ -77,7 +77,7 @@ func TestSetupLoginCSRFAndPostAPI(t *testing.T) {
 
 func TestPostEditAndConfirmedDeleteAPI(t *testing.T) {
 	handler := testServer(t).Handler()
-	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"email": "admin@example.com", "password": "1234567"}, nil, "")
+	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"username": "admin", "email": "admin@example.com", "password": "1234567"}, nil, "")
 	login := apiRequest(t, handler, "POST", "/api/v1/login", map[string]string{"email": "admin@example.com", "password": "1234567"}, nil, "")
 	cookie := login.Result().Cookies()[0]
 	var session struct {
@@ -120,7 +120,7 @@ func TestStorageFullRejectsIngestion(t *testing.T) {
 	defer database.Close()
 	cfg := config.Config{Listen: "127.0.0.1:0", DataDir: dataDir, Retention: config.DefaultRetention(), Storage: config.Storage{MaxDBBytes: 1, MinFreeBytes: 0, MinFreePercent: 0}}
 	handler := New(cfg, "test", slog.New(slog.NewTextHandler(io.Discard, nil)), database).Handler()
-	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"email": "admin@example.com", "password": "1234567"}, nil, "")
+	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"username": "admin", "email": "admin@example.com", "password": "1234567"}, nil, "")
 	login := apiRequest(t, handler, "POST", "/api/v1/login", map[string]string{"email": "admin@example.com", "password": "1234567"}, nil, "")
 	cookie := login.Result().Cookies()[0]
 	var session struct {
@@ -164,7 +164,7 @@ func TestStorageFullRejectsIngestion(t *testing.T) {
 
 func TestStorageEndpointReportsFootprint(t *testing.T) {
 	handler := testServer(t).Handler()
-	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"email": "admin@example.com", "password": "1234567"}, nil, "")
+	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"username": "admin", "email": "admin@example.com", "password": "1234567"}, nil, "")
 	login := apiRequest(t, handler, "POST", "/api/v1/login", map[string]string{"email": "admin@example.com", "password": "1234567"}, nil, "")
 	cookie := login.Result().Cookies()[0]
 	storage := apiRequest(t, handler, "GET", "/api/v1/storage", nil, cookie, "")
@@ -218,7 +218,7 @@ func TestFailedCentralCheckFiresRuleAlert(t *testing.T) {
 
 func TestAuditRecordsStateChanges(t *testing.T) {
 	handler := testServer(t).Handler()
-	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
+	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"username": "admin", "email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
 	login := apiRequest(t, handler, "POST", "/api/v1/login", map[string]string{"email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
 	cookie := login.Result().Cookies()[0]
 	var session struct {
@@ -262,14 +262,14 @@ func TestExternalSetupRequiresBootstrapToken(t *testing.T) {
 	if !bytes.Contains(bootstrap.Body.Bytes(), []byte(`"setup_token_required":true`)) {
 		t.Fatalf("bootstrap must report token required: %s", bootstrap.Body.String())
 	}
-	if got := apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"email": "admin@example.com", "password": "1234567"}, nil, ""); got.Code != 409 {
+	if got := apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"username": "admin", "email": "admin@example.com", "password": "1234567"}, nil, ""); got.Code != 409 {
 		t.Fatalf("setup without token: %d", got.Code)
 	}
 	token, err := s.auth.GenerateBootstrapToken(t.Context(), time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"email": "admin@example.com", "password": "1234567", "token": token}, nil, ""); got.Code != 201 {
+	if got := apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"username": "admin", "email": "admin@example.com", "password": "1234567", "token": token}, nil, ""); got.Code != 201 {
 		t.Fatalf("setup with token: %d %s", got.Code, got.Body.String())
 	}
 	// The token is never disclosed through bootstrap or diagnostics.
@@ -284,17 +284,17 @@ func TestExternalSetupRequiresBootstrapToken(t *testing.T) {
 
 func TestRBACRoleEnforcement(t *testing.T) {
 	handler := testServer(t).Handler()
-	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
+	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"username": "admin", "email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
 	adminLogin := apiRequest(t, handler, "POST", "/api/v1/login", map[string]string{"email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
 	adminCookie := adminLogin.Result().Cookies()[0]
 	var adminSession struct {
 		CSRF string `json:"csrf_token"`
 	}
 	_ = json.Unmarshal(adminLogin.Body.Bytes(), &adminSession)
-	if got := apiRequest(t, handler, "POST", "/api/v1/users", map[string]string{"email": "op@example.com", "password": "1234567", "role": "operator"}, adminCookie, adminSession.CSRF); got.Code != 201 {
+	if got := apiRequest(t, handler, "POST", "/api/v1/users", map[string]string{"username": "op", "email": "op@example.com", "password": "1234567", "role": "operator"}, adminCookie, adminSession.CSRF); got.Code != 201 {
 		t.Fatalf("create operator: %d", got.Code)
 	}
-	if got := apiRequest(t, handler, "POST", "/api/v1/users", map[string]string{"email": "view@example.com", "password": "1234567", "role": "viewer"}, adminCookie, adminSession.CSRF); got.Code != 201 {
+	if got := apiRequest(t, handler, "POST", "/api/v1/users", map[string]string{"username": "view", "email": "view@example.com", "password": "1234567", "role": "viewer"}, adminCookie, adminSession.CSRF); got.Code != 201 {
 		t.Fatalf("create viewer: %d", got.Code)
 	}
 	viewerLogin := apiRequest(t, handler, "POST", "/api/v1/login", map[string]string{"email": "view@example.com", "password": "1234567"}, nil, "")
@@ -321,7 +321,7 @@ func TestRBACRoleEnforcement(t *testing.T) {
 		CSRF string `json:"csrf_token"`
 	}
 	_ = json.Unmarshal(operatorLogin.Body.Bytes(), &operatorSession)
-	if got := apiRequest(t, handler, "POST", "/api/v1/users", map[string]string{"email": "x@example.com", "password": "1234567", "role": "viewer"}, operatorCookie, operatorSession.CSRF); got.Code != 403 {
+	if got := apiRequest(t, handler, "POST", "/api/v1/users", map[string]string{"username": "x", "email": "x@example.com", "password": "1234567", "role": "viewer"}, operatorCookie, operatorSession.CSRF); got.Code != 403 {
 		t.Fatalf("operator create user: %d", got.Code)
 	}
 	if got := apiRequest(t, handler, "POST", "/api/v1/posts", map[string]any{"id": "host-b", "name": "B", "kind": "host"}, operatorCookie, operatorSession.CSRF); got.Code != 403 {
@@ -338,7 +338,7 @@ func TestCheckPolicyDeniesScheduledAndOnDemandTargets(t *testing.T) {
 	defer database.Close()
 	cfg := config.Config{Listen: "127.0.0.1:0", DataDir: dataDir, Retention: config.DefaultRetention(), Storage: config.DefaultStorage(), CheckPolicy: config.CheckPolicy{DenyCIDRs: []string{"127.0.0.0/8"}}}
 	handler := New(cfg, "test", slog.New(slog.NewTextHandler(io.Discard, nil)), database).Handler()
-	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"email": "admin@example.com", "password": "1234567"}, nil, "")
+	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"username": "admin", "email": "admin@example.com", "password": "1234567"}, nil, "")
 	login := apiRequest(t, handler, "POST", "/api/v1/login", map[string]string{"email": "admin@example.com", "password": "1234567"}, nil, "")
 	cookie := login.Result().Cookies()[0]
 	var session struct {
@@ -369,7 +369,7 @@ func TestSecureCookieBehindHTTPSProxy(t *testing.T) {
 	s := testServer(t)
 	s.cfg.SecureCookies = true
 	handler := s.Handler()
-	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"email": "admin@example.com", "password": "1234567"}, nil, "")
+	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"username": "admin", "email": "admin@example.com", "password": "1234567"}, nil, "")
 	login := apiRequest(t, handler, "POST", "/api/v1/login", map[string]string{"email": "admin@example.com", "password": "1234567"}, nil, "")
 	cookies := login.Result().Cookies()
 	if len(cookies) != 1 || !cookies[0].Secure {
@@ -393,7 +393,7 @@ func TestDensePostInventory(t *testing.T) {
 
 func TestObservationDrivesRuleAndAlertAPI(t *testing.T) {
 	handler := testServer(t).Handler()
-	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
+	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"username": "admin", "email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
 	login := apiRequest(t, handler, "POST", "/api/v1/login", map[string]string{"email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
 	cookie := login.Result().Cookies()[0]
 	var session struct {
@@ -441,7 +441,7 @@ func TestRerunCheckActionExecutesRealCheck(t *testing.T) {
 		t.Fatal(err)
 	}
 	params := map[string]any{"check": "web-http"}
-	user, _ := s.auth.Setup(t.Context(), "admin@example.com", "1234567", "")
+	user, _ := s.auth.Setup(t.Context(), "admin", "admin@example.com", "1234567", "")
 	id, err := s.actions.Request(t.Context(), "rerun_check", "web", params, user.ID, "idem-1", audit.Entry{Action: "test"})
 	if err != nil {
 		t.Fatal(err)
@@ -480,7 +480,7 @@ func TestRerunCheckActionRefusesForeignPost(t *testing.T) {
 	if err := s.checks.Save(t.Context(), checks.Schedule{ID: "web-http", PostID: "web", Kind: "http", Address: "http://127.0.0.1:1", IntervalSeconds: 60}, audit.Entry{Action: "test"}); err != nil {
 		t.Fatal(err)
 	}
-	user, _ := s.auth.Setup(t.Context(), "admin@example.com", "1234567", "")
+	user, _ := s.auth.Setup(t.Context(), "admin", "admin@example.com", "1234567", "")
 	id, err := s.actions.Request(t.Context(), "rerun_check", "other", map[string]any{"check": "web-http"}, user.ID, "idem-2", audit.Entry{Action: "test"})
 	if err != nil {
 		t.Fatal(err)
@@ -518,7 +518,7 @@ func TestScheduledBackupWritesAndPrunes(t *testing.T) {
 		t.Fatalf("post-schedule backups=%d want 2", len(entries))
 	}
 	handler := s.Handler()
-	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"email": "admin@example.com", "password": "1234567"}, nil, "")
+	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"username": "admin", "email": "admin@example.com", "password": "1234567"}, nil, "")
 	login := apiRequest(t, handler, "POST", "/api/v1/login", map[string]string{"email": "admin@example.com", "password": "1234567"}, nil, "")
 	cookie := login.Result().Cookies()[0]
 	status := apiRequest(t, handler, "GET", "/api/v1/backup-status", nil, cookie, "")
@@ -536,7 +536,7 @@ func TestPostsPaginationBoundsManyPostLoad(t *testing.T) {
 		}
 	}
 	handler := s.Handler()
-	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"email": "admin@example.com", "password": "1234567"}, nil, "")
+	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"username": "admin", "email": "admin@example.com", "password": "1234567"}, nil, "")
 	login := apiRequest(t, handler, "POST", "/api/v1/login", map[string]string{"email": "admin@example.com", "password": "1234567"}, nil, "")
 	cookie := login.Result().Cookies()[0]
 	page := apiRequest(t, handler, "GET", "/api/v1/posts?limit=100", nil, cookie, "")
@@ -607,7 +607,7 @@ func TestScheduledSNMPEmitsObservationsAndAlert(t *testing.T) {
 func TestAuditFailurePreventsUserCreation(t *testing.T) {
 	s := testServer(t)
 	handler := s.Handler()
-	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
+	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"username": "admin", "email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
 	login := apiRequest(t, handler, "POST", "/api/v1/login", map[string]string{"email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
 	cookie := login.Result().Cookies()[0]
 	var session struct {
@@ -619,7 +619,7 @@ func TestAuditFailurePreventsUserCreation(t *testing.T) {
 	if _, err := s.store.DB.Exec(`CREATE TRIGGER fail_audit BEFORE INSERT ON audit BEGIN SELECT RAISE(ABORT, 'injected audit failure'); END`); err != nil {
 		t.Fatal(err)
 	}
-	created := apiRequest(t, handler, "POST", "/api/v1/users", map[string]string{"email": "op@example.com", "password": "1234567", "role": "operator"}, cookie, session.CSRF)
+	created := apiRequest(t, handler, "POST", "/api/v1/users", map[string]string{"username": "op", "email": "op@example.com", "password": "1234567", "role": "operator"}, cookie, session.CSRF)
 	if created.Code == http.StatusCreated {
 		t.Fatalf("user creation reported success while audit failed")
 	}
@@ -633,14 +633,14 @@ func TestAuditFailurePreventsUserCreation(t *testing.T) {
 func TestAdminPasswordResetRevokesSessions(t *testing.T) {
 	s := testServer(t)
 	handler := s.Handler()
-	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
+	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"username": "admin", "email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
 	adminLogin := apiRequest(t, handler, "POST", "/api/v1/login", map[string]string{"email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
 	adminCookie := adminLogin.Result().Cookies()[0]
 	var adminSession struct {
 		CSRF string `json:"csrf_token"`
 	}
 	_ = json.Unmarshal(adminLogin.Body.Bytes(), &adminSession)
-	if got := apiRequest(t, handler, "POST", "/api/v1/users", map[string]string{"email": "op@example.com", "password": "1234567", "role": "operator"}, adminCookie, adminSession.CSRF); got.Code != 201 {
+	if got := apiRequest(t, handler, "POST", "/api/v1/users", map[string]string{"username": "op", "email": "op@example.com", "password": "1234567", "role": "operator"}, adminCookie, adminSession.CSRF); got.Code != 201 {
 		t.Fatalf("create operator: %d", got.Code)
 	}
 	opLogin := apiRequest(t, handler, "POST", "/api/v1/login", map[string]string{"email": "op@example.com", "password": "1234567"}, nil, "")
@@ -678,7 +678,7 @@ func TestAdminPasswordResetRevokesSessions(t *testing.T) {
 func TestFinalAdministratorCannotBeDemoted(t *testing.T) {
 	s := testServer(t)
 	handler := s.Handler()
-	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
+	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"username": "admin", "email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
 	adminLogin := apiRequest(t, handler, "POST", "/api/v1/login", map[string]string{"email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
 	adminCookie := adminLogin.Result().Cookies()[0]
 	var session struct {
@@ -703,7 +703,7 @@ func TestFinalAdministratorCannotBeDemoted(t *testing.T) {
 		t.Fatalf("demote last admin=%d want 409", denied.Code)
 	}
 	// With a second administrator, one may be demoted.
-	if got := apiRequest(t, handler, "POST", "/api/v1/users", map[string]string{"email": "admin2@example.com", "password": "1234567", "role": "admin"}, adminCookie, session.CSRF); got.Code != 201 {
+	if got := apiRequest(t, handler, "POST", "/api/v1/users", map[string]string{"username": "admin2", "email": "admin2@example.com", "password": "1234567", "role": "admin"}, adminCookie, session.CSRF); got.Code != 201 {
 		t.Fatalf("create second admin: %d", got.Code)
 	}
 	users = apiRequest(t, handler, "GET", "/api/v1/users", nil, adminCookie, "")
@@ -724,14 +724,14 @@ func TestFinalAdministratorCannotBeDemoted(t *testing.T) {
 func TestRoleChangeTakesEffectForExistingSessions(t *testing.T) {
 	s := testServer(t)
 	handler := s.Handler()
-	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
+	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"username": "admin", "email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
 	adminLogin := apiRequest(t, handler, "POST", "/api/v1/login", map[string]string{"email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
 	adminCookie := adminLogin.Result().Cookies()[0]
 	var adminSession struct {
 		CSRF string `json:"csrf_token"`
 	}
 	_ = json.Unmarshal(adminLogin.Body.Bytes(), &adminSession)
-	if got := apiRequest(t, handler, "POST", "/api/v1/users", map[string]string{"email": "op@example.com", "password": "1234567", "role": "operator"}, adminCookie, adminSession.CSRF); got.Code != 201 {
+	if got := apiRequest(t, handler, "POST", "/api/v1/users", map[string]string{"username": "op", "email": "op@example.com", "password": "1234567", "role": "operator"}, adminCookie, adminSession.CSRF); got.Code != 201 {
 		t.Fatalf("create operator: %d", got.Code)
 	}
 	opLogin := apiRequest(t, handler, "POST", "/api/v1/login", map[string]string{"email": "op@example.com", "password": "1234567"}, nil, "")
@@ -760,7 +760,7 @@ func TestRoleChangeTakesEffectForExistingSessions(t *testing.T) {
 func TestLogoutNeverClaimsSuccessWhileSessionRemainsActive(t *testing.T) {
 	s := testServer(t)
 	handler := s.Handler()
-	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
+	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"username": "admin", "email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
 	login := apiRequest(t, handler, "POST", "/api/v1/login", map[string]string{"email": "admin@example.com", "password": "correct-horse-battery"}, nil, "")
 	cookie := login.Result().Cookies()[0]
 	var session struct {

@@ -75,9 +75,10 @@ func (m *Manager) GenerateBootstrapToken(ctx context.Context, lifetime time.Dura
 	return raw, nil
 }
 
-func (m *Manager) Setup(ctx context.Context, email, password, token string) (User, error) {
-	if !strings.Contains(email, "@") || len(password) < MinimumPasswordLength {
-		return User{}, fmt.Errorf("valid email and password of at least %d characters required", MinimumPasswordLength)
+func (m *Manager) Setup(ctx context.Context, username, email, password, token string) (User, error) {
+	username = strings.TrimSpace(username)
+	if username == "" || !strings.Contains(email, "@") || len(password) < MinimumPasswordLength {
+		return User{}, fmt.Errorf("valid username, email and password of at least %d characters required", MinimumPasswordLength)
 	}
 	hash, err := passwordHash(password)
 	if err != nil {
@@ -110,7 +111,7 @@ func (m *Manager) Setup(ctx context.Context, email, password, token string) (Use
 			return User{}, errors.New("bootstrap token required or invalid")
 		}
 	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO users(email,password_hash,role,created_at) VALUES(?,?,'admin',?)`, strings.TrimSpace(email), hash, now)
+	result, err := tx.ExecContext(ctx, `INSERT INTO users(username,email,password_hash,role,created_at) VALUES(?,?,?,'admin',?)`, username, strings.TrimSpace(email), hash, now)
 	if err != nil {
 		return User{}, err
 	}
@@ -151,9 +152,10 @@ func (m *Manager) ListUsers(ctx context.Context) ([]User, error) {
 	return items, nil
 }
 
-func (m *Manager) CreateUser(ctx context.Context, email, password, role string, entry audit.Entry) (User, error) {
-	if !strings.Contains(email, "@") || len(password) < MinimumPasswordLength || !validRole(role) {
-		return User{}, errors.New("valid email, password of at least 7 characters, and role required")
+func (m *Manager) CreateUser(ctx context.Context, username, email, password, role string, entry audit.Entry) (User, error) {
+	username = strings.TrimSpace(username)
+	if username == "" || !strings.Contains(email, "@") || len(password) < MinimumPasswordLength || !validRole(role) {
+		return User{}, errors.New("valid username, email, password of at least 7 characters, and role required")
 	}
 	hash, err := passwordHash(password)
 	if err != nil {
@@ -164,7 +166,7 @@ func (m *Manager) CreateUser(ctx context.Context, email, password, role string, 
 		return User{}, err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `INSERT INTO users(email,password_hash,role,created_at) VALUES(?,?,?,?)`, strings.TrimSpace(email), hash, role, time.Now().UTC().Format(time.RFC3339Nano))
+	result, err := tx.ExecContext(ctx, `INSERT INTO users(username,email,password_hash,role,created_at) VALUES(?,?,?,?,?)`, username, strings.TrimSpace(email), hash, role, time.Now().UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return User{}, err
 	}

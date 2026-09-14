@@ -22,7 +22,7 @@ func TestConcurrentSetupCreatesOneAdministrator(t *testing.T) {
 		wg.Add(1)
 		go func(e string) {
 			defer wg.Done()
-			_, err := m.Setup(context.Background(), e, "correct-horse-battery", "")
+			_, err := m.Setup(context.Background(), e, e, "correct-horse-battery", "")
 			successes <- err == nil
 		}(email)
 	}
@@ -46,7 +46,7 @@ func TestLoginAndAuthenticate(t *testing.T) {
 	}
 	defer s.Close()
 	m := New(s)
-	if _, err = m.Setup(context.Background(), "admin@example.com", "correct-horse-battery", ""); err != nil {
+	if _, err = m.Setup(context.Background(), "admin", "admin@example.com", "correct-horse-battery", ""); err != nil {
 		t.Fatal(err)
 	}
 	session, err := m.Login(context.Background(), "admin@example.com", "correct-horse-battery", audit.Entry{Action: "test"})
@@ -66,13 +66,13 @@ func TestMinimumPasswordLengthIsSeven(t *testing.T) {
 	}
 	defer s.Close()
 	m := New(s)
-	if _, err = m.Setup(context.Background(), "admin@example.com", "123456", ""); err == nil {
+	if _, err = m.Setup(context.Background(), "admin", "admin@example.com", "123456", ""); err == nil {
 		t.Fatal("six-character password accepted")
 	}
 	if required, err := m.SetupRequired(context.Background()); err != nil || !required {
 		t.Fatalf("setup required=%v err=%v", required, err)
 	}
-	if _, err = m.Setup(context.Background(), "admin@example.com", "1234567", ""); err != nil {
+	if _, err = m.Setup(context.Background(), "admin", "admin@example.com", "1234567", ""); err != nil {
 		t.Fatalf("seven-character password rejected: %v", err)
 	}
 	if required, err := m.SetupRequired(context.Background()); err != nil || required {
@@ -83,7 +83,7 @@ func TestMinimumPasswordLengthIsSeven(t *testing.T) {
 func TestChangePasswordRevokesOtherSessions(t *testing.T) {
 	ctx := context.Background()
 	m := New(testDB(t))
-	if _, err := m.Setup(ctx, "admin@example.com", "correct-horse-battery", ""); err != nil {
+	if _, err := m.Setup(ctx, "admin", "admin@example.com", "correct-horse-battery", ""); err != nil {
 		t.Fatal(err)
 	}
 	session1, err := m.Login(ctx, "admin@example.com", "correct-horse-battery", audit.Entry{Action: "test"})
@@ -114,19 +114,19 @@ func TestChangePasswordRevokesOtherSessions(t *testing.T) {
 func TestUserManagementValidation(t *testing.T) {
 	ctx := context.Background()
 	m := New(testDB(t))
-	if _, err := m.Setup(ctx, "admin@example.com", "administrator-password", ""); err != nil {
+	if _, err := m.Setup(ctx, "admin", "admin@example.com", "administrator-password", ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.CreateUser(ctx, "op@example.com", "1234567", "operator", audit.Entry{Action: "test"}); err != nil {
+	if _, err := m.CreateUser(ctx, "op", "op@example.com", "1234567", "operator", audit.Entry{Action: "test"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.CreateUser(ctx, "bad", "1234567", "operator", audit.Entry{Action: "test"}); err == nil {
+	if _, err := m.CreateUser(ctx, "bad", "bad", "1234567", "operator", audit.Entry{Action: "test"}); err == nil {
 		t.Fatal("invalid email accepted")
 	}
-	if _, err := m.CreateUser(ctx, "v@example.com", "123", "viewer", audit.Entry{Action: "test"}); err == nil {
+	if _, err := m.CreateUser(ctx, "v", "v@example.com", "123", "viewer", audit.Entry{Action: "test"}); err == nil {
 		t.Fatal("short password accepted")
 	}
-	if _, err := m.CreateUser(ctx, "x@example.com", "1234567", "superuser", audit.Entry{Action: "test"}); err == nil {
+	if _, err := m.CreateUser(ctx, "x", "x@example.com", "1234567", "superuser", audit.Entry{Action: "test"}); err == nil {
 		t.Fatal("invalid role accepted")
 	}
 	items, err := m.ListUsers(ctx)

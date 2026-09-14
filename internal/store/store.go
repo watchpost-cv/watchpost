@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const SchemaVersion = 21
+const SchemaVersion = 22
 
 type Store struct{ DB *sql.DB }
 
@@ -362,6 +362,24 @@ func (s *Store) migrate(ctx context.Context) error {
 			return err
 		}
 		version = 21
+	}
+	if version == 21 {
+		var exists int
+		if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('users') WHERE name='username'`).Scan(&exists); err != nil {
+			return fmt.Errorf("migration 22: %w", err)
+		}
+		if exists == 0 {
+			if _, err = tx.ExecContext(ctx, `ALTER TABLE users ADD COLUMN username TEXT COLLATE NOCASE`); err != nil {
+				return fmt.Errorf("migration 22: %w", err)
+			}
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE users SET username = substr(email, 1, instr(email, '@') - 1) WHERE username IS NULL OR trim(username) = ''`); err != nil {
+			return fmt.Errorf("migration 22: %w", err)
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations(version,applied_at) VALUES(22,?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return err
+		}
+		version = 22
 	}
 	return tx.Commit()
 }
