@@ -24,7 +24,7 @@ URL="http://127.0.0.1:$PORT"; BIN="$TMP/watchpost"; (cd "$ROOT" && "$GO_BIN" bui
 export WATCHPOST_RETENTION_OBSERVATIONS="$RETENTION_OBSERVATIONS" WATCHPOST_RETENTION_LOGS="$RETENTION_OBSERVATIONS" WATCHPOST_RETENTION_CHECK_RESULTS="$RETENTION_OBSERVATIONS" WATCHPOST_RETENTION_INTERVAL="$RETENTION_INTERVAL"
 "$BIN" --listen "127.0.0.1:$PORT" --data-dir "$TMP/state" >"$TMP/server.log" 2>&1 & SERVER_PID=$!
 for _ in $(seq 1 50); do curl -fsS "$URL/readyz" >/dev/null 2>&1 && break; sleep .1; done
-curl -fsS -X POST "$URL/api/v1/setup" -H 'Content-Type: application/json' --data '{"email":"admin@example.com","password":"1234567"}' >/dev/null
+curl -fsS -X POST "$URL/api/v1/setup" -H 'Content-Type: application/json' --data '{"username":"admin","email":"admin@example.com","password":"1234567"}' >/dev/null
 LOGIN=$(curl -fsS -c "$TMP/cookies" -X POST "$URL/api/v1/login" -H 'Content-Type: application/json' --data '{"email":"admin@example.com","password":"1234567"}')
 CSRF=$(printf '%s' "$LOGIN" | python3 -c 'import json,sys;print(json.load(sys.stdin)["csrf_token"])')
 curl -fsS -b "$TMP/cookies" -X POST "$URL/api/v1/posts" -H 'Content-Type: application/json' -H "X-Watchpost-CSRF: $CSRF" --data '{"id":"soak-host","name":"Soak host","kind":"host","labels":{}}' >/dev/null

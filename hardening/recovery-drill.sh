@@ -11,7 +11,7 @@ URL="http://127.0.0.1:$PORT"; BIN="$TMP/watchpost"; (cd "$ROOT" && "$GO_BIN" bui
 start(){ "$BIN" --listen "127.0.0.1:$PORT" --data-dir "$1" >"$TMP/server.log" 2>&1 & PID=$!; for _ in $(seq 1 50);do curl -fsS "$URL/readyz" >/dev/null 2>&1&&return;sleep .1;done;return 1; }
 stop(){ kill "$PID";wait "$PID";PID=; }
 start "$TMP/live"
-curl -fsS -X POST "$URL/api/v1/setup" -H 'Content-Type: application/json' --data '{"email":"admin@example.com","password":"1234567"}' >/dev/null
+curl -fsS -X POST "$URL/api/v1/setup" -H 'Content-Type: application/json' --data '{"username":"admin","email":"admin@example.com","password":"1234567"}' >/dev/null
 LOGIN=$(curl -fsS -c "$TMP/cookies" -X POST "$URL/api/v1/login" -H 'Content-Type: application/json' --data '{"email":"admin@example.com","password":"1234567"}')
 CSRF=$(printf '%s' "$LOGIN"|python3 -c 'import json,sys;print(json.load(sys.stdin)["csrf_token"])')
 curl -fsS -b "$TMP/cookies" -X POST "$URL/api/v1/posts" -H 'Content-Type: application/json' -H "X-Watchpost-CSRF: $CSRF" --data '{"id":"recovery-post","name":"Recovery post","kind":"host","labels":{}}' >/dev/null
