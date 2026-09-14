@@ -282,3 +282,35 @@ func v1Container(t *testing.T, passphrase string, plaintext []byte) []byte {
 	container = append(container, nonce...)
 	return gcm.Seal(container, nonce, plaintext, encryptedMagicV1)
 }
+
+// TestRestoreRestrictsDatabaseMode asserts the restored SQLite database is
+// owner-only, so the restore path cannot reintroduce a permissive mode.
+func TestRestoreRestrictsDatabaseMode(t *testing.T) {
+	ctx := context.Background()
+	src := t.TempDir()
+	db, err := store.Open(ctx, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.DB.Exec(`INSERT INTO schema_migrations(version,applied_at) VALUES(-1,'restore-perm')`); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(t.TempDir(), "snapshot.db")
+	if err := Create(ctx, db, archive, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(t.TempDir(), "restored")
+	if err := Restore(ctx, dst, archive, "", false); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(dst, "watchpost.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("restored watchpost.db mode = %04o, want 0600", got)
+	}
+}

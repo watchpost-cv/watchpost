@@ -14,6 +14,32 @@ import (
 
 const SchemaVersion = 22
 
+// secureDataFiles restricts the Watchpost data directory and its SQLite files
+// to owner-only access. SQLite creates the database (and in WAL mode the
+// -wal/-shm companions) with mode 0666 masked by the process umask, which is
+// typically 0644. The directory is already created 0700 by Open, but the files
+// are only protected by that directory in practice; apply explicit owner-only
+// mode bits as defense in depth and to keep the on-disk modes correct.
+func secureDataFiles(dataDir string) error {
+	if info, err := os.Stat(dataDir); err == nil && info.IsDir() {
+		if err := os.Chmod(dataDir, 0o700); err != nil && !errors.Is(err, os.ErrPermission) {
+			return fmt.Errorf("restrict data directory permissions: %w", err)
+		}
+	}
+	names := []string{"watchpost.db", "watchpost.db-wal", "watchpost.db-shm"}
+	for _, name := range names {
+		path := filepath.Join(dataDir, name)
+		if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
+			if info.Mode().Perm() != 0o600 {
+				if err := os.Chmod(path, 0o600); err != nil && !errors.Is(err, os.ErrPermission) {
+					return fmt.Errorf("restrict %s permissions: %w", name, err)
+				}
+			}
+		}
+	}
+	return nil
+}
+
 type Store struct{ DB *sql.DB }
 
 func Open(ctx context.Context, dataDir string) (*Store, error) {
@@ -27,6 +53,10 @@ func Open(ctx context.Context, dataDir string) (*Store, error) {
 	db.SetMaxOpenConns(1)
 	s := &Store{DB: db}
 	if err := s.migrate(ctx); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := secureDataFiles(dataDir); err != nil {
 		db.Close()
 		return nil, err
 	}
