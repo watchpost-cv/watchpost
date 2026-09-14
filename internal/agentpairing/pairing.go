@@ -342,6 +342,13 @@ func (s *Service) Poll(ctx context.Context, id, secret string) (Enrollment, erro
 	if err != nil {
 		return Enrollment{}, err
 	}
+	// A re-pair restarts the sequence space at 1. The observations table has a
+	// UNIQUE(collector_id,sequence,signal) constraint, so the agent's prior rows
+	// must be removed before the key's last_sequence is reset, otherwise the
+	// first post-re-pair batch collides and telemetry is rejected forever.
+	if _, err = tx.ExecContext(ctx, `DELETE FROM observations WHERE collector_id=?`, installationID); err != nil {
+		return Enrollment{}, err
+	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO collector_keys(id,post_id,secret_hash) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET post_id=excluded.post_id,secret_hash=excluded.secret_hash,revoked_at=NULL,last_sequence=0,last_seen_at=NULL,last_observed_at=NULL,last_sent_at=NULL,last_error='',last_rejected_at=NULL,rejected_count=0,partial=0`, installationID, postID, credentialHash[:])
 	if err != nil {
 		return Enrollment{}, err

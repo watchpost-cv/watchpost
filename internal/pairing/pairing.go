@@ -88,6 +88,13 @@ func (s *Service) Consume(ctx context.Context, token, collectorID string) (Enrol
 	if used != nil || !now.Before(expiresAt) {
 		return Enrollment{}, errors.New("pairing token expired or used")
 	}
+	// A re-pair restarts the sequence space at 1. The observations table has a
+	// UNIQUE(collector_id,sequence,signal) constraint, so the collector's prior
+	// rows must be removed before the key's last_sequence is reset, otherwise
+	// the first post-re-pair batch collides and telemetry is rejected forever.
+	if _, err = tx.ExecContext(ctx, `DELETE FROM observations WHERE collector_id=?`, collectorID); err != nil {
+		return Enrollment{}, err
+	}
 	result, err := tx.ExecContext(ctx, `INSERT INTO collector_keys(id,post_id,secret_hash) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET secret_hash=excluded.secret_hash,revoked_at=NULL,last_sequence=0,last_seen_at=NULL,last_observed_at=NULL,last_sent_at=NULL,last_error='',last_rejected_at=NULL,rejected_count=0,partial=0 WHERE collector_keys.post_id=excluded.post_id`, collectorID, postID, secretHash[:])
 	if err != nil {
 		return Enrollment{}, errors.New("collector identity unavailable")
@@ -96,8 +103,12 @@ func (s *Service) Consume(ctx context.Context, token, collectorID string) (Enrol
 	if rows != 1 {
 		return Enrollment{}, errors.New("collector identity belongs to another post")
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE collector_pairing_tokens SET used_at=? WHERE token_hash=? AND used_at IS NULL`, now.Format(time.RFC3339Nano), tokenHash[:]); err != nil {
+	tokenResult, err := tx.ExecContext(ctx, `UPDATE collector_pairing_tokens SET used_at=? WHERE token_hash=? AND used_at IS NULL`, now.Format(time.RFC3339Nano), tokenHash[:])
+	if err != nil {
 		return Enrollment{}, err
+	}
+	if usedRows, _ := tokenResult.RowsAffected(); usedRows != 1 {
+		return Enrollment{}, errors.New("pairing token already used")
 	}
 	if err = tx.Commit(); err != nil {
 		return Enrollment{}, err
