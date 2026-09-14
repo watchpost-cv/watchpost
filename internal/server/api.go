@@ -528,9 +528,17 @@ func (s *Server) handleCollectorBatch(w http.ResponseWriter, r *http.Request) {
 	for index, sample := range batch.Samples {
 		items[index] = ingest.Observation{Version: 1, PostID: batch.PostID, CollectorID: batch.CollectorID, ObservedAt: sample.ObservedAt, Sequence: sample.Sequence, Signal: sample.Signal, Value: sample.Value, Unit: sample.Unit, Quality: sample.Quality, Labels: sample.Labels}
 	}
-	if err := s.ingest.AcceptBatch(r.Context(), secret, items, batch.SentAt); err != nil {
+	replayed, err := s.ingest.AcceptBatch(r.Context(), secret, items, batch.SentAt, batch.BatchID)
+	if err != nil {
 		s.ingest.RecordRejection(r.Context(), batch.CollectorID, err)
 		writeJSON(w, 409, map[string]string{"error": err.Error()})
+		return
+	}
+	if replayed {
+		// A lost acknowledgement is retried with the same batch id. The batch
+		// was already committed, so acknowledge the replay without re-evaluating
+		// rules or re-firing notifications.
+		writeJSON(w, 202, collectorcontract.Acknowledgement{Version: 1, BatchID: batch.BatchID, AcceptedThrough: items[len(items)-1].Sequence, ServerTime: now})
 		return
 	}
 	for _, item := range items {

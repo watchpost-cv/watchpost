@@ -28,7 +28,7 @@ func TestCollectorHealthTransitions(t *testing.T) {
 	}
 	value := 1.0
 	observation := ingest.Observation{Version: 1, PostID: "host-a", CollectorID: "agent-a", ObservedAt: now, Sequence: 1, Signal: "collector.up", Value: &value, Unit: "boolean", Quality: "good", Labels: map[string]string{}}
-	if err := service.AcceptBatch(ctx, secret, []ingest.Observation{observation}, now); err != nil {
+	if _, err := service.AcceptBatch(ctx, secret, []ingest.Observation{observation}, now, "batch-health-1"); err != nil {
 		t.Fatal(err)
 	}
 	items, _ = health.List(ctx)

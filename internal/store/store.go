@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const SchemaVersion = 20
+const SchemaVersion = 21
 
 type Store struct{ DB *sql.DB }
 
@@ -347,6 +347,21 @@ func (s *Store) migrate(ctx context.Context) error {
 			return err
 		}
 		version = 20
+	}
+	if version == 20 {
+		var exists int
+		if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('collector_keys') WHERE name='last_batch_id'`).Scan(&exists); err != nil {
+			return fmt.Errorf("migration 21: %w", err)
+		}
+		if exists == 0 {
+			if _, err = tx.ExecContext(ctx, `ALTER TABLE collector_keys ADD COLUMN last_batch_id TEXT`); err != nil {
+				return fmt.Errorf("migration 21: %w", err)
+			}
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations(version,applied_at) VALUES(21,?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return err
+		}
+		version = 21
 	}
 	return tx.Commit()
 }

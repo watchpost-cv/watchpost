@@ -56,11 +56,11 @@ func TestAcceptBatchIsAtomicAndContiguous(t *testing.T) {
 	now := time.Now().UTC()
 	value := 50.0
 	items := []Observation{{Version: 1, PostID: "host-a", CollectorID: "collector-a", ObservedAt: now, Sequence: 1, Signal: "cpu.percent", Value: &value, Unit: "percent", Quality: "good", Labels: map[string]string{}}, {Version: 1, PostID: "host-a", CollectorID: "collector-a", ObservedAt: now, Sequence: 2, Signal: "memory.percent", Value: &value, Unit: "percent", Quality: "good", Labels: map[string]string{}}}
-	if err = service.AcceptBatch(ctx, secret, items, now); err != nil {
+	if _, err = service.AcceptBatch(ctx, secret, items, now, "batch-a"); err != nil {
 		t.Fatal(err)
 	}
 	items[0].Sequence, items[1].Sequence = 3, 5
-	if service.AcceptBatch(ctx, secret, items, now) == nil {
+	if _, err = service.AcceptBatch(ctx, secret, items, now, "batch-a2"); err == nil {
 		t.Fatal("accepted sequence gap")
 	}
 	var count int
@@ -113,7 +113,7 @@ func TestPendingCredentialPromotedOnFirstUse(t *testing.T) {
 	value := 50.0
 	batch := []Observation{{Version: 1, PostID: "host-a", CollectorID: "collector-a", ObservedAt: now, Sequence: 1, Signal: "cpu.percent", Value: &value, Unit: "percent", Quality: "good", Labels: map[string]string{}}}
 	// The pending credential authenticates and is promoted on first use.
-	if err = service.AcceptBatch(ctx, pendingRaw, batch, now); err != nil {
+	if _, err = service.AcceptBatch(ctx, pendingRaw, batch, now, "batch-p"); err != nil {
 		t.Fatalf("pending credential rejected: %v", err)
 	}
 	var stored []byte
@@ -124,7 +124,7 @@ func TestPendingCredentialPromotedOnFirstUse(t *testing.T) {
 		t.Fatal("pending credential was not promoted to active")
 	}
 	// The old credential no longer authenticates after promotion.
-	if err = service.AcceptBatch(ctx, oldSecret, batch, now); err == nil {
+	if _, err = service.AcceptBatch(ctx, oldSecret, batch, now, "batch-old"); err == nil {
 		t.Fatal("old credential still accepted after promotion")
 	}
 }
@@ -148,11 +148,11 @@ func TestExpiredPendingCredentialDoesNotInvalidateOld(t *testing.T) {
 	}
 	value := 50.0
 	batch := []Observation{{Version: 1, PostID: "host-a", CollectorID: "collector-a", ObservedAt: now, Sequence: 1, Signal: "cpu.percent", Value: &value, Unit: "percent", Quality: "good", Labels: map[string]string{}}}
-	if err = service.AcceptBatch(ctx, pendingRaw, batch, now); err == nil {
+	if _, err = service.AcceptBatch(ctx, pendingRaw, batch, now, "batch-p2"); err == nil {
 		t.Fatal("expired pending credential accepted")
 	}
 	// The old credential remains authoritative.
-	if err = service.AcceptBatch(ctx, oldSecret, batch, now); err != nil {
+	if _, err = service.AcceptBatch(ctx, oldSecret, batch, now, "batch-old2"); err != nil {
 		t.Fatalf("old credential rejected after expired replacement: %v", err)
 	}
 }
@@ -172,25 +172,59 @@ func TestIngestRateBudgetRejectsOverflow(t *testing.T) {
 	secret, _ := service.Enroll(ctx, "collector-a", "host-a", audit.Entry{Action: "test"})
 	value := 50.0
 	batch := []Observation{{Version: 1, PostID: "host-a", CollectorID: "collector-a", ObservedAt: now, Sequence: 1, Signal: "cpu.percent", Value: &value, Unit: "percent", Quality: "good", Labels: map[string]string{}}}
-	if err = service.AcceptBatch(ctx, secret, batch, now); err != nil {
+	if _, err = service.AcceptBatch(ctx, secret, batch, now, "batch-b1"); err != nil {
 		t.Fatalf("first batch rejected: %v", err)
 	}
 	second := []Observation{{Version: 1, PostID: "host-a", CollectorID: "collector-a", ObservedAt: now, Sequence: 2, Signal: "cpu.percent", Value: &value, Unit: "percent", Quality: "good", Labels: map[string]string{}}}
-	if err = service.AcceptBatch(ctx, secret, second, now); err != nil {
+	if _, err = service.AcceptBatch(ctx, secret, second, now, "batch-b2"); err != nil {
 		t.Fatalf("second batch rejected: %v", err)
 	}
 	third := []Observation{{Version: 1, PostID: "host-a", CollectorID: "collector-a", ObservedAt: now, Sequence: 3, Signal: "cpu.percent", Value: &value, Unit: "percent", Quality: "good", Labels: map[string]string{}}}
-	if err = service.AcceptBatch(ctx, secret, third, now); err != nil {
+	if _, err = service.AcceptBatch(ctx, secret, third, now, "batch-b3"); err != nil {
 		t.Fatalf("third batch rejected: %v", err)
 	}
 	fourth := []Observation{{Version: 1, PostID: "host-a", CollectorID: "collector-a", ObservedAt: now, Sequence: 4, Signal: "cpu.percent", Value: &value, Unit: "percent", Quality: "good", Labels: map[string]string{}}}
-	if err = service.AcceptBatch(ctx, secret, fourth, now); err == nil {
+	if _, err = service.AcceptBatch(ctx, secret, fourth, now, "batch-b4"); err == nil {
 		t.Fatal("batch beyond the per-minute budget was accepted")
 	}
 	// A new minute resets the budget.
 	service.now = func() time.Time { return now.Add(time.Minute) }
 	next := []Observation{{Version: 1, PostID: "host-a", CollectorID: "collector-a", ObservedAt: now.Add(time.Minute), Sequence: 4, Signal: "cpu.percent", Value: &value, Unit: "percent", Quality: "good", Labels: map[string]string{}}}
-	if err = service.AcceptBatch(ctx, secret, next, now.Add(time.Minute)); err != nil {
+	if _, err = service.AcceptBatch(ctx, secret, next, now.Add(time.Minute), "batch-b5"); err != nil {
 		t.Fatalf("batch in the next minute rejected: %v", err)
+	}
+}
+
+func TestAcceptBatchIdempotentReplayAfterLostAck(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	_, _ = posts.New(db).Create(ctx, posts.Post{ID: "host-a", Name: "Host", Kind: "host"}, audit.Entry{Action: "test"})
+	service := New(db)
+	secret, _ := service.Enroll(ctx, "collector-a", "host-a", audit.Entry{Action: "test"})
+	now := time.Now().UTC()
+	value := 50.0
+	items := []Observation{{Version: 1, PostID: "host-a", CollectorID: "collector-a", ObservedAt: now, Sequence: 1, Signal: "cpu.percent", Value: &value, Unit: "percent", Quality: "good", Labels: map[string]string{}}}
+	replayed, err := service.AcceptBatch(ctx, secret, items, now, "batch-replay-1")
+	if err != nil || replayed {
+		t.Fatalf("first accept: replayed=%v err=%v", replayed, err)
+	}
+	replayed, err = service.AcceptBatch(ctx, secret, items, now, "batch-replay-1")
+	if err != nil {
+		t.Fatalf("retried identical batch after a lost acknowledgement must be accepted: %v", err)
+	}
+	if !replayed {
+		t.Fatal("retried identical batch was not reported as an idempotent replay")
+	}
+	var count int
+	if err = db.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM observations`).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("replayed batch created duplicate rows: count=%d err=%v", count, err)
+	}
+	var last int64
+	if err = db.DB.QueryRowContext(ctx, `SELECT last_sequence FROM collector_keys WHERE id='collector-a'`).Scan(&last); err != nil || last != 1 {
+		t.Fatalf("last_sequence=%d err=%v", last, err)
 	}
 }

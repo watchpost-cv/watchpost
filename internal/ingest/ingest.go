@@ -29,37 +29,40 @@ type Observation struct {
 	Labels      map[string]string `json:"labels"`
 }
 
-func (s *Service) AcceptBatch(ctx context.Context, secret string, observations []Observation, sentAt time.Time) error {
+func (s *Service) AcceptBatch(ctx context.Context, secret string, observations []Observation, sentAt time.Time, batchID string) (bool, error) {
 	if len(observations) < 1 || len(observations) > 128 {
-		return errors.New("invalid observation batch")
+		return false, errors.New("invalid observation batch")
 	}
 	now := s.now().UTC()
 	h := sha256.Sum256([]byte(secret))
 	tx, err := s.s.DB.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer tx.Rollback()
 	first := observations[0]
 	info, err := s.lookupKey(ctx, tx, first.CollectorID, h[:], now)
 	if err != nil || info.revoked || info.post != first.PostID || (!info.active && !info.pending) {
-		return errors.New("collector authentication failed")
+		return false, errors.New("collector authentication failed")
+	}
+	if batchID != "" && info.lastBatch == batchID {
+		return true, nil
 	}
 	if info.pending {
 		if err = s.promotePending(ctx, tx, first.CollectorID); err != nil {
-			return err
+			return false, err
 		}
 	}
 	if !s.allow(first.CollectorID, len(observations), now) {
-		return errors.New("collector ingestion rate exceeded")
+		return false, errors.New("collector ingestion rate exceeded")
 	}
 	for index, o := range observations {
 		if o.Version != 1 || o.PostID != info.post || o.CollectorID != first.CollectorID || o.Sequence != info.last+int64(index)+1 || len(o.Signal) < 1 || len(o.Signal) > 128 || len(o.Labels) > 32 || !quality[o.Quality] || (o.Value != nil && (math.IsNaN(*o.Value) || math.IsInf(*o.Value, 0))) || o.ObservedAt.Before(now.Add(-24*time.Hour)) || o.ObservedAt.After(now.Add(5*time.Minute)) {
-			return errors.New("invalid or non-contiguous observation batch")
+			return false, errors.New("invalid or non-contiguous observation batch")
 		}
 		labels, _ := json.Marshal(o.Labels)
 		if _, err = tx.ExecContext(ctx, `INSERT INTO observations(post_id,collector_id,observed_at,ingested_at,sequence,signal,value,unit,quality,labels_json) VALUES(?,?,?,?,?,?,?,?,?,?)`, o.PostID, o.CollectorID, o.ObservedAt.UTC().Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), o.Sequence, o.Signal, o.Value, o.Unit, o.Quality, string(labels)); err != nil {
-			return err
+			return false, err
 		}
 	}
 	latest := observations[0].ObservedAt
@@ -72,11 +75,11 @@ func (s *Service) AcceptBatch(ctx context.Context, secret string, observations [
 			partial = true
 		}
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE collector_keys SET last_sequence=?,last_seen_at=?,last_observed_at=?,last_sent_at=?,last_error='',partial=? WHERE id=?`, observations[len(observations)-1].Sequence, now.Format(time.RFC3339Nano), latest.UTC().Format(time.RFC3339Nano), sentAt.UTC().Format(time.RFC3339Nano), partial, first.CollectorID)
+	_, err = tx.ExecContext(ctx, `UPDATE collector_keys SET last_sequence=?,last_seen_at=?,last_observed_at=?,last_sent_at=?,last_error='',partial=?,last_batch_id=? WHERE id=?`, observations[len(observations)-1].Sequence, now.Format(time.RFC3339Nano), latest.UTC().Format(time.RFC3339Nano), sentAt.UTC().Format(time.RFC3339Nano), partial, batchID, first.CollectorID)
 	if err != nil {
-		return err
+		return false, err
 	}
-	return tx.Commit()
+	return false, tx.Commit()
 }
 
 func (s *Service) RecordRejection(ctx context.Context, collectorID string, cause error) {
@@ -177,11 +180,12 @@ type queryer interface {
 }
 
 type keyInfo struct {
-	post    string
-	last    int64
-	revoked bool
-	active  bool
-	pending bool
+	post      string
+	last      int64
+	revoked   bool
+	active    bool
+	pending   bool
+	lastBatch string
 }
 
 // lookupKey resolves a presented credential against a collector key, allowing
@@ -191,7 +195,7 @@ func (s *Service) lookupKey(ctx context.Context, q queryer, id string, presented
 	var info keyInfo
 	var revoked, pendingExpires sql.NullString
 	var activeHash, pendingHash []byte
-	err := q.QueryRowContext(ctx, `SELECT post_id,last_sequence,revoked_at,secret_hash,pending_secret_hash,pending_expires_at FROM collector_keys WHERE id=?`, id).Scan(&info.post, &info.last, &revoked, &activeHash, &pendingHash, &pendingExpires)
+	err := q.QueryRowContext(ctx, `SELECT post_id,last_sequence,revoked_at,secret_hash,pending_secret_hash,pending_expires_at,COALESCE(last_batch_id,'') FROM collector_keys WHERE id=?`, id).Scan(&info.post, &info.last, &revoked, &activeHash, &pendingHash, &pendingExpires, &info.lastBatch)
 	if err != nil {
 		return info, err
 	}
