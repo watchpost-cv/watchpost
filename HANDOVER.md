@@ -6,7 +6,8 @@ Watchpost follows `gantry-core/docs/CLI_API_CLUSTER_ROADMAP.md`. Phase 1 CP8 ado
 
 ### Distributed campaign conclusions (September 2026)
 
-Current Watchpost HEAD is `447184e`; the stale-pairing fix is `2f611fa` beneath it.
+Current Watchpost HEAD is `6a5cef1` (documentation closure) atop `447184e`
+(propagation proof) and `2f611fa` (stale-pairing fix).
 
 Four-node dogfood campaigns plus deterministic local tests established: peer-server
 clustering is implemented and exercised (isolated 3-node and 4-node topologies
