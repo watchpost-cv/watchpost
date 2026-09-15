@@ -76,9 +76,21 @@ type appliedOp struct {
 var _ replication.StateMachine = (*FSM)(nil)
 
 // NewFSM returns a product FSM over db. The posts/post_dependencies/rules
-// tables must exist (the Watchpost Store schema).
+// tables must exist (the Watchpost Store schema). The replicated tables are
+// raft-owned: the FSM starts at applied=0, so on construction any prior
+// replicated definitions are cleared for the log/snapshot to rebuild them
+// deterministically (a durable restart never double-applies into pre-existing
+// rows). FK-referencing node-local children are cleared as a documented local
+// consequence; unrelated node-local state is untouched.
 func NewFSM(db *sql.DB) *FSM {
-	return &FSM{db: db, supported: replication.Version, applied: make(map[string]appliedOp)}
+	f := &FSM{db: db, supported: replication.Version, applied: make(map[string]appliedOp)}
+	ctx := context.Background()
+	tx, err := db.BeginTx(ctx, nil)
+	if err == nil {
+		_ = clearReplicated(tx, ctx)
+		_ = tx.Commit()
+	}
+	return f
 }
 
 // GraphRevision returns the replicated dependency-graph revision.

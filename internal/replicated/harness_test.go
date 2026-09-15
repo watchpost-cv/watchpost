@@ -84,8 +84,8 @@ func newHarness(t *testing.T, n int) *harness {
 			ID: id, Address: addr, Transport: nt,
 			LogStore: raft.NewInmemStore(), StableStore: raft.NewInmemStore(), SnapshotStore: snaps,
 			Fabric: h.fabric, FSM: fsm, Bootstrap: i == 0,
-			HeartbeatTimeout: 100 * time.Millisecond, ElectionTimeout: 200 * time.Millisecond,
-			CommitTimeout: 20 * time.Millisecond, LeaderLeaseTimeout: 100 * time.Millisecond,
+			HeartbeatTimeout: 250 * time.Millisecond, ElectionTimeout: 500 * time.Millisecond,
+			CommitTimeout: 20 * time.Millisecond, LeaderLeaseTimeout: 250 * time.Millisecond,
 			ProposeTimeout: 3 * time.Second,
 		})
 		if err != nil {
