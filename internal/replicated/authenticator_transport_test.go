@@ -1,6 +1,7 @@
 package replicated
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"testing"
@@ -218,14 +219,25 @@ func TestRotationReconnectProvesOverlap(t *testing.T) {
 	if err := nodeA2.AddVoter("B", authNodeAddr(t, nodeB)); err != nil {
 		t.Fatalf("reconnect after rotation: %v", err)
 	}
-	var cur []byte
-	var pending []byte
-	var cv int
-	if err := memberB.QueryRow(`SELECT inbound_secret_hash,pending_inbound_secret_hash,credential_version FROM cluster_members WHERE node_id='A'`).Scan(&cur, &pending, &cv); err != nil {
-		t.Fatal(err)
+	// Promotion is a consequence of B authenticating A2's post-conf-change
+	// replication, which is asynchronous; poll for the durable transition.
+	promoted := false
+	deadline = time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		var cur []byte
+		var pending []byte
+		var cv int
+		if err := memberB.QueryRow(`SELECT inbound_secret_hash,pending_inbound_secret_hash,credential_version FROM cluster_members WHERE node_id='A'`).Scan(&cur, &pending, &cv); err != nil {
+			t.Fatal(err)
+		}
+		if len(pending) == 0 && bytes.Equal(cur, hashSecret(aToB2)) && cv == 2 {
+			promoted = true
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
-	if len(pending) != 0 || string(cur) != string(hashSecret(aToB2)) || cv != 2 {
-		t.Fatalf("promotion after rotation did not occur: cv=%d", cv)
+	if !promoted {
+		t.Fatal("promotion after rotation did not occur")
 	}
 
 	// Expired pending: rotate again, but with a past expiry; a new connection
