@@ -4,6 +4,21 @@
 
 Watchpost follows `gantry-core/docs/CLI_API_CLUSTER_ROADMAP.md`. Phase 1 CP8 adopts the v0.1.1 contract for status, action creation and agent-connection revocation. Its CLI names are reserved, not marked implemented. Phase 2 begins here; Phase 5 later certifies full CLI coverage.
 
+### Distributed campaign conclusions (September 2026)
+
+Current Watchpost HEAD is `447184e`; the stale-pairing fix is `2f611fa` beneath it.
+
+Four-node dogfood campaigns plus deterministic local tests established: peer-server
+clustering is implemented and exercised (isolated 3-node and 4-node topologies
+proven); process failure, full VM reboot and a 2+2 partition are handled honestly
+and converge without re-pairing; pairing restart transitions are substantially
+proven; stale outbound pairing generations are fixed by `2f611fa`; propagation
+`export → preview → apply` is proven by `447184e` (scheduled `run-due` requires a
+profile schedule); full two-sided credential rotation is PARTIAL; and distributed
+scheduled-work ownership / duplicate-work fencing are NOT IMPLEMENTED. See
+`docs/cluster-architecture.md` and `docs/cluster-operations.md` for the durable
+evidence and invariants.
+
 ## Frontend asset ownership
 
 Nift tracks and builds HTML pages only. CSS, JavaScript, images, icons and other

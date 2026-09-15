@@ -63,3 +63,23 @@ watchpost cluster remove wp_...
 ```
 
 Removal requires the member to be disabled or revoked first. Rotation has an overlap period: the replacement inbound credential is accepted once, then atomically becomes current.
+
+### Outbound pairing generations and re-pairing
+
+An invariant enforced by `2f611fa`:
+
+> At most one outbound pairing generation per remote may be capable of
+> changing active membership credentials.
+
+When a node is revoked/removed and later re-paired, the old `approved`/`pending`
+outbound join for the same remote URL remains in `cluster_outbound_joins` for
+audit, but `collect` rejects any outbound join that is not the most recent for
+its remote URL as **superseded** (before any fetch or membership mutation).
+Historical rows can never replace the current membership credential.
+
+Operationally: after re-pairing, always `collect` the **newest** outbound join
+returned by `watchpost cluster joins`. Collecting a superseded join is rejected
+with `outbound join superseded by a newer pairing; collect the current join`;
+an already-`approved` join that is the most recent remains a harmless no-op on
+re-collect. The invariant survives restart because it is derived from persisted
+`cluster_outbound_joins` rows.

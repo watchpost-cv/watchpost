@@ -42,11 +42,14 @@ The following are deliberately outside Phase 2:
 - automatic failover of monitoring or notification execution;
 - consensus or distributed locking;
 - automatic object migration between nodes;
-- configuration propagation, reconciliation or conflict resolution;
+- distributed ownership of scheduled work (no scheduler/lease mechanism);
 - shared human accounts or cluster-wide login;
 - cross-project clustering abstractions.
 
-Those features require evidence from the narrower model first. Configuration propagation is specifically a later operation-layer concern, not database replication.
+Configuration propagation is **implemented** (export/preview/apply via the
+`alert-policy` / `monitor` / `notification-config` kinds; see the campaign
+evidence above), but it is an operation-layer concern, not database
+replication, and scheduled propagation requires a profile schedule.
 
 ## Phase 2 proving sequence
 
@@ -63,3 +66,37 @@ After CP17, the proven generic pieces are consumed from `github.com/gantry-tools
 - shared cluster CLI and presentation contracts for future adopters.
 
 Watchpost still owns its SQLite schema and transaction boundaries, audit persistence, HTTP route registration, human permissions, Watchpost object ownership, Agent pairing, and monitor/alert/incident summary queries. Existing `X-Watchpost-*` wire headers are retained during the extraction so Phase 3 does not silently create a second protocol while moving implementation code.
+
+## Campaign evidence (four-node dogfood, September 2026)
+
+The following was demonstrated on four independent Ubuntu nodes (geographically
+separated) running the certified Watchpost build, plus deterministic local
+regression coverage. This is durable campaign evidence, not a claim that the
+remaining deferred items are implemented.
+
+| Behaviour | Status |
+|---|---|
+| peer-server clustering (node-to-node) | implemented and remotely exercised |
+| isolated 3-node topology (A+B+C, D outside) | proven; membership/health verified from all three nodes |
+| 4-node topology | proven (A+B+C+D, fan-out partial=false) |
+| process failure / systemd stop / SIGKILL | proven (detected partial, recovered, converged) |
+| full VM reboot | proven (detected unhealthy, rejoined without re-pairing) |
+| 2+2 network partition | proven (unreachable peers not reported healthy; credentials survived; converged without re-pairing) |
+| pairing restart transitions (joiner restart before collect; inviter restart before approval; re-pair after revocation) | substantially proven |
+| stale outbound pairing generations | fixed by `2f611fa` (see cluster-operations.md) |
+| propagation export/preview/apply | proven locally by `447184e` (two-store integration test) |
+| scheduled propagation | requires a profile schedule; `run-due` only runs due profiles |
+| full two-sided credential rotation | PARTIAL (local expiry/replay + remote overlap window; not every distributed transition) |
+| distributed scheduled-work ownership | NOT IMPLEMENTED (no Watchpost scheduler/lease) |
+| duplicate-work fencing | NOT IMPLEMENTED (cluster-summary self-ownership is not distributed-work fencing) |
+
+### Propagation semantics
+
+- **Direct `export → preview → apply`** works independently of scheduling and is
+  proven by `447184e`: A exports a rule as the `alert-policy` kind, B applies it,
+  re-application is idempotent, and a source update propagates.
+- **`profile → run-due`** requires a non-empty valid `schedule` on the profile;
+  `Due()` treats an unscheduled profile as never due. A future campaign must not
+  interpret `run-due → []` on an unscheduled profile as a propagation failure.
+- Rules surface as the `alert-policy` propagation kind; posts, accounts, sessions
+  and other local-only objects are not propagated.
