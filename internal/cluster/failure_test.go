@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -309,3 +310,109 @@ func signedIncomingRequest(t *testing.T, secret, nodeID, nonce, requestID, path,
 type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// TestStaleOutboundJoinCannotOverwriteCredentials reproduces the campaign-3
+// finding: after revoke/remove + re-pair, a stale approved outbound join for
+// the same remote must not be collectable, because collecting it would
+// overwrite the active membership credential with a stale generation (the
+// peer then rejects the inviter with 401). Only the most recent outbound join
+// for a remote URL may transition credentials.
+// TestStaleOutboundJoinCannotOverwriteCredentials reproduces the campaign-3
+// finding: after revoke/remove + re-pair, a stale outbound join for the same
+// remote must never overwrite the active membership credential with a stale
+// generation (which would make the inviter reject the peer with 401).
+//
+// The intended state-machine invariant: at most one outbound join per remote
+// may be capable of changing active membership credentials (the newest
+// pending generation). An approved (already-collected) join is a harmless
+// no-op, and a stale pending join is rejected as superseded.
+func TestStaleOutboundJoinCannotOverwriteCredentials(t *testing.T) {
+	ctx := context.Background()
+	db := newClusterTestStore(t)
+	identity := NewIdentityService(db)
+	pairing := NewPairingService(db, identity)
+	const remote = "https://watchpost.test.sslip.io"
+	now := time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC)
+	pairing.now = func() time.Time { return now }
+	badClient := &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("unreachable")
+	})}
+	insert := func(id, state string, at time.Time) {
+		t.Helper()
+		if _, err := db.DB.ExecContext(ctx, `INSERT INTO cluster_outbound_joins(id,remote_url,request_id,request_secret,local_inbound_credential,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`, id, remote, "req_"+id, "secret-"+id, "cred-"+id+"-abcdefghijklmnopqrstuvwxyz", state, at.Format(time.RFC3339Nano), at.Format(time.RFC3339Nano)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Initial pairing: a single approved (already-collected) join.
+	oldID := "out_oldgeneration0000"
+	insert(oldID, "approved", now)
+	// Re-collecting an approved join is a harmless no-op (returns the record,
+	// does not fetch or rewrite membership credentials).
+	if _, err := pairing.CollectOutbound(ctx, oldID, badClient); err != nil {
+		t.Fatalf("approved join re-collect should be a no-op, got: %v", err)
+	}
+
+	// Re-pair: a newer pending join appears for the same remote.
+	newID := "out_newgeneration1111"
+	insert(newID, "pending", now.Add(time.Second))
+	// The stale approved join is now rejected as superseded (it cannot
+	// overwrite the current generation's membership credentials).
+	if _, err := pairing.CollectOutbound(ctx, oldID, badClient); err == nil || !strings.Contains(err.Error(), "superseded") {
+		t.Fatalf("stale approved join not rejected as superseded: %v", err)
+	}
+	// The current pending join passes the generation check (fetch fails, not supersede).
+	if _, err := pairing.CollectOutbound(ctx, newID, badClient); err == nil || strings.Contains(err.Error(), "superseded") {
+		t.Fatalf("current outbound join wrongly superseded: %v", err)
+	}
+
+	// A stale PENDING generation (never collected) must be rejected so it
+	// cannot overwrite credentials with an old localCredential.
+	stalePendingID := "out_stalepending3333"
+	insert(stalePendingID, "pending", now)
+	_ = stalePendingID // not the newest for remote, and pending -> rejected
+	if _, err := pairing.CollectOutbound(ctx, stalePendingID, nil); err == nil || !strings.Contains(err.Error(), "superseded") {
+		t.Fatalf("stale pending outbound join not rejected as superseded: %v", err)
+	}
+
+	// Repeated re-pair: every older join stays non-overwriting; only the newest
+	// pending join is collectable.
+	thirdID := "out_thirdgeneration2222"
+	insert(thirdID, "pending", now.Add(2*time.Second))
+	if _, err := pairing.CollectOutbound(ctx, newID, nil); err == nil || !strings.Contains(err.Error(), "superseded") {
+		t.Fatalf("superseded pending join %s not rejected: %v", newID, err)
+	}
+	if _, err := pairing.CollectOutbound(ctx, thirdID, badClient); err == nil || strings.Contains(err.Error(), "superseded") {
+		t.Fatalf("latest pending join wrongly superseded: %v", err)
+	}
+
+	// Simulated restart: the invariant is persisted (a newer join still exists
+	// in the reopened data directory).
+	dir := t.TempDir()
+	dbr, err := store.Open(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	insertInto := func(t *testing.T, db *store.Store, id, state string, at time.Time) {
+		t.Helper()
+		if _, err := db.DB.ExecContext(ctx, `INSERT INTO cluster_outbound_joins(id,remote_url,request_id,request_secret,local_inbound_credential,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`, id, remote, "req_"+id, "secret-"+id, "cred-"+id+"-abcdefghijklmnopqrstuvwxyz", state, at.Format(time.RFC3339Nano), at.Format(time.RFC3339Nano)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insertInto(t, dbr, oldID, "approved", now)
+	insertInto(t, dbr, "out_restartnew4444", "pending", now.Add(time.Second))
+	dbr.Close()
+	db2, err := store.Open(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db2.Close()
+	pairing2 := NewPairingService(db2, identity)
+	if _, err := pairing2.CollectOutbound(ctx, oldID, nil); err == nil || !strings.Contains(err.Error(), "superseded") {
+		t.Fatalf("after restart stale approved join not rejected as superseded: %v", err)
+	}
+	if _, err := pairing2.CollectOutbound(ctx, "out_restartnew4444", badClient); err == nil || strings.Contains(err.Error(), "superseded") {
+		t.Fatalf("after restart current join wrongly superseded: %v", err)
+	}
+}
+

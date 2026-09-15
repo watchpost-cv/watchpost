@@ -400,7 +400,35 @@ func (s *PairingService) ListOutbound(ctx context.Context) ([]OutboundJoin, erro
 	return out, rows.Err()
 }
 
+// ensureCurrentOutbound enforces that only the most recent outbound join for
+// a remote URL may be collected. Older outbound joins left behind by a
+// revoke/remove + re-pair cycle must never overwrite the active membership
+// credentials, so they are rejected as superseded.
+func (s *PairingService) ensureCurrentOutbound(ctx context.Context, id string) error {
+	var remoteURL, createdAt string
+	if err := s.s.DB.QueryRowContext(ctx, `SELECT remote_url,created_at FROM cluster_outbound_joins WHERE id=?`, id).Scan(&remoteURL, &createdAt); err != nil {
+		return errors.New("outbound join unavailable")
+	}
+	var newer int
+	if err := s.s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM cluster_outbound_joins WHERE remote_url=? AND created_at>?`, remoteURL, createdAt).Scan(&newer); err != nil {
+		return err
+	}
+	if newer > 0 {
+		return errors.New("outbound join superseded by a newer pairing; collect the current join")
+	}
+	return nil
+}
+
 func (s *PairingService) CollectOutbound(ctx context.Context, id string, client *http.Client) (OutboundJoin, error) {
+	// A stale outbound pairing generation must never be able to overwrite the
+	// active membership credentials. After a peer is revoked/removed and
+	// re-paired, an older outbound join for the same remote must not be
+	// collectable: only the most recent outbound join for a remote URL may
+	// transition membership credentials. This keeps the pairing state machine
+	// structural rather than relying on an operator choosing the newest ID.
+	if err := s.ensureCurrentOutbound(ctx, id); err != nil {
+		return OutboundJoin{}, err
+	}
 	var v OutboundJoin
 	var requestSecret, localCredential, created, updated string
 	err := s.s.DB.QueryRowContext(ctx, `SELECT id,remote_url,request_id,request_secret,local_inbound_credential,state,created_at,updated_at,last_error FROM cluster_outbound_joins WHERE id=?`, id).Scan(&v.ID, &v.RemoteURL, &v.RequestID, &requestSecret, &localCredential, &v.State, &created, &updated, &v.LastError)
