@@ -250,3 +250,106 @@ func TestRotationReconnectProvesOverlap(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 }
+
+// newAuthTransport builds a bare authenticated NetTransport (outbound-only; it
+// dials peers but need not consume RPCs) over memberDB.
+func newAuthTransport(t *testing.T, id raft.ServerID, memberDB *sql.DB) (*replication.NetTransport, raft.ServerAddress) {
+	t.Helper()
+	protocol := replication.Version
+	auth := NewWatchpostAuthenticator(memberDB, protocol)
+	caps := replication.Capabilities{ID: id, OperationSchemaVersions: []int{1, protocol}, SnapshotFormatVersions: []int{replication.SnapshotFormatVersion}}
+	nt, err := replication.NewNetTransport(replication.NetTransportOptions{
+		ID: id, Address: "127.0.0.1:0", Authenticator: auth, Membership: auth, PeerCredentials: auth,
+		Protocol: protocol, Capabilities: caps, RevalidateEvery: time.Hour, InsecureAllowPlaintext: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = nt.Close() })
+	return nt, nt.LocalAddr()
+}
+
+// attemptAppendEntries drives a real authenticated transport RPC from a dialing
+// transport to a running peer (whose raft consumes its transport and responds).
+// A handshake/authentication failure surfaces as a returned error.
+func attemptAppendEntries(t *testing.T, nt *replication.NetTransport, from raft.ServerID, target raft.ServerAddress, targetID raft.ServerID) error {
+	t.Helper()
+	req := &raft.AppendEntriesRequest{
+		RPCHeader:         raft.RPCHeader{ProtocolVersion: raft.ProtocolVersionMax, ID: []byte(from), Addr: []byte(from)},
+		Term:              1,
+		Leader:            []byte(from),
+		PrevLogEntry:      0,
+		PrevLogTerm:       0,
+		Entries:           nil,
+		LeaderCommitIndex: 0,
+	}
+	return nt.AppendEntries(targetID, target, req, &raft.AppendEntriesResponse{})
+}
+
+// TestNegativeTransportDirectAuth certifies, with real Watchpost authenticators
+// and real NetTransports, the actual connection/authentication outcome for
+// correct, wrong, unrelated-peer, expired-pending and valid-pending
+// directional credentials (not an AppliedIndex==0 heuristic).
+func TestNegativeTransportDirectAuth(t *testing.T) {
+	const aToB, bToA, aToC = "A_to_B", "B_to_A", "A_to_C"
+	// Peer B (a real node consuming its transport) verifies against B.row[A].
+	memberB := pairwiseAuthDB(t, "B", map[string][2]string{"A": {bToA, aToB}})
+	nodeB, _ := newAuthNode(t, "B", "127.0.0.1:0", memberB, openTestDB(t), false)
+	bAddr := authNodeAddr(t, nodeB)
+
+	// 1) correct A_to_B: authenticated transport RPC succeeds.
+	mA := pairwiseAuthDB(t, "A", map[string][2]string{"B": {aToB, bToA}})
+	ntA, _ := newAuthTransport(t, "A", mA)
+	if err := attemptAppendEntries(t, ntA, "A", bAddr, "B"); err != nil {
+		t.Fatalf("correct A_to_B transport RPC failed: %v", err)
+	}
+
+	// 2) wrong A_to_B: the authenticated transport RPC must fail.
+	mW := pairwiseAuthDB(t, "A", map[string][2]string{"B": {"WRONG_A_to_B", bToA}})
+	ntW, _ := newAuthTransport(t, "A", mW)
+	if err := attemptAppendEntries(t, ntW, "A", bAddr, "B"); err == nil {
+		t.Fatal("wrong A_to_B must fail the authenticated transport RPC")
+	}
+
+	// 3) credential intended for C used toward B must fail.
+	mU := pairwiseAuthDB(t, "A", map[string][2]string{"B": {aToC, bToA}})
+	ntU, _ := newAuthTransport(t, "A", mU)
+	if err := attemptAppendEntries(t, ntU, "A", bAddr, "B"); err == nil {
+		t.Fatal("unrelated-peer credential (A_to_C toward B) must fail")
+	}
+
+	// 4) valid pending A_to_B: succeeds and promotes (existing lifecycle).
+	mP := pairwiseAuthDB(t, "A", map[string][2]string{"B": {"A_to_B_ROT", bToA}})
+	exp := time.Now().Add(10 * time.Minute).UTC().Format(time.RFC3339Nano)
+	mustExec(t, memberB, `UPDATE cluster_members SET pending_inbound_secret_hash=?,pending_inbound_expires_at=? WHERE node_id='A'`, hashSecret("A_to_B_ROT"), exp)
+	ntP, _ := newAuthTransport(t, "A", mP)
+	if err := attemptAppendEntries(t, ntP, "A", bAddr, "B"); err != nil {
+		t.Fatalf("valid pending A_to_B transport RPC failed: %v", err)
+	}
+	var cur []byte
+	var pending []byte
+	var cv int
+	if err := memberB.QueryRow(`SELECT inbound_secret_hash,pending_inbound_secret_hash,credential_version FROM cluster_members WHERE node_id='A'`).Scan(&cur, &pending, &cv); err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 0 || string(cur) != string(hashSecret("A_to_B_ROT")) || cv != 2 {
+		t.Fatalf("pending promotion did not occur: cv=%d", cv)
+	}
+
+	// 5) post-promotion fresh connection uses the promoted CURRENT credential
+	// (no pending field) and succeeds.
+	mC := pairwiseAuthDB(t, "A", map[string][2]string{"B": {"A_to_B_ROT", bToA}})
+	ntC, _ := newAuthTransport(t, "A", mC)
+	if err := attemptAppendEntries(t, ntC, "A", bAddr, "B"); err != nil {
+		t.Fatalf("post-promotion current-credential RPC failed: %v", err)
+	}
+
+	// 6) expired pending A_to_B: the authenticated transport RPC must fail.
+	mE := pairwiseAuthDB(t, "A", map[string][2]string{"B": {"A_to_B_EXPIRED", bToA}})
+	expired := time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano)
+	mustExec(t, memberB, `UPDATE cluster_members SET pending_inbound_secret_hash=?,pending_inbound_expires_at=? WHERE node_id='A'`, hashSecret("A_to_B_EXPIRED"), expired)
+	ntE, _ := newAuthTransport(t, "A", mE)
+	if err := attemptAppendEntries(t, ntE, "A", bAddr, "B"); err == nil {
+		t.Fatal("expired pending A_to_B must fail the authenticated transport RPC")
+	}
+}
