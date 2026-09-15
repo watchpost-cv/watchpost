@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -466,5 +467,127 @@ func mustExec(t *testing.T, db *sql.DB, q string, args ...any) {
 	t.Helper()
 	if _, err := db.Exec(q, args...); err != nil {
 		t.Fatalf("exec %q: %v", q, err)
+	}
+}
+
+// TestDependencyAdmissionRace proves validation and DomainRevision capture are
+// atomic: two individually-valid dependency intents that would jointly form a
+// cycle cannot both be admitted. X validates against G, pauses in the
+// admission lock; Y is enqueued behind X; X commits; Y is then validated
+// against the post-X graph and rejected as a cycle BEFORE consensus - never a
+// committed stale operation.
+func TestDependencyAdmissionRace(t *testing.T) {
+	h := newHarness(t, 3)
+	a := h.leader()
+	ctx := context.Background()
+	for _, id := range []string{"A", "B", "C"} {
+		if _, err := a.CreatePost(ctx, id, mkPost(id, "host")); err != nil {
+			t.Fatalf("create %s: %v", id, err)
+		}
+	}
+	if _, err := a.AddDependency(ctx, "A", "B"); err != nil {
+		t.Fatalf("edge A->B: %v", err)
+	}
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var barrier sync.Once
+	a.BeforeGraphValidate = func() {
+		barrier.Do(func() {
+			close(entered)
+			<-release
+		})
+	}
+
+	// X: B->C (valid against the pre-X graph). It holds the admission lock.
+	xDone := make(chan error, 1)
+	go func() {
+		_, err := a.AddDependency(ctx, "B", "C")
+		xDone <- err
+	}()
+	<-entered
+
+	// Y: C->A. Individually valid before X; after X (A->B, B->C) it closes a
+	// cycle. Y must block behind X and be validated against the post-X graph.
+	yDone := make(chan error, 1)
+	go func() {
+		_, err := a.AddDependency(ctx, "C", "A")
+		yDone <- err
+	}()
+	time.Sleep(100 * time.Millisecond)
+
+	close(release)
+	if err := <-xDone; err != nil {
+		t.Fatalf("X (B->C) failed: %v", err)
+	}
+	if err := <-yDone; err == nil {
+		t.Fatal("Y (C->A) must be rejected as a cycle after X committed")
+	}
+	h.waitConverge()
+
+	if got := count(t, h.dbs[0], `SELECT COUNT(*) FROM post_dependencies`); got != 2 {
+		t.Fatalf("deps=%d want 2 (A->B, B->C)", got)
+	}
+	if got := count(t, h.dbs[0], `SELECT COUNT(*) FROM post_dependencies WHERE post_id='C'`); got != 0 {
+		t.Fatal("C->A must not be admitted")
+	}
+	if h.fsms[0].GraphRevision() != 2 {
+		t.Fatalf("graph revision=%d want 2", h.fsms[0].GraphRevision())
+	}
+}
+
+// TestDependencyAddRacesPostDelete proves post.delete participates in the same
+// graph-mutation serialization: a dependency-add racing a post.delete is
+// validated against the post-delete graph and rejected before consensus.
+func TestDependencyAddRacesPostDelete(t *testing.T) {
+	h := newHarness(t, 3)
+	a := h.leader()
+	ctx := context.Background()
+	for _, id := range []string{"A", "B"} {
+		if _, err := a.CreatePost(ctx, id, mkPost(id, "host")); err != nil {
+			t.Fatalf("create %s: %v", id, err)
+		}
+	}
+	if _, err := a.AddDependency(ctx, "A", "B"); err != nil {
+		t.Fatal(err)
+	}
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var barrier sync.Once
+	a.BeforeGraphValidate = func() {
+		barrier.Do(func() {
+			close(entered)
+			<-release
+		})
+	}
+	xDone := make(chan error, 1)
+	go func() {
+		_, err := a.DeletePost(ctx, "A")
+		xDone <- err
+	}()
+	<-entered
+	yDone := make(chan error, 1)
+	go func() {
+		_, err := a.AddDependency(ctx, "B", "A")
+		yDone <- err
+	}()
+	time.Sleep(100 * time.Millisecond)
+
+	close(release)
+	if err := <-xDone; err != nil {
+		t.Fatalf("post.delete failed: %v", err)
+	}
+	yErr := <-yDone
+	h.waitConverge()
+
+	if got := count(t, h.dbs[0], `SELECT COUNT(*) FROM posts WHERE id='A'`); got != 0 {
+		t.Fatal("post A must be deleted")
+	}
+	if yErr == nil {
+		t.Fatal("B->A must be rejected: endpoint A no longer exists after the delete")
+	}
+	if h.fsms[0].GraphRevision() != 2 {
+		t.Fatalf("graph revision=%d want 2 (add + delete)", h.fsms[0].GraphRevision())
 	}
 }

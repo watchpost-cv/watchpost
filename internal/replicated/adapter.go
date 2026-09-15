@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"fmt"
+	"sync"
 
 	"github.com/gantry-tools/gantry-core/replication"
 )
@@ -21,6 +22,17 @@ type Adapter struct {
 	fsm     *FSM
 	db      *sql.DB
 	product string
+
+	// graphMu serializes graph-mutation admission (validate -> DomainRevision
+	// capture -> propose -> applied) within the leader process, so a graph
+	// operation is never validated against one graph revision and labelled
+	// with another. It is process-local coordination; DomainRevision remains
+	// the durable semantic contract across leadership change/retry/replay.
+	graphMu sync.Mutex
+
+	// BeforeGraphValidate is a deterministic test hook fired inside the
+	// admission lock just before a graph operation is validated/admitted.
+	BeforeGraphValidate func()
 }
 
 // NewAdapter returns the replicated choke point over node (leader) + fsm.
@@ -47,21 +59,20 @@ func (a *Adapter) UpdatePost(ctx context.Context, id string, expectedVersion int
 }
 
 // DeletePost proposes deletion of a post definition. It is a graph-changing
-// operation, so it is validated against and carries the current dependency-
-// graph revision.
+// operation, so it participates in the same graph-mutation serialization and
+// carries the current dependency-graph revision.
 func (a *Adapter) DeletePost(ctx context.Context, id string) (*replication.ApplyResult, error) {
-	return a.proposeGraph(ctx, KindPostDelete, a.opID("post"), id, 0, nil)
+	return a.graphPropose(ctx, KindPostDelete, a.opID("post"), id, 0, nil, nil)
 }
 
-// AddDependency proposes a dependency edge. It validates statically against
-// the applied graph, captures the current graph revision, and carries it as
-// DomainRevision so a stale edge (after a concurrent graph mutation) is never
-// admitted.
+// AddDependency proposes a dependency edge. Semantic validation (endpoints
+// exist, !=, no duplicate, no cycle) and the DomainRevision capture happen
+// atomically inside the graph-mutation admission lock, so an operation is
+// always labelled with the exact graph revision it was validated against.
 func (a *Adapter) AddDependency(ctx context.Context, source, depends string) (*replication.ApplyResult, error) {
-	if err := validateDependencyAdd(ctx, a.db, source, depends); err != nil {
-		return nil, err
-	}
-	return a.proposeGraph(ctx, KindDependencyAdd, a.opID("dep"), source, 0, depPayload{DependsOn: depends})
+	return a.graphPropose(ctx, KindDependencyAdd, a.opID("dep"), source, 0, depPayload{DependsOn: depends}, func() error {
+		return validateDependencyAdd(ctx, a.db, source, depends)
+	})
 }
 
 // CreateRule proposes a new rule definition for an existing post.
@@ -95,20 +106,31 @@ func (a *Adapter) opID(prefix string) string {
 	return prefix + "-" + base64.RawURLEncoding.EncodeToString(b)
 }
 
-// proposeGraph proposes a graph-changing operation, carrying the current
-// dependency-graph revision as DomainRevision and re-checking it atomically
-// with admission so a stale operation is rejected before consensus.
-func (a *Adapter) proposeGraph(ctx context.Context, kind, opID, objectID string, revision int64, payload any) (*replication.ApplyResult, error) {
+// graphPropose is the serialized admission boundary for graph-changing
+// operations: acquire the graph lock, capture the current revision G, run any
+// semantic validation against G, verify the graph is still G, build the
+// operation with DomainRevision=G, propose, and await commit + apply before
+// releasing the lock. This makes validation -> DomainRevision binding atomic:
+// an operation can never be labelled with a revision it was not validated
+// against.
+func (a *Adapter) graphPropose(ctx context.Context, kind, opID, objectID string, revision int64, payload any, validate func() error) (*replication.ApplyResult, error) {
+	a.graphMu.Lock()
+	defer a.graphMu.Unlock()
+	if a.BeforeGraphValidate != nil {
+		a.BeforeGraphValidate()
+	}
 	g := a.fsm.GraphRevision()
+	if validate != nil {
+		if err := validate(); err != nil {
+			return nil, err
+		}
+	}
+	if a.fsm.GraphRevision() != g {
+		return nil, fmt.Errorf("dependency graph changed during validation (revision %d -> %d); revalidate the intent", g, a.fsm.GraphRevision())
+	}
 	op, err := buildOperation(opID, a.product, kind, objectID, revision, g, payload)
 	if err != nil {
 		return nil, err
-	}
-	// Re-check before admission: if the graph advanced since we captured g,
-	// the operation is stale and must be rejected before consensus (the
-	// deterministic apply also fails closed on any residual mismatch).
-	if a.fsm.GraphRevision() != g {
-		return nil, fmt.Errorf("stale dependency graph revision %d (current %d); revalidate the intent", g, a.fsm.GraphRevision())
 	}
 	return a.node.Propose(ctx, op)
 }
