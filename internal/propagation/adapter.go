@@ -10,6 +10,7 @@ import (
 	"time"
 
 	core "github.com/gantry-tools/gantry-core/propagation"
+	"github.com/watchpost-cv/watchpost/internal/replicated"
 	"github.com/watchpost-cv/watchpost/internal/store"
 )
 
@@ -230,6 +231,12 @@ func (a *Adapter) TargetState(ctx context.Context, src []core.Envelope, actor co
 func (a *Adapter) Apply(ctx context.Context, e core.Envelope) (core.AppliedRevision, error) {
 	if err := ValidateEnvelope(e); err != nil {
 		return core.AppliedRevision{}, err
+	}
+	// Single authoritative replicated write path: when the replicated adapter is
+	// enabled, propagation must not directly mutate replicated tables. It must
+	// route through the replicated adapter or be rejected here.
+	if replicated.IsReplicatedEnabled() {
+		return core.AppliedRevision{}, errors.New("propagation apply rejected: replicated state must be mutated through the replicated adapter")
 	}
 	switch e.Kind {
 	case "monitor":
