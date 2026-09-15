@@ -66,6 +66,12 @@ type FSM struct {
 	applied      map[string]appliedOp
 	appliedIndex uint64
 	appliedTerm  uint64
+	// persistedIndex is the applied index the SQLite materialization already
+	// represents, loaded from replication-adapter metadata on construction.
+	// Log entries at or below it are replayed as durable op-ID idempotency only
+	// (no mutation, no graph-revision advance), so a durable restart neither
+	// double-applies nor destructively clears node-local state.
+	persistedIndex uint64
 }
 
 type appliedOp struct {
@@ -76,21 +82,56 @@ type appliedOp struct {
 var _ replication.StateMachine = (*FSM)(nil)
 
 // NewFSM returns a product FSM over db. The posts/post_dependencies/rules
-// tables must exist (the Watchpost Store schema). The replicated tables are
-// raft-owned: the FSM starts at applied=0, so on construction any prior
-// replicated definitions are cleared for the log/snapshot to rebuild them
-// deterministically (a durable restart never double-applies into pre-existing
-// rows). FK-referencing node-local children are cleared as a documented local
-// consequence; unrelated node-local state is untouched.
+// tables must exist (the Watchpost Store schema). The FSM's durable applied
+// position, term and dependency-graph revision are read from replication-
+// adapter metadata (_replicated_meta) so the SQLite materialization is
+// reconciled with the raft log/snapshot. Ordinary construction/restart NEVER
+// clears node-local state: entries at or below the persisted applied index are
+// skipped during replay (op-ID idempotency recorded, no double mutation), and
+// the graph revision / applied position / applied-ops are rebuilt
+// deterministically.
 func NewFSM(db *sql.DB) *FSM {
 	f := &FSM{db: db, supported: replication.Version, applied: make(map[string]appliedOp)}
 	ctx := context.Background()
-	tx, err := db.BeginTx(ctx, nil)
-	if err == nil {
-		_ = clearReplicated(tx, ctx)
-		_ = tx.Commit()
+	_, _ = db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS _replicated_meta(k TEXT PRIMARY KEY, v TEXT)`)
+	if idx, ok := metaGetUint64(db, "applied_index"); ok {
+		f.persistedIndex = idx
+		f.appliedIndex = idx
+	}
+	if term, ok := metaGetUint64(db, "applied_term"); ok {
+		f.appliedTerm = term
+	}
+	if gr, ok := metaGetUint64(db, "graph_revision"); ok {
+		f.graphRev = int64(gr)
 	}
 	return f
+}
+
+func metaGetUint64(db *sql.DB, k string) (uint64, bool) {
+	var s string
+	if err := db.QueryRow(`SELECT v FROM _replicated_meta WHERE k=?`, k).Scan(&s); err != nil {
+		return 0, false
+	}
+	var v uint64
+	if _, err := fmt.Sscanf(s, "%d", &v); err != nil {
+		return 0, false
+	}
+	return v, true
+}
+
+// writeMeta persists the FSM's durable applied position and graph revision
+// atomically with the replicated mutation's transaction, so crash safety is
+// never separate from the materialization.
+func writeMeta(ctx context.Context, tx *sql.Tx, index, term, graphRev uint64) error {
+	for _, kv := range []struct {
+		key string
+		val uint64
+	}{{"applied_index", index}, {"applied_term", term}, {"graph_revision", graphRev}} {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO _replicated_meta(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v`, kv.key, fmt.Sprintf("%d", kv.val)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // GraphRevision returns the replicated dependency-graph revision.
@@ -145,6 +186,18 @@ func (f *FSM) applyLocked(op replication.Operation, index, term uint64) interfac
 			return fmt.Errorf("operation id %q retried with a different payload; refusing", op.ID)
 		}
 		return prior.Result
+	}
+	// A durable restart replays the whole raft log from index 0. Entries at or
+	// below the persisted applied index are already materialized: record their
+	// durable op-ID idempotency from the log and do NOT mutate the DB or
+	// advance the graph revision (this is what makes node-local state survive
+	// ordinary construction/restart).
+	if index <= f.persistedIndex {
+		res := &replication.ApplyResult{Index: index, Term: term, OpID: op.ID, ObjectID: op.ObjectID, Kind: op.Kind, Version: op.Version, Revision: op.Revision}
+		f.applied[op.ID] = appliedOp{Digest: digest, Result: res}
+		f.appliedIndex = index
+		f.appliedTerm = term
+		return res
 	}
 
 	var res *replication.ApplyResult
@@ -229,6 +282,9 @@ func (f *FSM) applyPostCreate(op replication.Operation, index, term uint64) (*re
 		op.ObjectID, p.Name, p.Kind, p.Address, p.Owner, p.LabelsJSON, boolInt(p.Maintenance), boolInt(p.Archived), p.CreatedAt, p.UpdatedAt); err != nil {
 		return nil, invariantf("post.create duplicate or invalid: %v", err)
 	}
+	if err := writeMeta(ctx, tx, index, term, uint64(f.graphRev)); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -255,6 +311,9 @@ func (f *FSM) applyPostUpdate(op replication.Operation, index, term uint64) (*re
 	n, _ := r.RowsAffected()
 	if n != 1 {
 		return nil, invariantf("post.update stale revision for %q", op.ObjectID)
+	}
+	if err := writeMeta(ctx, tx, index, term, uint64(f.graphRev)); err != nil {
+		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
@@ -291,10 +350,14 @@ func (f *FSM) applyPostDelete(op replication.Operation, index, term uint64) (*re
 	if n != 1 {
 		return nil, invariantf("post.delete target %q missing", op.ObjectID)
 	}
+	newRev := f.graphRev + 1
+	if err := writeMeta(ctx, tx, index, term, uint64(newRev)); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
-	f.graphRev++
+	f.graphRev = newRev
 	return &replication.ApplyResult{Index: index, Term: term, OpID: op.ID, ObjectID: op.ObjectID, Kind: op.Kind, Version: op.Version, Revision: 0}, nil
 }
 
@@ -344,10 +407,14 @@ func (f *FSM) applyDependencyAdd(op replication.Operation, index, term uint64) (
 	if _, err := tx.ExecContext(ctx, `INSERT INTO post_dependencies(post_id,depends_on_id) VALUES(?,?)`, op.ObjectID, p.DependsOn); err != nil {
 		return nil, invariantf("dependency insert failed: %v", err)
 	}
+	newRev := f.graphRev + 1
+	if err := writeMeta(ctx, tx, index, term, uint64(newRev)); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
-	f.graphRev++
+	f.graphRev = newRev
 	return &replication.ApplyResult{Index: index, Term: term, OpID: op.ID, ObjectID: op.ObjectID, Kind: op.Kind, Version: op.Version, Revision: 0}, nil
 }
 
@@ -366,6 +433,9 @@ func (f *FSM) applyRuleCreate(op replication.Operation, index, term uint64) (*re
 		`INSERT INTO rules(id,post_id,signal,operator,threshold,duration_seconds,recovery_threshold,missing_policy,severity,enabled,version) VALUES(?,?,?,?,?,?,?,?,?,?,1)`,
 		op.ObjectID, p.PostID, p.Signal, p.Operator, p.Threshold, p.DurationSeconds, p.RecoveryThreshold, p.MissingPolicy, p.Severity, boolInt(p.Enabled)); err != nil {
 		return nil, invariantf("rule.create duplicate or invalid: %v", err)
+	}
+	if err := writeMeta(ctx, tx, index, term, uint64(f.graphRev)); err != nil {
+		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
@@ -391,6 +461,9 @@ func (f *FSM) applyRuleSetEnabled(op replication.Operation, index, term uint64) 
 	n, _ := r.RowsAffected()
 	if n != 1 {
 		return nil, invariantf("rule.set_enabled stale revision for %q", op.ObjectID)
+	}
+	if err := writeMeta(ctx, tx, index, term, uint64(f.graphRev)); err != nil {
+		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
@@ -567,12 +640,16 @@ func (f *FSM) Restore(rc io.ReadCloser) error {
 			return err
 		}
 	}
+	if err := writeMeta(ctx, tx, env.AppliedIndex, env.AppliedTerm, uint64(env.GraphRevision)); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
 	f.product = env.Product
 	f.graphRev = env.GraphRevision
 	f.appliedIndex = env.AppliedIndex
+	f.persistedIndex = env.AppliedIndex
 	f.appliedTerm = env.AppliedTerm
 	f.applied = env.AppliedOps
 	if f.applied == nil {
