@@ -3,6 +3,7 @@ package replicated
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -34,6 +35,16 @@ func seedLocalHistory(t *testing.T, db *sql.DB) (map[string]int, func(*sql.DB)) 
 			}
 		}
 	}
+}
+
+// seedMeta writes consistent replication-adapter metadata, as atomic applies
+// would have left it.
+func seedMeta(t *testing.T, db *sql.DB, idx, term uint64, graphRev int64) {
+	t.Helper()
+	mustExec(t, db, `CREATE TABLE IF NOT EXISTS _replicated_meta(k TEXT PRIMARY KEY, v TEXT)`)
+	mustExec(t, db, `INSERT INTO _replicated_meta(k,v) VALUES('applied_index',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v`, fmt.Sprintf("%d", idx))
+	mustExec(t, db, `INSERT INTO _replicated_meta(k,v) VALUES('applied_term',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v`, fmt.Sprintf("%d", term))
+	mustExec(t, db, `INSERT INTO _replicated_meta(k,v) VALUES('graph_revision',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v`, fmt.Sprintf("%d", graphRev))
 }
 
 // TestRestartPreservesNodeLocalHistory proves an ordinary durable restart with
@@ -85,10 +96,16 @@ func TestRecoveryFailurePreservesNodeLocal(t *testing.T) {
 	mustExec(t, db, `INSERT INTO posts(id,name,kind,created_at,updated_at) VALUES('p1','host-a','host','t','t')`)
 	mustExec(t, db, `INSERT INTO rules(id,post_id,signal,operator,threshold,missing_policy,severity,enabled,version) VALUES('r1','p1','cpu','gt',80,'unknown','warning',1,1)`)
 	_, assertLocal := seedLocalHistory(t, db)
+	// The injected materialization is consistent: seed the replication metadata
+	// that atomic applies would have written.
+	seedMeta(t, db, 1, 1, 0)
 
 	// Construct the FSM (the step the old model used to clear) WITHOUT any raft
 	// recovery. It must not erase replicated or node-local state.
-	fsm := NewFSM(db)
+	fsm, err := NewFSM(db)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got := count(t, db, `SELECT COUNT(*) FROM posts`); got != 1 {
 		t.Fatalf("posts after NewFSM=%d", got)
 	}
@@ -137,7 +154,11 @@ func TestNonFreshSnapshotInstall(t *testing.T) {
 	mustExec(t, dDB, `INSERT INTO posts(id,name,kind,created_at,updated_at) VALUES('p1','old','host','t','t')`)
 	mustExec(t, dDB, `INSERT INTO rules(id,post_id,signal,operator,threshold,missing_policy,severity,enabled,version) VALUES('r1','p1','cpu','gt',80,'unknown','warning',1,1)`)
 	seedLocalHistory(t, dDB)
-	dFSM := NewFSM(dDB)
+	seedMeta(t, dDB, 1, 1, 0)
+	dFSM, err := NewFSM(dDB)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	fabric := replication.NewFabric()
 	snaps, err := raft.NewFileSnapshotStore(t.TempDir(), 3, nil)
@@ -197,4 +218,135 @@ func TestNonFreshSnapshotInstall(t *testing.T) {
 			t.Fatalf("snapshot replacement policy: %s=%d want 0 (FK child cleared)", k, got)
 		}
 	}
+}
+
+// TestRestartWithForcedSnapshotPreservesNodeLocal forces a persisted raft
+// snapshot at index S, continues committing to P > S, seeds node-local history,
+// then restarts. HashiCorp Raft restores the persisted snapshot (S) before
+// replaying the trailing log; the FSM must recognize S <= P and NOT
+// destructively replace the current materialization or erase node-local
+// history. Durable op-ID knowledge and graph revision must survive.
+func TestRestartWithForcedSnapshotPreservesNodeLocal(t *testing.T) {
+	raftDir, dbPath := t.TempDir(), filepath.Join(t.TempDir(), "repl.db")
+	d := newDurableNode(t, "n1", raftDir, dbPath, replication.NewFabric(), true)
+	waitSingleLeader(t, d)
+	ctx := context.Background()
+
+	// A create with a FIXED op-ID so durable op-ID retry semantics are testable.
+	op, err := buildOperation("post-fixed", "watchpost", KindPostCreate, "pfixed", 0, 0, mkPost("fixed", "host"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.node.Propose(ctx, op); err != nil {
+		t.Fatalf("fixed create: %v", err)
+	}
+	a := durableAdapter(d)
+	if _, err := a.CreatePost(ctx, "p1", mkPost("host-a", "host")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.CreatePost(ctx, "p2", mkPost("host-b", "host")); err != nil {
+		t.Fatal(err)
+	}
+	// Force a persisted raft snapshot (index S), then continue past it.
+	if err := d.node.Snapshot(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.AddDependency(ctx, "p1", "p2"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.CreateRule(ctx, "r1", rulePayload{PostID: "p1", Signal: "cpu", Operator: "gt", Threshold: 80, MissingPolicy: "unknown", Severity: "warning", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	_, assertLocal := seedLocalHistory(t, d.db)
+	d.close()
+
+	d2 := newDurableNode(t, "n1", raftDir, dbPath, replication.NewFabric(), true)
+	defer d2.close()
+	waitSingleLeader(t, d2)
+	// Replicated definitions through P and graph revision recovered.
+	if got := count(t, d2.db, `SELECT COUNT(*) FROM posts`); got != 3 {
+		t.Fatalf("posts=%d want 3 (pfixed,p1,p2)", got)
+	}
+	if got := count(t, d2.db, `SELECT COUNT(*) FROM post_dependencies`); got != 1 {
+		t.Fatalf("deps=%d want 1", got)
+	}
+	if d2.fsm.GraphRevision() != 1 {
+		t.Fatalf("graph revision=%d want 1", d2.fsm.GraphRevision())
+	}
+	// NODE-LOCAL history preserved (older snapshot restore must not erase it).
+	assertLocal(d2.db)
+	// Durable op-ID retry: retrying the fixed create resolves to the committed
+	// result with no second mutation.
+	retry, err := d2.node.Propose(ctx, op)
+	if err != nil {
+		t.Fatalf("op-ID retry after forced-snapshot restart: %v", err)
+	}
+	if retry.OpID != "post-fixed" || retry.Index == 0 {
+		t.Fatalf("unexpected retry result: %+v", retry)
+	}
+	if got := count(t, d2.db, `SELECT COUNT(*) FROM posts WHERE id='pfixed'`); got != 1 {
+		t.Fatal("op-ID retry double-applied the create")
+	}
+}
+
+// TestRestartWithSnapshotEqualIndex proves restart recovery where the persisted
+// snapshot index equals the materialized index does not needlessly erase
+// node-local history.
+func TestRestartWithSnapshotEqualIndex(t *testing.T) {
+	raftDir, dbPath := t.TempDir(), filepath.Join(t.TempDir(), "repl.db")
+	d := newDurableNode(t, "n1", raftDir, dbPath, replication.NewFabric(), true)
+	waitSingleLeader(t, d)
+	a := durableAdapter(d)
+	ctx := context.Background()
+	if _, err := a.CreatePost(ctx, "p1", mkPost("host-a", "host")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.CreateRule(ctx, "r1", rulePayload{PostID: "p1", Signal: "cpu", Operator: "gt", Threshold: 80, MissingPolicy: "unknown", Severity: "warning", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	_, assertLocal := seedLocalHistory(t, d.db)
+	if err := d.node.Snapshot(); err != nil {
+		t.Fatal(err)
+	}
+	d.close()
+
+	d2 := newDurableNode(t, "n1", raftDir, dbPath, replication.NewFabric(), true)
+	defer d2.close()
+	waitSingleLeader(t, d2)
+	if got := count(t, d2.db, `SELECT COUNT(*) FROM posts`); got != 1 {
+		t.Fatalf("posts=%d", got)
+	}
+	assertLocal(d2.db)
+}
+
+// TestMalformedMetaFailsClosed proves inconsistent replication metadata is
+// never silently treated as a fresh database.
+func TestMalformedMetaFailsClosed(t *testing.T) {
+	// Materialization without metadata -> fail closed.
+	db := openTestDB(t)
+	mustExec(t, db, `INSERT INTO posts(id,name,kind,created_at,updated_at) VALUES('p1','host-a','host','t','t')`)
+	if _, err := NewFSM(db); err == nil {
+		t.Fatal("materialization without replication metadata must fail closed")
+	}
+	db.Close()
+
+	// Malformed applied_index -> fail closed.
+	db2 := openTestDB(t)
+	mustExec(t, db2, `INSERT INTO posts(id,name,kind,created_at,updated_at) VALUES('p1','host-a','host','t','t')`)
+	mustExec(t, db2, `CREATE TABLE IF NOT EXISTS _replicated_meta(k TEXT PRIMARY KEY, v TEXT)`)
+	mustExec(t, db2, `INSERT INTO _replicated_meta(k,v) VALUES('applied_index','not-a-number')`)
+	if _, err := NewFSM(db2); err == nil {
+		t.Fatal("malformed applied_index must fail closed")
+	}
+	db2.Close()
+
+	// Malformed graph_revision -> fail closed.
+	db3 := openTestDB(t)
+	mustExec(t, db3, `INSERT INTO posts(id,name,kind,created_at,updated_at) VALUES('p1','host-a','host','t','t')`)
+	seedMeta(t, db3, 1, 1, 0)
+	mustExec(t, db3, `UPDATE _replicated_meta SET v='x' WHERE k='graph_revision'`)
+	if _, err := NewFSM(db3); err == nil {
+		t.Fatal("malformed graph_revision must fail closed")
+	}
+	db3.Close()
 }

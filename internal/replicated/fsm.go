@@ -13,6 +13,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -81,42 +82,78 @@ type appliedOp struct {
 
 var _ replication.StateMachine = (*FSM)(nil)
 
-// NewFSM returns a product FSM over db. The posts/post_dependencies/rules
-// tables must exist (the Watchpost Store schema). The FSM's durable applied
-// position, term and dependency-graph revision are read from replication-
-// adapter metadata (_replicated_meta) so the SQLite materialization is
-// reconciled with the raft log/snapshot. Ordinary construction/restart NEVER
-// clears node-local state: entries at or below the persisted applied index are
-// skipped during replay (op-ID idempotency recorded, no double mutation), and
-// the graph revision / applied position / applied-ops are rebuilt
-// deterministically.
-func NewFSM(db *sql.DB) *FSM {
+// NewFSM returns a product FSM over db, or an error when the replication
+// metadata is inconsistent with the materialization (fail closed rather than
+// risking duplicate replay or an incorrect graph revision). The posts/
+// post_dependencies/rules tables must exist (the Watchpost Store schema). The
+// FSM's durable applied position, term and dependency-graph revision are read
+// from replication-adapter metadata (_replicated_meta) so the SQLite
+// materialization is reconciled with the raft log/snapshot. Ordinary
+// construction/restart NEVER clears node-local state: entries at or below the
+// persisted applied index are skipped during replay (op-ID idempotency
+// recorded, no double mutation).
+func NewFSM(db *sql.DB) (*FSM, error) {
 	f := &FSM{db: db, supported: replication.Version, applied: make(map[string]appliedOp)}
 	ctx := context.Background()
-	_, _ = db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS _replicated_meta(k TEXT PRIMARY KEY, v TEXT)`)
-	if idx, ok := metaGetUint64(db, "applied_index"); ok {
-		f.persistedIndex = idx
-		f.appliedIndex = idx
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS _replicated_meta(k TEXT PRIMARY KEY, v TEXT)`); err != nil {
+		return nil, err
 	}
-	if term, ok := metaGetUint64(db, "applied_term"); ok {
-		f.appliedTerm = term
+	idxVal, idxPresent, err := metaGet(db, "applied_index")
+	if err != nil {
+		return nil, err
 	}
-	if gr, ok := metaGetUint64(db, "graph_revision"); ok {
-		f.graphRev = int64(gr)
+	if idxPresent {
+		f.persistedIndex = idxVal
+		f.appliedIndex = idxVal
+	} else {
+		// No applied position: a genuinely fresh/pre-replication database is
+		// empty of replicated materialization. A materialized DB without
+		// metadata is corruption and must fail closed, not be treated as fresh.
+		n, err := materializationCount(db)
+		if err != nil {
+			return nil, err
+		}
+		if n > 0 {
+			return nil, errors.New("replicated materialization exists without replication metadata; recovery required")
+		}
 	}
-	return f
+	term, _, err := metaGet(db, "applied_term")
+	if err != nil {
+		return nil, err
+	}
+	f.appliedTerm = term
+	gr, _, err := metaGet(db, "graph_revision")
+	if err != nil {
+		return nil, err
+	}
+	f.graphRev = int64(gr)
+	return f, nil
 }
 
-func metaGetUint64(db *sql.DB, k string) (uint64, bool) {
+// metaGet reads a replication-metadata value. A present but malformed value
+// fails closed (returns an error); an absent key is a clean "not present".
+func metaGet(db *sql.DB, k string) (uint64, bool, error) {
 	var s string
 	if err := db.QueryRow(`SELECT v FROM _replicated_meta WHERE k=?`, k).Scan(&s); err != nil {
-		return 0, false
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, false, nil
+		}
+		return 0, false, err
 	}
 	var v uint64
 	if _, err := fmt.Sscanf(s, "%d", &v); err != nil {
-		return 0, false
+		return 0, true, fmt.Errorf("corrupt replication metadata %q: %q", k, s)
 	}
-	return v, true
+	return v, true, nil
+}
+
+// materializationCount reports whether any replicated definition is present.
+func materializationCount(db *sql.DB) (int, error) {
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM posts`).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 // writeMeta persists the FSM's durable applied position and graph revision
@@ -613,6 +650,26 @@ func (f *FSM) Restore(rc io.ReadCloser) error {
 	ctx := context.Background()
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	// Snapshot-position-aware reconciliation. A verified snapshot presented
+	// during ordinary restart recovery may be at or behind the local SQLite
+	// materialization (raft restores its persisted snapshot before replaying
+	// the trailing log). In that case the local materialization is already at
+	// least as current as the snapshot: do NOT roll product SQLite backward or
+	// erase node-local history. Seed durable op-ID knowledge from the snapshot
+	// for entries the retained log no longer replays (raft replays only entries
+	// after the snapshot index), and leave applied position/graph revision at
+	// the materialized P.
+	if env.AppliedIndex <= f.persistedIndex {
+		for k, v := range env.AppliedOps {
+			if _, ok := f.applied[k]; !ok {
+				f.applied[k] = v
+			}
+		}
+		return nil
+	}
+	// Forward snapshot replacement (genuine catch-up to a newer authoritative
+	// snapshot): validated semantic replacement; the frozen snapshot-replacement
+	// policy clears FK-referencing node-local children as a local consequence.
 	tx, err := f.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err

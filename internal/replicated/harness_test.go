@@ -74,7 +74,10 @@ func newHarness(t *testing.T, n int) *harness {
 		id := raft.ServerID(fmt.Sprintf("n%d", i+1))
 		addr := raft.ServerAddress("node-" + string(id))
 		db := openTestDB(t)
-		fsm := NewFSM(db)
+		fsm, err := NewFSM(db)
+		if err != nil {
+			t.Fatal(err)
+		}
 		nt := replication.NewNodeTransport(id, addr, h.fabric)
 		snaps, err := raft.NewFileSnapshotStore(filepath.Join(t.TempDir(), "snap"), 3, nil)
 		if err != nil {
@@ -445,7 +448,10 @@ func TestSnapshotRestorePreservesGraphRevision(t *testing.T) {
 		t.Fatal(err)
 	}
 	db := openTestDB(t)
-	fresh := NewFSM(db)
+	fresh, err := NewFSM(db)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := fresh.Restore(io.NopCloser(bytes.NewReader(snap))); err != nil {
 		t.Fatalf("restore: %v", err)
 	}

@@ -54,7 +54,10 @@ type durableNode struct {
 func newDurableNode(t *testing.T, id raft.ServerID, raftDir, dbPath string, fabric *replication.Fabric, bootstrap bool) *durableNode {
 	t.Helper()
 	db := openDBAt(t, dbPath)
-	fsm := NewFSM(db)
+	fsm, err := NewFSM(db)
+	if err != nil {
+		t.Fatal(err)
+	}
 	bs, err := replication.NewBoltStore(filepath.Join(raftDir, "raft.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -369,7 +372,11 @@ func TestSnapshotRestorePreservesNodeLocal(t *testing.T) {
 	dDB := openTestDB(t)
 	mustExec(t, dDB, `CREATE TABLE IF NOT EXISTS local_settings(k TEXT PRIMARY KEY, v TEXT)`)
 	mustExec(t, dDB, `INSERT INTO local_settings(k,v) VALUES('dst_secret','secret-d')`)
-	dFSM := NewFSM(dDB)
+	seedMeta(t, dDB, 1, 1, 0)
+	dFSM, err := NewFSM(dDB)
+	if err != nil {
+		t.Fatal(err)
+	}
 	nt := replication.NewNodeTransport("d", "node-d", fabric)
 	dNode, err := replication.NewNode(replication.NodeOptions{
 		ID: "d", Address: "node-d", Transport: nt,
