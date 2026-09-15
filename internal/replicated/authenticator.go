@@ -34,20 +34,48 @@ const (
 // revalidation and authenticated capabilities, and consumes handshake nonces
 // into cluster_nonces under a purpose-scoped key.
 type WatchpostAuthenticator struct {
-	db       *sql.DB
-	protocol int
-	now      func() time.Time
+	db           *sql.DB
+	protocol     int
+	now          func() time.Time
+	localID      raft.ServerID
+	localCaps    string
+	localRevoked bool
 }
 
 var (
-	_ replication.PeerAuthenticator = (*WatchpostAuthenticator)(nil)
-	_ replication.MembershipChecker = (*WatchpostAuthenticator)(nil)
-	_ replication.CapabilitySource  = (*WatchpostAuthenticator)(nil)
+	_ replication.PeerAuthenticator    = (*WatchpostAuthenticator)(nil)
+	_ replication.MembershipChecker    = (*WatchpostAuthenticator)(nil)
+	_ replication.CapabilitySource     = (*WatchpostAuthenticator)(nil)
+	_ replication.PeerCredentialSource = (*WatchpostAuthenticator)(nil)
 )
 
-// NewWatchpostAuthenticator returns the production authenticator over db.
+// NewWatchpostAuthenticator returns the production authenticator over db. It
+// reads the local node identity and authenticated capabilities from the
+// singleton cluster_identity row (the node itself is not a cluster_members row)
+// so the voter schema gate can resolve the leader's own capabilities.
 func NewWatchpostAuthenticator(db *sql.DB, protocol int) *WatchpostAuthenticator {
-	return &WatchpostAuthenticator{db: db, protocol: protocol, now: time.Now}
+	a := &WatchpostAuthenticator{db: db, protocol: protocol, now: time.Now}
+	var nid string
+	var caps string
+	var revoked sql.NullString
+	if err := db.QueryRow(`SELECT node_id,capabilities_json,revoked_at FROM cluster_identity WHERE singleton=1`).Scan(&nid, &caps, &revoked); err == nil {
+		a.localID = raft.ServerID(nid)
+		a.localCaps = caps
+		a.localRevoked = revoked.Valid && revoked.String != ""
+	}
+	return a
+}
+
+// OutboundCredential implements replication.PeerCredentialSource: the
+// credential this node presents to peer is that peer's cluster_members
+// outbound_secret (pairwise - different per peer). Resolved per connection so
+// a reconnect after outbound rotation uses the current credential.
+func (a *WatchpostAuthenticator) OutboundCredential(ctx context.Context, peer raft.ServerID) (string, error) {
+	var secret string
+	if err := a.db.QueryRowContext(ctx, `SELECT outbound_secret FROM cluster_members WHERE node_id=?`, string(peer)).Scan(&secret); err != nil {
+		return "", fmt.Errorf("outbound credential for %s: %w", peer, err)
+	}
+	return secret, nil
 }
 
 type memberRow struct {
@@ -154,11 +182,24 @@ func (a *WatchpostAuthenticator) VerifyPeer(ctx context.Context, expected raft.S
 		return errors.New("replication credential required")
 	}
 	digest := sha256.Sum256([]byte(in.PresentedSecret))
-	if !equalDigest(digest[:], m.inboundHash) {
+	promote := false
+	switch {
+	case equalDigest(digest[:], m.inboundHash):
+		// current credential accepted
+	case len(m.pendingHash) > 0 && m.pendingExp.Valid && a.pendingValid(m.pendingExp.String) && equalDigest(digest[:], m.pendingHash):
+		promote = true
+	default:
 		return errors.New("replication credential rejected")
 	}
 	if !replication.VerifyHandshakeSignature(in.PresentedSecret, in) {
 		return errors.New("invalid replication handshake signature")
+	}
+	if promote {
+		if _, err := a.db.ExecContext(ctx,
+			`UPDATE cluster_members SET inbound_secret_hash=pending_inbound_secret_hash,pending_inbound_secret_hash=NULL,pending_inbound_expires_at=NULL,credential_version=credential_version+1 WHERE node_id=?`,
+			string(expected)); err != nil {
+			return err
+		}
 	}
 	if err := a.consumeNonce(ctx, string(expected), in.Nonce); err != nil {
 		return err
@@ -168,8 +209,20 @@ func (a *WatchpostAuthenticator) VerifyPeer(ctx context.Context, expected raft.S
 
 // Membership implements replication.MembershipChecker for revalidation: state,
 // replication authorization and protocol compatibility derive from
-// cluster_members (authenticated).
+// cluster_members (authenticated); the local node derives from cluster_identity.
 func (a *WatchpostAuthenticator) Membership(ctx context.Context, nodeID raft.ServerID) (replication.MembershipStatus, error) {
+	if nodeID == a.localID {
+		st := replication.MembershipActive
+		if a.localRevoked {
+			st = replication.MembershipRevoked
+		}
+		return replication.MembershipStatus{
+			State:              st,
+			Capabilities:       a.capabilitiesOf(nodeID, a.localCaps),
+			Protocol:           a.protocol,
+			ReplicationEnabled: hasReplicationCapability(a.localCaps),
+		}, nil
+	}
 	m, err := a.loadMember(ctx, string(nodeID))
 	if err != nil {
 		return replication.MembershipStatus{}, errors.New("replication member unknown")
@@ -190,8 +243,11 @@ func (a *WatchpostAuthenticator) Membership(ctx context.Context, nodeID raft.Ser
 }
 
 // CapabilitiesOf implements replication.CapabilitySource from authenticated
-// cluster_members state.
+// cluster_members state (and cluster_identity for the local node).
 func (a *WatchpostAuthenticator) CapabilitiesOf(id raft.ServerID) (replication.Capabilities, bool) {
+	if id == a.localID {
+		return a.capabilitiesOf(id, a.localCaps), true
+	}
 	m, err := a.loadMember(context.Background(), string(id))
 	if err != nil {
 		return replication.Capabilities{}, false

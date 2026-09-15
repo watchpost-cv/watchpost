@@ -14,6 +14,7 @@ import (
 )
 
 const authSchema = `
+CREATE TABLE IF NOT EXISTS cluster_identity(singleton INTEGER PRIMARY KEY CHECK(singleton=1),node_id TEXT NOT NULL UNIQUE,installation_id TEXT NOT NULL UNIQUE,display_name TEXT NOT NULL DEFAULT '',public_endpoint TEXT NOT NULL DEFAULT '',public_key BLOB NOT NULL,private_key BLOB NOT NULL,capabilities_json TEXT NOT NULL DEFAULT '[]',protocol_version INTEGER NOT NULL,product_version TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,paired_at TEXT,last_seen_at TEXT,revoked_at TEXT);
 CREATE TABLE IF NOT EXISTS cluster_members(node_id TEXT PRIMARY KEY,installation_id TEXT NOT NULL UNIQUE,display_name TEXT NOT NULL DEFAULT '',public_endpoint TEXT NOT NULL,public_key BLOB NOT NULL,capabilities_json TEXT NOT NULL DEFAULT '[]',protocol_version INTEGER NOT NULL,product_version TEXT NOT NULL DEFAULT '',inbound_secret_hash BLOB NOT NULL,outbound_secret TEXT NOT NULL,state TEXT NOT NULL CHECK(state IN ('active','disabled','revoked')),created_at TEXT NOT NULL,paired_at TEXT NOT NULL,last_seen_at TEXT,last_latency_ms INTEGER,revoked_at TEXT,credential_version INTEGER NOT NULL DEFAULT 1,pending_inbound_secret_hash BLOB,pending_inbound_expires_at TEXT);
 CREATE TABLE IF NOT EXISTS cluster_nonces(node_id TEXT NOT NULL REFERENCES cluster_members(node_id) ON DELETE CASCADE,nonce TEXT NOT NULL,seen_at TEXT NOT NULL,PRIMARY KEY(node_id,nonce));
 CREATE INDEX IF NOT EXISTS cluster_nonces_seen ON cluster_nonces(seen_at);
@@ -36,6 +37,7 @@ func newAuthFixture(t *testing.T) (*sql.DB, *WatchpostAuthenticator) {
 	if _, err := db.Exec(authSchema); err != nil {
 		t.Fatal(err)
 	}
+	mustExec(t, db, `INSERT INTO cluster_identity(singleton,node_id,installation_id,public_key,private_key,capabilities_json,protocol_version,created_at) VALUES(1,'self','self-inst',?,?,'["health","replication"]',1,?)`, []byte("key"), []byte("key"), time.Now().UTC().Format(time.RFC3339Nano))
 	insertMember(t, db, "n1", "secret-n1", "active", `["health","replication"]`)
 	insertMember(t, db, "n2", "secret-n2", "active", `["health","replication"]`)
 	return db, NewWatchpostAuthenticator(db, replication.Version)
