@@ -287,14 +287,28 @@ func (f *FSM) applyLocked(op replication.Operation, index, term uint64) interfac
 	if f.applyFailure != nil {
 		return f.applyFailure
 	}
+	// Every failure while realizing committed history is a replica-health
+	// failure: the local FSM cannot safely realize this committed entry, so it
+	// must poison the FSM (sticky) and fence every subsequent committed entry.
+	// The first failed committed index is the reconciliation boundary.
 	if op.Version > f.supported {
-		return fmt.Errorf("node does not support replication operation version %d (supported: 1..%d)", op.Version, f.supported)
+		err := fmt.Errorf("node does not support replication operation version %d (supported: 1..%d)", op.Version, f.supported)
+		if f.applyFailure == nil {
+			f.applyFailure = err
+		}
+		return err
 	}
 	if err := validateKind(op.Kind); err != nil {
+		if f.applyFailure == nil {
+			f.applyFailure = err
+		}
 		return err
 	}
 	digest, err := op.Digest()
 	if err != nil {
+		if f.applyFailure == nil {
+			f.applyFailure = err
+		}
 		return err
 	}
 	if prior, ok := f.applied[op.ID]; ok {

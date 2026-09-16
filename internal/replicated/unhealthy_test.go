@@ -44,7 +44,6 @@ func waitApplyFailure(t *testing.T, f *FSM) {
 func TestCommittedApplyFailureMarksReplicaUnhealthy(t *testing.T) {
 	h := newHarness(t, 3)
 	leaderIdx := h.leaderIndex()
-	leader := h.adapters[leaderIdx]
 
 	// Pick one follower (B) to be the unhealthy replica.
 	followerIdx := 0
@@ -66,8 +65,13 @@ func TestCommittedApplyFailureMarksReplicaUnhealthy(t *testing.T) {
 	h.fsms[followerIdx].InjectNextApplyFailure(errors.New("sqlite: simulated replica storage failure"))
 	beforeIdx, _ := h.fsms[followerIdx].AppliedIndex()
 
-	if _, err := leader.CreatePost(context.Background(), "p1", mkPost("host-a", "host")); err != nil {
-		t.Fatalf("leader create (committed by quorum): %v", err)
+	// X (index N) commits through the quorum with a known operation identity.
+	x, err := buildOperation("x-fixed", "watchpost", KindPostCreate, "p1", 0, 0, mkPost("host-a", "host"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.nodes[leaderIdx].Propose(context.Background(), x); err != nil {
+		t.Fatalf("X commit: %v", err)
 	}
 
 	// The healthy quorum (A leader + C) applied the committed operation.
@@ -77,35 +81,37 @@ func TestCommittedApplyFailureMarksReplicaUnhealthy(t *testing.T) {
 	waitApplyFailure(t, h.fsms[followerIdx])
 
 	// B could not realize it: no mutation, unhealthy marker set, position
-	// unchanged.
+	// unchanged, no successful op-ID state for the failed X.
 	if got := count(t, h.dbs[followerIdx], `SELECT COUNT(*) FROM posts WHERE id='p1'`); got != 0 {
 		t.Fatalf("unhealthy replica must not apply the committed op: posts=%d", got)
+	}
+	if _, ok := h.fsms[followerIdx].OpKnown("x-fixed"); ok {
+		t.Fatal("failed operation entered successful op-ID state")
 	}
 	afterIdx, _ := h.fsms[followerIdx].AppliedIndex()
 	if afterIdx != beforeIdx {
 		t.Fatalf("failed apply advanced the durable position: %d -> %d", beforeIdx, afterIdx)
 	}
 
-	// The unhealthy replica must reject authoritative writes (no local fallback).
-	if _, err := h.adapters[followerIdx].CreatePost(context.Background(), "p2", mkPost("host-b", "host")); err == nil {
-		t.Fatal("unhealthy replica must reject new authoritative mutations")
+	// Y (index N+1) commits through the healthy quorum.
+	y, err := buildOperation("y-fixed", "watchpost", KindPostCreate, "p2", 0, 0, mkPost("host-b", "host"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := count(t, h.dbs[followerIdx], `SELECT COUNT(*) FROM posts WHERE id='p2'`); got != 0 {
-		t.Fatal("unhealthy replica wrote locally (fail-open)")
-	}
-
-	// The healthy leader continues to accept authoritative mutations.
-	if _, err := leader.CreatePost(context.Background(), "p2", mkPost("host-b", "host")); err != nil {
-		t.Fatalf("healthy leader create after replica failure: %v", err)
+	if _, err := h.nodes[leaderIdx].Propose(context.Background(), y); err != nil {
+		t.Fatalf("Y commit: %v", err)
 	}
 	waitForCount(t, h.dbs[otherIdx], `SELECT COUNT(*) FROM posts WHERE id='p2'`, 1)
+	waitForCount(t, h.dbs[leaderIdx], `SELECT COUNT(*) FROM posts WHERE id='p2'`, 1)
 
-	// THE FENCING REGRESSION: a later committed operation Y (index > N) must
-	// NOT be materialized on the unhealthy replica B on top of the missing N.
-	// B stays unhealthy, its position is unchanged, and it contains neither the
-	// failed X nor the later unapplied Y.
+	// THE FENCING REGRESSION: Y must NOT be materialized on B on top of the
+	// missing N. B stays unhealthy, its position is unchanged, and neither X
+	// nor Y is in its successful op-ID state.
 	if got := count(t, h.dbs[followerIdx], `SELECT COUNT(*) FROM posts WHERE id='p2'`); got != 0 {
 		t.Fatalf("unhealthy replica applied a later committed entry: posts=%d", got)
+	}
+	if _, ok := h.fsms[followerIdx].OpKnown("y-fixed"); ok {
+		t.Fatal("fenced later operation entered successful op-ID state")
 	}
 	if h.fsms[followerIdx].ApplyFailure() == nil {
 		t.Fatal("replica B must remain unhealthy after later committed entries")
@@ -114,9 +120,20 @@ func TestCommittedApplyFailureMarksReplicaUnhealthy(t *testing.T) {
 	if afterLater != beforeIdx {
 		t.Fatalf("later committed entries advanced the unhealthy position: %d -> %d", beforeIdx, afterLater)
 	}
-	if got := count(t, h.dbs[followerIdx], `SELECT COUNT(*) FROM posts WHERE id='p1'`); got != 0 {
-		t.Fatalf("unhealthy replica must not contain the failed committed operation")
+
+	// The unhealthy replica must reject authoritative writes (no local fallback).
+	if _, err := h.adapters[followerIdx].CreatePost(context.Background(), "p3", mkPost("host-c", "host")); err == nil {
+		t.Fatal("unhealthy replica must reject new authoritative mutations")
 	}
+	if got := count(t, h.dbs[followerIdx], `SELECT COUNT(*) FROM posts WHERE id='p3'`); got != 0 {
+		t.Fatal("unhealthy replica wrote locally (fail-open)")
+	}
+
+	// The healthy leader continues to accept authoritative mutations.
+	if _, err := h.adapters[leaderIdx].CreatePost(context.Background(), "p3", mkPost("host-c", "host")); err != nil {
+		t.Fatalf("healthy leader create after replica failure: %v", err)
+	}
+	waitForCount(t, h.dbs[otherIdx], `SELECT COUNT(*) FROM posts WHERE id='p3'`, 1)
 }
 
 // TestUnhealthyFencesGraphChangingApply proves an unhealthy replica cannot
