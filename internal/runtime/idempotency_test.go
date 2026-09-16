@@ -251,3 +251,78 @@ func TestHTTPIdempotencyPostUpdatePrecondition(t *testing.T) {
 		t.Fatalf("fail-closed retry changed state: version=%d", v)
 	}
 }
+
+// TestHTTPIdempotencyAcrossLeadershipChange proves the ambiguous-response retry
+// contract across an ACTUAL leadership transition: operation R committed under
+// leader A, response treated as lost, A forced out of leadership, and the SAME
+// logical mutation retried against the new leader B. B recognizes the committed
+// operation identity (reconstructed from its applied state), returns the
+// original committed result, and does not create a second semantic mutation.
+func TestHTTPIdempotencyAcrossLeadershipChange(t *testing.T) {
+	ca := newTestCA(t)
+	const aToB, bToA = "A_to_B", "B_to_A"
+	a := newNode(t, ca, t.TempDir(), "A", map[string][2]string{"B": {aToB, bToA}}, true, 0, true, freeAddr(t))
+	b := newNode(t, ca, t.TempDir(), "B", map[string][2]string{"A": {bToA, aToB}}, false, 0, true, freeAddr(t))
+	waitReadiness(t, a, replicated.ReadinessReadyLeader)
+	if err := a.repl.Node.AddVoter("B", b.repl.Node.Address()); err != nil {
+		t.Fatalf("join B: %v", err)
+	}
+	setPublicEndpoint(t, a.store.DB, "B", b.http.URL)
+	setPublicEndpoint(t, b.store.DB, "A", a.http.URL)
+	waitReadiness(t, b, replicated.ReadinessReadyFollower)
+
+	// 1. Commit operation "leader-change-1" through leader A.
+	body := map[string]any{"id": "host-a", "name": "Host A", "kind": "host", "labels": map[string]string{}}
+	if code, _ := httpPostKey(t, a.http.Client(), a.http.URL, "leader-change-1", body); code != http.StatusCreated {
+		t.Fatalf("commit through A: %d", code)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) && (countPosts(t, a, "host-a") != 1 || countPosts(t, b, "host-a") != 1) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if countPosts(t, a, "host-a") != 1 || countPosts(t, b, "host-a") != 1 {
+		t.Fatalf("initial commit did not converge: A=%d B=%d", countPosts(t, a, "host-a"), countPosts(t, b, "host-a"))
+	}
+	if _, ok := b.repl.FSM.OpKnown("leader-change-1"); !ok {
+		t.Fatal("follower B did not learn the committed operation identity")
+	}
+
+	// 2. Force A out of leadership; the new leader is B.
+	if err := a.repl.Node.LeadershipTransfer(); err != nil {
+		t.Fatalf("leadership transfer: %v", err)
+	}
+	waitReadiness(t, b, replicated.ReadinessReadyLeader)
+
+	// 3. Ambiguous retry of the SAME logical mutation against the NEW leader B.
+	if code, _ := httpPostKey(t, b.http.Client(), b.http.URL, "leader-change-1", body); code != http.StatusCreated {
+		t.Fatalf("retry against new leader: %d", code)
+	}
+
+	// 4. Exactly one semantic mutation; version unchanged; new leader recognizes
+	// the committed operation identity (not treated as new intent).
+	if countPosts(t, a, "host-a") != 1 || countPosts(t, b, "host-a") != 1 {
+		t.Fatalf("leader-change retry produced a second mutation: A=%d B=%d", countPosts(t, a, "host-a"), countPosts(t, b, "host-a"))
+	}
+	if v := postVersion(t, b, "host-a"); v != 1 {
+		t.Fatalf("leader-change retry changed the committed result: version=%d want 1", v)
+	}
+	if _, ok := b.repl.FSM.OpKnown("leader-change-1"); !ok {
+		t.Fatal("new leader must recognize the committed operation identity")
+	}
+
+	// 5. Same identity + DIFFERENT semantic payload after the leader change must
+	// fail closed with original state unchanged.
+	changed := map[string]any{"id": "host-a", "name": "Host A CHANGED", "kind": "host", "labels": map[string]string{}}
+	if code, _ := httpPostKey(t, b.http.Client(), b.http.URL, "leader-change-1", changed); code == http.StatusCreated {
+		t.Fatal("same identity with different payload after leader change must fail closed")
+	}
+	if countPosts(t, b, "host-a") != 1 {
+		t.Fatal("rejected leader-change retry mutated state")
+	}
+	if v := postVersion(t, b, "host-a"); v != 1 {
+		t.Fatalf("rejected leader-change retry changed state: version=%d", v)
+	}
+	if got := queryPostName(t, b, "host-a"); got != "Host A" {
+		t.Fatalf("rejected leader-change retry changed the name: %q", got)
+	}
+}
