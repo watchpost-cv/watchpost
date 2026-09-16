@@ -384,9 +384,10 @@ func TestStaleDomainRevisionFailsClosed(t *testing.T) {
 	if _, err := a.AddDependency(context.Background(), "p1", "p2"); err != nil {
 		t.Fatal(err)
 	}
-	// Build a stale dependency operation carrying DomainRevision=G and propose
-	// it directly (simulating validation under a dead/older leader).
-	op, err := buildOperation("dep:p2:p1", "watchpost", KindDependencyAdd, "p2", 0, 1, depPayload{DependsOn: "p1"})
+	// Build a stale dependency operation carrying DomainRevision=0 (the graph
+	// revision captured before the edge committed, which advanced it to 1) and
+	// propose it directly (simulating validation under a dead/older leader).
+	op, err := buildOperation("dep:p2:p1", "watchpost", KindDependencyAdd, "p2", 0, 0, depPayload{DependsOn: "p1"})
 	if err != nil {
 		t.Fatal(err)
 	}
