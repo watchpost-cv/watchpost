@@ -145,6 +145,16 @@ func New(ctx context.Context, o Options) (*Replicated, error) {
 		OperationSchemaVersions: []int{1, replication.Version},
 		SnapshotFormatVersions:  []int{replication.SnapshotFormatVersion},
 	}
+	// The authenticated cluster application-RPC transport (used by the follower
+	// ForwardClient and distributed status) dials peer public endpoints over
+	// HTTPS. Wire its HTTP client to trust the SAME cluster CA as the
+	// replication transport, so the forward path trusts one cluster trust
+	// domain rather than the default system roots.
+	if o.Transport != nil && o.TLSConfig != nil && o.TLSConfig.RootCAs != nil {
+		o.Transport.SetHTTPClient(&http.Client{Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{RootCAs: o.TLSConfig.RootCAs, MinVersion: tls.VersionTLS12},
+		}})
+	}
 	nt, err := replication.NewNetTransport(replication.NetTransportOptions{
 		ID: raft.ServerID(o.NodeID), Address: raft.ServerAddress(o.Address), Authenticator: auth, Membership: auth, PeerCredentials: auth,
 		TLSConfig: o.TLSConfig, Protocol: replication.Version, Capabilities: caps, RevalidateEvery: time.Hour,
