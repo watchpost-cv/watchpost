@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/watchpost-cv/watchpost/internal/audit"
+	"github.com/watchpost-cv/watchpost/internal/replicated"
 	"github.com/watchpost-cv/watchpost/internal/store"
 )
 
@@ -27,7 +28,14 @@ type Post struct {
 	Archived    bool              `json:"archived"`
 	Version     int               `json:"version"`
 }
-type Store struct{ s *store.Store }
+type Store struct {
+	s         *store.Store
+	authority replicated.MutationAuthority
+}
+
+// SetMutationAuthority installs the authoritative replicated mutation choke
+// point (nil = standalone local transactions).
+func (s *Store) SetMutationAuthority(a replicated.MutationAuthority) { s.authority = a }
 
 func New(s *store.Store) *Store { return &Store{s: s} }
 func (s *Store) Create(ctx context.Context, p Post, entry audit.Entry) (Post, error) {
@@ -37,6 +45,21 @@ func (s *Store) Create(ctx context.Context, p Post, entry audit.Entry) (Post, er
 	for k, v := range p.Labels {
 		if len(k) > 63 || len(v) > 255 {
 			return Post{}, errors.New("invalid labels")
+		}
+	}
+	if s.authority != nil {
+		labels, _ := json.Marshal(p.Labels)
+		now := time.Now().UTC().Format(time.RFC3339Nano)
+		_, err := s.authority.CreatePost(ctx, p.ID, replicated.PostPayload{
+			Name: p.Name, Kind: p.Kind, Address: p.Address, Owner: p.Owner,
+			LabelsJSON: string(labels), Maintenance: p.Maintenance, Archived: p.Archived,
+			CreatedAt: now, UpdatedAt: now,
+		})
+		if err == nil {
+			return s.Get(ctx, p.ID)
+		}
+		if !errors.Is(err, replicated.ErrStandalonePath) {
+			return Post{}, err
 		}
 	}
 	labels, _ := json.Marshal(p.Labels)
@@ -112,6 +135,20 @@ func (s *Store) Update(ctx context.Context, p Post, expected int, entry audit.En
 	if !valid(p) {
 		return Post{}, errors.New("invalid post")
 	}
+	if s.authority != nil {
+		labels, _ := json.Marshal(p.Labels)
+		_, err := s.authority.UpdatePost(ctx, p.ID, int64(expected), replicated.PostPayload{
+			Name: p.Name, Kind: p.Kind, Address: p.Address, Owner: p.Owner,
+			LabelsJSON: string(labels), Maintenance: p.Maintenance, Archived: p.Archived,
+			UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		})
+		if err == nil {
+			return s.Get(ctx, p.ID)
+		}
+		if !errors.Is(err, replicated.ErrStandalonePath) {
+			return Post{}, err
+		}
+	}
 	labels, _ := json.Marshal(p.Labels)
 	tx, err := s.s.DB.BeginTx(ctx, nil)
 	if err != nil {
@@ -151,6 +188,15 @@ func valid(p Post) bool {
 
 // Delete permanently removes a post and all evidence and credentials scoped to it.
 func (s *Store) Delete(ctx context.Context, id string, entry audit.Entry) error {
+	if s.authority != nil {
+		_, err := s.authority.DeletePost(ctx, id)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, replicated.ErrStandalonePath) {
+			return err
+		}
+	}
 	tx, err := s.s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -192,6 +238,15 @@ func (s *Store) Delete(ctx context.Context, id string, entry audit.Entry) error 
 func (s *Store) AddDependency(ctx context.Context, id, depends string, entry audit.Entry) error {
 	if id == depends {
 		return errors.New("self dependency")
+	}
+	if s.authority != nil {
+		_, err := s.authority.AddDependency(ctx, id, depends)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, replicated.ErrStandalonePath) {
+			return err
+		}
 	}
 	tx, err := s.s.DB.BeginTx(ctx, nil)
 	if err != nil {

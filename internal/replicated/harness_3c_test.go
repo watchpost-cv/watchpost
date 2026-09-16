@@ -65,7 +65,7 @@ func TestRestartPreservesNodeLocalHistory(t *testing.T) {
 	if _, err := a.AddDependency(ctx, "p1", "p2"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.CreateRule(ctx, "r1", rulePayload{PostID: "p1", Signal: "cpu", Operator: "gt", Threshold: 80, MissingPolicy: "unknown", Severity: "warning", Enabled: true}); err != nil {
+	if _, err := a.CreateRule(ctx, "r1", RulePayload{PostID: "p1", Signal: "cpu", Operator: "gt", Threshold: 80, MissingPolicy: "unknown", Severity: "warning", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	_, assertLocal := seedLocalHistory(t, d.db)
@@ -134,7 +134,7 @@ func TestNonFreshSnapshotInstall(t *testing.T) {
 	if _, err := a.AddDependency(ctx, "p1", "p2"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.CreateRule(ctx, "r1", rulePayload{PostID: "p1", Signal: "cpu", Operator: "gt", Threshold: 80, MissingPolicy: "unknown", Severity: "warning", Enabled: true}); err != nil {
+	if _, err := a.CreateRule(ctx, "r1", RulePayload{PostID: "p1", Signal: "cpu", Operator: "gt", Threshold: 80, MissingPolicy: "unknown", Severity: "warning", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	// Source-local node-local state (must never leave the source).
@@ -254,7 +254,7 @@ func TestRestartWithForcedSnapshotPreservesNodeLocal(t *testing.T) {
 	if _, err := a.AddDependency(ctx, "p1", "p2"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.CreateRule(ctx, "r1", rulePayload{PostID: "p1", Signal: "cpu", Operator: "gt", Threshold: 80, MissingPolicy: "unknown", Severity: "warning", Enabled: true}); err != nil {
+	if _, err := a.CreateRule(ctx, "r1", RulePayload{PostID: "p1", Signal: "cpu", Operator: "gt", Threshold: 80, MissingPolicy: "unknown", Severity: "warning", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	_, assertLocal := seedLocalHistory(t, d.db)
@@ -301,7 +301,7 @@ func TestRestartWithSnapshotEqualIndex(t *testing.T) {
 	if _, err := a.CreatePost(ctx, "p1", mkPost("host-a", "host")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.CreateRule(ctx, "r1", rulePayload{PostID: "p1", Signal: "cpu", Operator: "gt", Threshold: 80, MissingPolicy: "unknown", Severity: "warning", Enabled: true}); err != nil {
+	if _, err := a.CreateRule(ctx, "r1", RulePayload{PostID: "p1", Signal: "cpu", Operator: "gt", Threshold: 80, MissingPolicy: "unknown", Severity: "warning", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	_, assertLocal := seedLocalHistory(t, d.db)

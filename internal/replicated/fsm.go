@@ -268,7 +268,7 @@ func (f *FSM) applyLocked(op replication.Operation, index, term uint64) interfac
 
 // --- operation apply ---------------------------------------------------------
 
-type postPayload struct {
+type PostPayload struct {
 	Name        string `json:"name"`
 	Kind        string `json:"kind"`
 	Address     string `json:"address"`
@@ -284,7 +284,7 @@ type depPayload struct {
 	DependsOn string `json:"depends_on"`
 }
 
-type rulePayload struct {
+type RulePayload struct {
 	PostID            string   `json:"post_id"`
 	Signal            string   `json:"signal"`
 	Operator          string   `json:"operator"`
@@ -304,7 +304,7 @@ func boolInt(b bool) int {
 }
 
 func (f *FSM) applyPostCreate(op replication.Operation, index, term uint64) (*replication.ApplyResult, error) {
-	var p postPayload
+	var p PostPayload
 	if err := json.Unmarshal(op.Payload, &p); err != nil {
 		return nil, err
 	}
@@ -329,7 +329,7 @@ func (f *FSM) applyPostCreate(op replication.Operation, index, term uint64) (*re
 }
 
 func (f *FSM) applyPostUpdate(op replication.Operation, index, term uint64) (*replication.ApplyResult, error) {
-	var p postPayload
+	var p PostPayload
 	if err := json.Unmarshal(op.Payload, &p); err != nil {
 		return nil, err
 	}
@@ -456,7 +456,7 @@ func (f *FSM) applyDependencyAdd(op replication.Operation, index, term uint64) (
 }
 
 func (f *FSM) applyRuleCreate(op replication.Operation, index, term uint64) (*replication.ApplyResult, error) {
-	var p rulePayload
+	var p RulePayload
 	if err := json.Unmarshal(op.Payload, &p); err != nil {
 		return nil, err
 	}
@@ -481,7 +481,7 @@ func (f *FSM) applyRuleCreate(op replication.Operation, index, term uint64) (*re
 }
 
 func (f *FSM) applyRuleSetEnabled(op replication.Operation, index, term uint64) (*replication.ApplyResult, error) {
-	var p rulePayload
+	var p RulePayload
 	if err := json.Unmarshal(op.Payload, &p); err != nil {
 		return nil, err
 	}

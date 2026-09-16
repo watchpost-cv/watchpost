@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/watchpost-cv/watchpost/internal/audit"
 	"github.com/watchpost-cv/watchpost/internal/contract"
+	"github.com/watchpost-cv/watchpost/internal/replicated"
 	"github.com/watchpost-cv/watchpost/internal/store"
 	"strings"
 	"time"
@@ -44,6 +45,17 @@ func (e *Engine) ListRules(ctx context.Context, limit int) ([]Rule, error) {
 }
 
 func (e *Engine) SetEnabled(ctx context.Context, id string, enabled bool, entry audit.Entry) error {
+	if e.authority != nil {
+		var cur int64
+		_ = e.s.DB.QueryRow(`SELECT version FROM rules WHERE id=?`, id).Scan(&cur)
+		_, err := e.authority.SetRuleEnabled(ctx, id, cur, enabled)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, replicated.ErrStandalonePath) {
+			return err
+		}
+	}
 	tx, err := e.s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -75,14 +87,32 @@ type Alert struct {
 	Value               *float64
 }
 type Engine struct {
-	s   *store.Store
-	now func() time.Time
+	s         *store.Store
+	now       func() time.Time
+	authority replicated.MutationAuthority
 }
+
+// SetMutationAuthority installs the authoritative replicated mutation choke
+// point (nil = standalone local transactions).
+func (e *Engine) SetMutationAuthority(a replicated.MutationAuthority) { e.authority = a }
 
 func New(s *store.Store) *Engine { return &Engine{s: s, now: time.Now} }
 func (e *Engine) Create(ctx context.Context, r Rule, entry audit.Entry) error {
 	if r.ID == "" || r.PostID == "" || r.Signal == "" || !map[string]bool{"gt": true, "gte": true, "lt": true, "lte": true}[r.Operator] || !map[string]bool{"unknown": true, "healthy": true, "firing": true}[r.MissingPolicy] || r.Duration < 0 {
 		return errors.New("invalid rule")
+	}
+	if e.authority != nil {
+		_, err := e.authority.CreateRule(ctx, r.ID, replicated.RulePayload{
+			PostID: r.PostID, Signal: r.Signal, Operator: r.Operator, Threshold: r.Threshold,
+			DurationSeconds: int64(r.Duration / time.Second), RecoveryThreshold: r.RecoveryThreshold,
+			MissingPolicy: r.MissingPolicy, Severity: r.Severity, Enabled: r.Enabled,
+		})
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, replicated.ErrStandalonePath) {
+			return err
+		}
 	}
 	tx, err := e.s.DB.BeginTx(ctx, nil)
 	if err != nil {

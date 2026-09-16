@@ -145,7 +145,7 @@ func TestProductNodeRestartRecovery(t *testing.T) {
 	if _, err := a.AddDependency(context.Background(), "p1", "p2"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.CreateRule(context.Background(), "r1", rulePayload{PostID: "p1", Signal: "cpu", Operator: "gt", Threshold: 80, MissingPolicy: "unknown", Severity: "warning", Enabled: true}); err != nil {
+	if _, err := a.CreateRule(context.Background(), "r1", RulePayload{PostID: "p1", Signal: "cpu", Operator: "gt", Threshold: 80, MissingPolicy: "unknown", Severity: "warning", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	d.close()
@@ -302,7 +302,7 @@ func TestProductCompleteClusterRestart(t *testing.T) {
 	if _, err := a.CreatePost(context.Background(), "p1", mkPost("host-a", "host")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.CreateRule(context.Background(), "r1", rulePayload{PostID: "p1", Signal: "cpu", Operator: "gt", Threshold: 80, MissingPolicy: "unknown", Severity: "warning", Enabled: true}); err != nil {
+	if _, err := a.CreateRule(context.Background(), "r1", RulePayload{PostID: "p1", Signal: "cpu", Operator: "gt", Threshold: 80, MissingPolicy: "unknown", Severity: "warning", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	if err := first[li].node.Snapshot(); err != nil {

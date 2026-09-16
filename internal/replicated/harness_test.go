@@ -204,8 +204,8 @@ func count(t *testing.T, db *sql.DB, query string, args ...any) int {
 	return n
 }
 
-func mkPost(name, kind string) postPayload {
-	return postPayload{Name: name, Kind: kind, CreatedAt: "2026-01-01T00:00:00Z", UpdatedAt: "2026-01-01T00:00:00Z"}
+func mkPost(name, kind string) PostPayload {
+	return PostPayload{Name: name, Kind: kind, CreatedAt: "2026-01-01T00:00:00Z", UpdatedAt: "2026-01-01T00:00:00Z"}
 }
 
 // TestReplicatedDefinitionsConverge proves the six semantic operations
@@ -224,7 +224,7 @@ func TestReplicatedDefinitionsConverge(t *testing.T) {
 	if _, err := a.AddDependency(context.Background(), "p1", "p2"); err != nil {
 		t.Fatalf("add dependency: %v", err)
 	}
-	if _, err := a.CreateRule(context.Background(), "r1", rulePayload{PostID: "p1", Signal: "cpu", Operator: "gt", Threshold: 80, MissingPolicy: "unknown", Severity: "warning", Enabled: true}); err != nil {
+	if _, err := a.CreateRule(context.Background(), "r1", RulePayload{PostID: "p1", Signal: "cpu", Operator: "gt", Threshold: 80, MissingPolicy: "unknown", Severity: "warning", Enabled: true}); err != nil {
 		t.Fatalf("create rule: %v", err)
 	}
 	if _, err := a.SetRuleEnabled(context.Background(), "r1", 1, false); err != nil {
@@ -261,7 +261,7 @@ func TestPassiveReplicaDoesNotExecute(t *testing.T) {
 	if _, err := a.CreatePost(context.Background(), "p1", mkPost("host-a", "host")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.CreateRule(context.Background(), "r1", rulePayload{PostID: "p1", Signal: "cpu", Operator: "gt", Threshold: 80, MissingPolicy: "firing", Severity: "warning", Enabled: true}); err != nil {
+	if _, err := a.CreateRule(context.Background(), "r1", RulePayload{PostID: "p1", Signal: "cpu", Operator: "gt", Threshold: 80, MissingPolicy: "firing", Severity: "warning", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	// The FSM materializes definitions only; it never writes evaluation/execution
@@ -285,7 +285,7 @@ func TestDeleteWithDifferingLocalHistory(t *testing.T) {
 	if _, err := a.CreatePost(context.Background(), "p1", mkPost("host-a", "host")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.CreateRule(context.Background(), "r1", rulePayload{PostID: "p1", Signal: "cpu", Operator: "gt", Threshold: 80, MissingPolicy: "unknown", Severity: "warning", Enabled: true}); err != nil {
+	if _, err := a.CreateRule(context.Background(), "r1", RulePayload{PostID: "p1", Signal: "cpu", Operator: "gt", Threshold: 80, MissingPolicy: "unknown", Severity: "warning", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := a.AddDependency(context.Background(), "p1", "p1"); err == nil {
@@ -438,7 +438,7 @@ func TestSnapshotRestorePreservesGraphRevision(t *testing.T) {
 	if _, err := a.AddDependency(context.Background(), "p1", "p2"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.CreateRule(context.Background(), "r1", rulePayload{PostID: "p1", Signal: "cpu", Operator: "gt", Threshold: 80, MissingPolicy: "unknown", Severity: "warning", Enabled: true}); err != nil {
+	if _, err := a.CreateRule(context.Background(), "r1", RulePayload{PostID: "p1", Signal: "cpu", Operator: "gt", Threshold: 80, MissingPolicy: "unknown", Severity: "warning", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
 

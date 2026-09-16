@@ -41,21 +41,25 @@ func NewAdapter(node *replication.Node, fsm *FSM, db *sql.DB, product string) *A
 }
 
 // CreatePost proposes a new post definition.
-func (a *Adapter) CreatePost(ctx context.Context, id string, p postPayload) (*replication.ApplyResult, error) {
-	op, err := buildOperation(a.opID("post"), a.product, KindPostCreate, id, 0, 0, p)
-	if err != nil {
-		return nil, err
-	}
-	return a.node.Propose(ctx, op)
+func (a *Adapter) CreatePost(ctx context.Context, id string, p PostPayload) (*replication.ApplyResult, error) {
+	return a.proposeOp(ctx, a.opID("post"), KindPostCreate, id, 0, 0, p)
+}
+
+// CreatePostWithOp proposes a post create carrying the forwarded operation
+// identity (the follower's request identity, preserved across retries).
+func (a *Adapter) CreatePostWithOp(ctx context.Context, id, opID string, p PostPayload) (*replication.ApplyResult, error) {
+	return a.proposeOp(ctx, opID, KindPostCreate, id, 0, 0, p)
 }
 
 // UpdatePost proposes a post update against an expected object revision.
-func (a *Adapter) UpdatePost(ctx context.Context, id string, expectedVersion int64, p postPayload) (*replication.ApplyResult, error) {
-	op, err := buildOperation(a.opID("post"), a.product, KindPostUpdate, id, expectedVersion, 0, p)
-	if err != nil {
-		return nil, err
-	}
-	return a.node.Propose(ctx, op)
+func (a *Adapter) UpdatePost(ctx context.Context, id string, expectedVersion int64, p PostPayload) (*replication.ApplyResult, error) {
+	return a.proposeOp(ctx, a.opID("post"), KindPostUpdate, id, expectedVersion, 0, p)
+}
+
+// UpdatePostWithOp proposes a post update carrying the forwarded operation
+// identity.
+func (a *Adapter) UpdatePostWithOp(ctx context.Context, id, opID string, expectedVersion int64, p PostPayload) (*replication.ApplyResult, error) {
+	return a.proposeOp(ctx, opID, KindPostUpdate, id, expectedVersion, 0, p)
 }
 
 // DeletePost proposes deletion of a post definition. It is a graph-changing
@@ -63,6 +67,12 @@ func (a *Adapter) UpdatePost(ctx context.Context, id string, expectedVersion int
 // carries the current dependency-graph revision.
 func (a *Adapter) DeletePost(ctx context.Context, id string) (*replication.ApplyResult, error) {
 	return a.graphPropose(ctx, KindPostDelete, a.opID("post"), id, 0, nil, nil)
+}
+
+// DeletePostWithOp proposes a post delete carrying the forwarded operation
+// identity.
+func (a *Adapter) DeletePostWithOp(ctx context.Context, id, opID string) (*replication.ApplyResult, error) {
+	return a.graphPropose(ctx, KindPostDelete, opID, id, 0, nil, nil)
 }
 
 // AddDependency proposes a dependency edge. Semantic validation (endpoints
@@ -75,20 +85,41 @@ func (a *Adapter) AddDependency(ctx context.Context, source, depends string) (*r
 	})
 }
 
+// AddDependencyWithOp proposes a dependency edge carrying the forwarded
+// operation identity.
+func (a *Adapter) AddDependencyWithOp(ctx context.Context, source, opID, depends string) (*replication.ApplyResult, error) {
+	return a.graphPropose(ctx, KindDependencyAdd, opID, source, 0, depPayload{DependsOn: depends}, func() error {
+		return validateDependencyAdd(ctx, a.db, source, depends)
+	})
+}
+
 // CreateRule proposes a new rule definition for an existing post.
-func (a *Adapter) CreateRule(ctx context.Context, id string, r rulePayload) (*replication.ApplyResult, error) {
-	op, err := buildOperation(a.opID("rule"), a.product, KindRuleCreate, id, 0, 0, r)
-	if err != nil {
-		return nil, err
-	}
-	return a.node.Propose(ctx, op)
+func (a *Adapter) CreateRule(ctx context.Context, id string, r RulePayload) (*replication.ApplyResult, error) {
+	return a.proposeOp(ctx, a.opID("rule"), KindRuleCreate, id, 0, 0, r)
+}
+
+// CreateRuleWithOp proposes a rule create carrying the forwarded operation
+// identity.
+func (a *Adapter) CreateRuleWithOp(ctx context.Context, id, opID string, r RulePayload) (*replication.ApplyResult, error) {
+	return a.proposeOp(ctx, opID, KindRuleCreate, id, 0, 0, r)
 }
 
 // SetRuleEnabled proposes enabling/disabling a rule against an expected
 // object revision.
 func (a *Adapter) SetRuleEnabled(ctx context.Context, id string, expectedVersion int64, enabled bool) (*replication.ApplyResult, error) {
-	r := rulePayload{Enabled: enabled}
-	op, err := buildOperation(a.opID("rule"), a.product, KindRuleSetEnable, id, expectedVersion, 0, r)
+	return a.proposeOp(ctx, a.opID("rule"), KindRuleSetEnable, id, expectedVersion, 0, RulePayload{Enabled: enabled})
+}
+
+// SetRuleEnabledWithOp proposes a rule enable/disable carrying the forwarded
+// operation identity.
+func (a *Adapter) SetRuleEnabledWithOp(ctx context.Context, id, opID string, expectedVersion int64, enabled bool) (*replication.ApplyResult, error) {
+	return a.proposeOp(ctx, opID, KindRuleSetEnable, id, expectedVersion, 0, RulePayload{Enabled: enabled})
+}
+
+// proposeOp builds and proposes a non-graph operation with an explicit
+// operation identity (local generation or forwarded request identity).
+func (a *Adapter) proposeOp(ctx context.Context, opID, kind, id string, revision, domainRevision int64, payload any) (*replication.ApplyResult, error) {
+	op, err := buildOperation(opID, a.product, kind, id, revision, domainRevision, payload)
 	if err != nil {
 		return nil, err
 	}

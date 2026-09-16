@@ -38,6 +38,7 @@ import (
 	"github.com/watchpost-cv/watchpost/internal/pairing"
 	"github.com/watchpost-cv/watchpost/internal/posts"
 	productprop "github.com/watchpost-cv/watchpost/internal/propagation"
+	"github.com/watchpost-cv/watchpost/internal/replicated"
 	"github.com/watchpost-cv/watchpost/internal/retention"
 	"github.com/watchpost-cv/watchpost/internal/rules"
 	"github.com/watchpost-cv/watchpost/internal/secrets"
@@ -66,6 +67,7 @@ type Server struct {
 	pairing            *pairing.Service
 	health             *collectorhealth.Store
 	devices            *devices.ProfileStore
+	replicated         *replicated.Controller
 	checks             *checks.ScheduleStore
 	retention          *retention.Store
 	storage            *storage.Checker
@@ -116,6 +118,19 @@ func (l *checkRateLimiter) allow() bool {
 	}
 	l.times = append(l.times, time.Now())
 	return true
+}
+
+// InstallReplicated installs the authoritative replicated mutation authority
+// on the posts/rules domain services (nil/not installed = standalone local
+// transactions). The Controller owns configured mode + runtime readiness; the
+// Router routes every posts/rules mutation through it (standalone sentinel,
+// leader proposal, follower forwarding, or rejection - never a local SQL
+// fallback for a configured replicated node).
+func (s *Server) InstallReplicated(ctrl *replicated.Controller) {
+	s.replicated = ctrl
+	router := replicated.NewRouter(ctrl)
+	s.posts.SetMutationAuthority(router)
+	s.rules.SetMutationAuthority(router)
 }
 
 func New(cfg config.Config, version string, logger *slog.Logger, database *store.Store) *Server {
