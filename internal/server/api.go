@@ -324,7 +324,12 @@ func (s *Server) handleCreatePost(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &post) {
 		return
 	}
-	post, err := s.posts.Create(r.Context(), post, audit.Entry{ActorID: currentUser(r).ID, Action: "post_create", ObjectType: "post", ObjectID: post.ID, Detail: post.Name})
+	ctx, err := s.mutationContext(r)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	post, err = s.posts.Create(ctx, post, audit.Entry{ActorID: currentUser(r).ID, Action: "post_create", ObjectType: "post", ObjectID: post.ID, Detail: post.Name})
 	if err != nil {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
@@ -384,7 +389,12 @@ func (s *Server) handleUpdatePost(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": "If-Match version required"})
 		return
 	}
-	post, err = s.posts.Update(r.Context(), post, expected, audit.Entry{ActorID: currentUser(r).ID, Action: "post_update", ObjectType: "post", ObjectID: post.ID, Detail: fmt.Sprintf("name=%s maintenance=%t archived=%t", post.Name, post.Maintenance, post.Archived)})
+	ctx, err := s.mutationContext(r)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	post, err = s.posts.Update(ctx, post, expected, audit.Entry{ActorID: currentUser(r).ID, Action: "post_update", ObjectType: "post", ObjectID: post.ID, Detail: fmt.Sprintf("name=%s maintenance=%t archived=%t", post.Name, post.Maintenance, post.Archived)})
 	if err != nil {
 		writeJSON(w, 409, map[string]string{"error": err.Error()})
 		return
@@ -404,7 +414,12 @@ func (s *Server) handleDeletePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := r.Context().Value(userContextKey{}).(auth.User)
-	if err := s.posts.Delete(r.Context(), id, audit.Entry{ActorID: user.ID, Action: "post_delete", ObjectType: "post", ObjectID: id, Detail: "permanent deletion confirmed"}); err != nil {
+	ctx, err := s.mutationContext(r)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	if err := s.posts.Delete(ctx, id, audit.Entry{ActorID: user.ID, Action: "post_delete", ObjectType: "post", ObjectID: id, Detail: "permanent deletion confirmed"}); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeJSON(w, 404, map[string]string{"error": "post not found"})
 			return
@@ -421,7 +436,12 @@ func (s *Server) handleAddDependency(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
-	if err := s.posts.AddDependency(r.Context(), r.PathValue("id"), in.DependsOn, audit.Entry{ActorID: currentUser(r).ID, Action: "dependency_add", ObjectType: "post", ObjectID: r.PathValue("id"), Detail: "depends_on=" + in.DependsOn}); err != nil {
+	ctx, err := s.mutationContext(r)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	if err := s.posts.AddDependency(ctx, r.PathValue("id"), in.DependsOn, audit.Entry{ActorID: currentUser(r).ID, Action: "dependency_add", ObjectType: "post", ObjectID: r.PathValue("id"), Detail: "depends_on=" + in.DependsOn}); err != nil {
 		writeJSON(w, 409, map[string]string{"error": err.Error()})
 		return
 	}
@@ -666,7 +686,12 @@ func (s *Server) handleCreateRule(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
-	err := s.rules.Create(r.Context(), rules.Rule{ID: in.ID, PostID: in.PostID, Signal: in.Signal, Operator: in.Operator, Threshold: in.Threshold, Duration: time.Duration(in.DurationSeconds) * time.Second, MissingPolicy: in.MissingPolicy, Severity: in.Severity, Enabled: true}, audit.Entry{ActorID: currentUser(r).ID, Action: "rule_create", ObjectType: "rule", ObjectID: in.ID, Detail: "post=" + in.PostID + " signal=" + in.Signal})
+	ctx, err := s.mutationContext(r)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	err = s.rules.Create(ctx, rules.Rule{ID: in.ID, PostID: in.PostID, Signal: in.Signal, Operator: in.Operator, Threshold: in.Threshold, Duration: time.Duration(in.DurationSeconds) * time.Second, MissingPolicy: in.MissingPolicy, Severity: in.Severity, Enabled: true}, audit.Entry{ActorID: currentUser(r).ID, Action: "rule_create", ObjectType: "rule", ObjectID: in.ID, Detail: "post=" + in.PostID + " signal=" + in.Signal})
 	if err != nil {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
@@ -694,7 +719,12 @@ func (s *Server) handleSetRuleEnabled(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
-	if err := s.rules.SetEnabled(r.Context(), r.PathValue("id"), in.Enabled, audit.Entry{ActorID: currentUser(r).ID, Action: "rule_set_enabled", ObjectType: "rule", ObjectID: r.PathValue("id"), Detail: fmt.Sprintf("enabled=%t", in.Enabled)}); err != nil {
+	ctx, err := s.mutationContext(r)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	if err := s.rules.SetEnabled(ctx, r.PathValue("id"), in.Enabled, audit.Entry{ActorID: currentUser(r).ID, Action: "rule_set_enabled", ObjectType: "rule", ObjectID: r.PathValue("id"), Detail: fmt.Sprintf("enabled=%t", in.Enabled)}); err != nil {
 		writeJSON(w, 404, map[string]string{"error": err.Error()})
 		return
 	}

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"sync"
 
@@ -42,7 +43,7 @@ func NewAdapter(node *replication.Node, fsm *FSM, db *sql.DB, product string) *A
 
 // CreatePost proposes a new post definition.
 func (a *Adapter) CreatePost(ctx context.Context, id string, p PostPayload) (*replication.ApplyResult, error) {
-	return a.proposeOp(ctx, a.opID("post"), KindPostCreate, id, 0, 0, p)
+	return a.proposeOp(ctx, a.resolveOpID(ctx, "post"), KindPostCreate, id, 0, 0, p)
 }
 
 // CreatePostWithOp proposes a post create carrying the forwarded operation
@@ -53,7 +54,7 @@ func (a *Adapter) CreatePostWithOp(ctx context.Context, id, opID string, p PostP
 
 // UpdatePost proposes a post update against an expected object revision.
 func (a *Adapter) UpdatePost(ctx context.Context, id string, expectedVersion int64, p PostPayload) (*replication.ApplyResult, error) {
-	return a.proposeOp(ctx, a.opID("post"), KindPostUpdate, id, expectedVersion, 0, p)
+	return a.proposeOp(ctx, a.resolveOpID(ctx, "post"), KindPostUpdate, id, expectedVersion, 0, p)
 }
 
 // UpdatePostWithOp proposes a post update carrying the forwarded operation
@@ -66,7 +67,7 @@ func (a *Adapter) UpdatePostWithOp(ctx context.Context, id, opID string, expecte
 // operation, so it participates in the same graph-mutation serialization and
 // carries the current dependency-graph revision.
 func (a *Adapter) DeletePost(ctx context.Context, id string) (*replication.ApplyResult, error) {
-	return a.graphPropose(ctx, KindPostDelete, a.opID("post"), id, 0, nil, nil)
+	return a.graphPropose(ctx, KindPostDelete, a.resolveOpID(ctx, "post"), id, 0, nil, nil)
 }
 
 // DeletePostWithOp proposes a post delete carrying the forwarded operation
@@ -80,7 +81,7 @@ func (a *Adapter) DeletePostWithOp(ctx context.Context, id, opID string) (*repli
 // atomically inside the graph-mutation admission lock, so an operation is
 // always labelled with the exact graph revision it was validated against.
 func (a *Adapter) AddDependency(ctx context.Context, source, depends string) (*replication.ApplyResult, error) {
-	return a.graphPropose(ctx, KindDependencyAdd, a.opID("dep"), source, 0, depPayload{DependsOn: depends}, func() error {
+	return a.graphPropose(ctx, KindDependencyAdd, a.resolveOpID(ctx, "dep"), source, 0, depPayload{DependsOn: depends}, func() error {
 		return validateDependencyAdd(ctx, a.db, source, depends)
 	})
 }
@@ -95,7 +96,7 @@ func (a *Adapter) AddDependencyWithOp(ctx context.Context, source, opID, depends
 
 // CreateRule proposes a new rule definition for an existing post.
 func (a *Adapter) CreateRule(ctx context.Context, id string, r RulePayload) (*replication.ApplyResult, error) {
-	return a.proposeOp(ctx, a.opID("rule"), KindRuleCreate, id, 0, 0, r)
+	return a.proposeOp(ctx, a.resolveOpID(ctx, "rule"), KindRuleCreate, id, 0, 0, r)
 }
 
 // CreateRuleWithOp proposes a rule create carrying the forwarded operation
@@ -107,7 +108,7 @@ func (a *Adapter) CreateRuleWithOp(ctx context.Context, id, opID string, r RuleP
 // SetRuleEnabled proposes enabling/disabling a rule against an expected
 // object revision.
 func (a *Adapter) SetRuleEnabled(ctx context.Context, id string, expectedVersion int64, enabled bool) (*replication.ApplyResult, error) {
-	return a.proposeOp(ctx, a.opID("rule"), KindRuleSetEnable, id, expectedVersion, 0, RulePayload{Enabled: enabled})
+	return a.proposeOp(ctx, a.resolveOpID(ctx, "rule"), KindRuleSetEnable, id, expectedVersion, 0, RulePayload{Enabled: enabled})
 }
 
 // SetRuleEnabledWithOp proposes a rule enable/disable carrying the forwarded
@@ -122,6 +123,16 @@ func (a *Adapter) proposeOp(ctx context.Context, opID, kind, id string, revision
 	if err := a.fsm.ApplyFailure(); err != nil {
 		return nil, fmt.Errorf("replica unhealthy: %w", err)
 	}
+	// Caller-supplied request identity idempotency: an already-applied operation
+	// identity with the same semantic intent returns the original committed
+	// result (no re-proposal, no second mutation); a changed semantic intent
+	// fails closed.
+	if prior, ok := a.fsm.AppliedOp(opID); ok && len(prior.Payload) > 0 {
+		if !semanticallyEquivalent(kind, prior, id, revision, payload) {
+			return nil, fmt.Errorf("operation id %q already applied with a different payload; refusing", opID)
+		}
+		return prior.Result, nil
+	}
 	op, err := buildOperation(opID, a.product, kind, id, revision, domainRevision, payload)
 	if err != nil {
 		return nil, err
@@ -131,6 +142,16 @@ func (a *Adapter) proposeOp(ctx context.Context, opID, kind, id string, revision
 
 // AppliedIndex returns the locally applied (index, term) of the product FSM.
 func (a *Adapter) AppliedIndex() (uint64, uint64) { return a.node.AppliedIndex() }
+
+// resolveOpID returns the caller-supplied request identity when present (the
+// durable operation-ID idempotency contract: retries reuse it, identical retries
+// dedup, changed payloads fail closed), otherwise a fresh generated identity.
+func (a *Adapter) resolveOpID(ctx context.Context, prefix string) string {
+	if id := RequestID(ctx); id != "" {
+		return id
+	}
+	return a.opID(prefix)
+}
 
 // opID returns a unique operation identity for a distinct semantic mutation,
 // so the durable operation-ID idempotency contract distinguishes operations
@@ -154,6 +175,12 @@ func (a *Adapter) graphPropose(ctx context.Context, kind, opID, objectID string,
 	if err := a.fsm.ApplyFailure(); err != nil {
 		return nil, fmt.Errorf("replica unhealthy: %w", err)
 	}
+	if prior, ok := a.fsm.AppliedOp(opID); ok && len(prior.Payload) > 0 {
+		if !semanticallyEquivalent(kind, prior, objectID, revision, payload) {
+			return nil, fmt.Errorf("operation id %q already applied with a different payload; refusing", opID)
+		}
+		return prior.Result, nil
+	}
 	a.graphMu.Lock()
 	defer a.graphMu.Unlock()
 	if a.BeforeGraphValidate != nil {
@@ -173,4 +200,58 @@ func (a *Adapter) graphPropose(ctx context.Context, kind, opID, objectID string,
 		return nil, err
 	}
 	return a.node.Propose(ctx, op)
+}
+
+// semanticallyEquivalent reports whether a retried mutation carrying the same
+// operation identity matches the already-applied operation's SEMANTIC intent
+// (the client-visible fields + object precondition), excluding server-generated
+// timestamp fields, so a retried HTTP mutation is recognized as identical even
+// though the domain regenerates proposal timestamps.
+func semanticallyEquivalent(kind string, prior appliedOp, objectID string, revision int64, payload any) bool {
+	if prior.Result == nil || prior.Result.ObjectID != objectID || prior.Revision != revision {
+		return false
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return false
+	}
+	switch kind {
+	case KindPostCreate, KindPostUpdate:
+		var p, q PostPayload
+		if json.Unmarshal(prior.Payload, &p) != nil || json.Unmarshal(raw, &q) != nil {
+			return false
+		}
+		return p.Name == q.Name && p.Kind == q.Kind && p.Address == q.Address && p.Owner == q.Owner &&
+			p.LabelsJSON == q.LabelsJSON && p.Maintenance == q.Maintenance && p.Archived == q.Archived
+	case KindRuleCreate:
+		var p, q RulePayload
+		if json.Unmarshal(prior.Payload, &p) != nil || json.Unmarshal(raw, &q) != nil {
+			return false
+		}
+		return p.PostID == q.PostID && p.Signal == q.Signal && p.Operator == q.Operator && p.Threshold == q.Threshold &&
+			p.DurationSeconds == q.DurationSeconds && equalFloatPtr(p.RecoveryThreshold, q.RecoveryThreshold) &&
+			p.MissingPolicy == q.MissingPolicy && p.Severity == q.Severity && p.Enabled == q.Enabled
+	case KindRuleSetEnable:
+		var p, q RulePayload
+		if json.Unmarshal(prior.Payload, &p) != nil || json.Unmarshal(raw, &q) != nil {
+			return false
+		}
+		return p.Enabled == q.Enabled
+	case KindDependencyAdd:
+		var p, q depPayload
+		if json.Unmarshal(prior.Payload, &p) != nil || json.Unmarshal(raw, &q) != nil {
+			return false
+		}
+		return p.DependsOn == q.DependsOn
+	case KindPostDelete:
+		return true // no semantic payload; object identity + revision already compared
+	}
+	return false
+}
+
+func equalFloatPtr(a, b *float64) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
 }

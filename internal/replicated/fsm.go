@@ -94,6 +94,15 @@ type injectApplyFailure struct {
 type appliedOp struct {
 	Digest string                   `json:"digest"`
 	Result *replication.ApplyResult `json:"result"`
+	// Payload is the canonical committed payload and Revision the object-scoped
+	// precondition of the applied operation. They enable the adapter's semantic
+	// idempotency check (the caller-supplied request identity): a retry is
+	// recognized by comparing the semantic intent (excluding server-generated
+	// timestamp fields) + the object precondition, so a retried HTTP mutation
+	// returns the original committed result instead of failing the full-digest
+	// dedup on regenerated timestamps.
+	Payload  []byte `json:"payload,omitempty"`
+	Revision int64  `json:"revision,omitempty"`
 }
 
 var _ replication.StateMachine = (*FSM)(nil)
@@ -192,6 +201,15 @@ func (f *FSM) GraphRevision() int64 {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.graphRev
+}
+
+// AppliedOp returns the recorded applied operation for an op ID and whether it
+// is known (used by the adapter's semantic idempotency check).
+func (f *FSM) AppliedOp(id string) (appliedOp, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	p, ok := f.applied[id]
+	return p, ok
 }
 
 // OpKnown implements replication.StateMachine.
@@ -324,7 +342,7 @@ func (f *FSM) applyLocked(op replication.Operation, index, term uint64) interfac
 	// ordinary construction/restart).
 	if index <= f.persistedIndex {
 		res := &replication.ApplyResult{Index: index, Term: term, OpID: op.ID, ObjectID: op.ObjectID, Kind: op.Kind, Version: op.Version, Revision: op.Revision}
-		f.applied[op.ID] = appliedOp{Digest: digest, Result: res}
+		f.applied[op.ID] = appliedOp{Digest: digest, Result: res, Payload: op.Payload, Revision: op.Revision}
 		f.appliedIndex = index
 		f.appliedTerm = term
 		return res
@@ -371,7 +389,7 @@ func (f *FSM) applyLocked(op replication.Operation, index, term uint64) interfac
 		}
 		return err
 	}
-	f.applied[op.ID] = appliedOp{Digest: digest, Result: res}
+	f.applied[op.ID] = appliedOp{Digest: digest, Result: res, Payload: op.Payload, Revision: op.Revision}
 	if f.product == "" {
 		f.product = op.Product
 	}

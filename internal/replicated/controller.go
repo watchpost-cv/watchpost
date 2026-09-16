@@ -167,6 +167,16 @@ func (c *Controller) opID(prefix string) string {
 	return adapter.opID(prefix)
 }
 
+// resolveOpID returns the caller-supplied request identity when present (so the
+// same logical HTTP retry maps to the SAME replication operation identity),
+// otherwise a fresh per-intent identity.
+func (c *Controller) resolveOpID(ctx context.Context, prefix string) string {
+	if id := RequestID(ctx); id != "" {
+		return id
+	}
+	return c.opID(prefix)
+}
+
 // awaitLocalApplied blocks until the local FSM has applied at least index (the
 // forwarded operation's commit index) or the context is done, so a follower
 // only returns a forwarded mutation once its own applied state reflects it.
@@ -190,6 +200,30 @@ func (c *Controller) awaitLocalApplied(ctx context.Context, index uint64) error 
 		case <-tick.C:
 		}
 	}
+}
+
+// requestIDKey is the context key carrying the caller-supplied
+// idempotency/request identity that maps to the replication operation ID.
+type requestIDKey struct{}
+
+// WithRequestID attaches a caller-supplied idempotency/request identity to ctx.
+// Retrying the SAME logical mutation with the SAME identity resolves to the
+// SAME replication operation identity: the durable op-ID contract then returns
+// the original committed result (no second mutation) for identical payloads and
+// fails closed for a changed payload. A genuinely new intent uses a fresh
+// identity. Absent identity -> the Router/Adapter generate a fresh operation ID
+// per intent.
+func WithRequestID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, requestIDKey{}, id)
+}
+
+// RequestID returns the caller-supplied idempotency/request identity, or ""
+// when the caller provided none.
+func RequestID(ctx context.Context) string {
+	if id, ok := ctx.Value(requestIDKey{}).(string); ok {
+		return id
+	}
+	return ""
 }
 
 // MutationAuthority is the authoritative replicated mutation choke point that
@@ -219,37 +253,37 @@ func NewRouter(ctrl *Controller) *Router { return &Router{c: ctrl} }
 
 // CreatePost routes a post create.
 func (r *Router) CreatePost(ctx context.Context, id string, p PostPayload) (*replication.ApplyResult, error) {
-	fr := ForwardRequest{Kind: KindPostCreate, ObjectID: id, OpID: r.c.opID("post"), Payload: mustJSON(p)}
+	fr := ForwardRequest{Kind: KindPostCreate, ObjectID: id, OpID: r.c.resolveOpID(ctx, "post"), Payload: mustJSON(p)}
 	return r.route(ctx, fr, func(a *Adapter) (*replication.ApplyResult, error) { return a.CreatePost(ctx, id, p) })
 }
 
 // UpdatePost routes a post update.
 func (r *Router) UpdatePost(ctx context.Context, id string, expectedVersion int64, p PostPayload) (*replication.ApplyResult, error) {
-	fr := ForwardRequest{Kind: KindPostUpdate, ObjectID: id, OpID: r.c.opID("post"), Revision: expectedVersion, Payload: mustJSON(p)}
+	fr := ForwardRequest{Kind: KindPostUpdate, ObjectID: id, OpID: r.c.resolveOpID(ctx, "post"), Revision: expectedVersion, Payload: mustJSON(p)}
 	return r.route(ctx, fr, func(a *Adapter) (*replication.ApplyResult, error) { return a.UpdatePost(ctx, id, expectedVersion, p) })
 }
 
 // DeletePost routes a post delete.
 func (r *Router) DeletePost(ctx context.Context, id string) (*replication.ApplyResult, error) {
-	fr := ForwardRequest{Kind: KindPostDelete, ObjectID: id, OpID: r.c.opID("post")}
+	fr := ForwardRequest{Kind: KindPostDelete, ObjectID: id, OpID: r.c.resolveOpID(ctx, "post")}
 	return r.route(ctx, fr, func(a *Adapter) (*replication.ApplyResult, error) { return a.DeletePost(ctx, id) })
 }
 
 // AddDependency routes a dependency add.
 func (r *Router) AddDependency(ctx context.Context, source, depends string) (*replication.ApplyResult, error) {
-	fr := ForwardRequest{Kind: KindDependencyAdd, ObjectID: source, OpID: r.c.opID("dep"), Payload: mustJSON(depPayload{DependsOn: depends})}
+	fr := ForwardRequest{Kind: KindDependencyAdd, ObjectID: source, OpID: r.c.resolveOpID(ctx, "dep"), Payload: mustJSON(depPayload{DependsOn: depends})}
 	return r.route(ctx, fr, func(a *Adapter) (*replication.ApplyResult, error) { return a.AddDependency(ctx, source, depends) })
 }
 
 // CreateRule routes a rule create.
 func (r *Router) CreateRule(ctx context.Context, id string, rl RulePayload) (*replication.ApplyResult, error) {
-	fr := ForwardRequest{Kind: KindRuleCreate, ObjectID: id, OpID: r.c.opID("rule"), Payload: mustJSON(rl)}
+	fr := ForwardRequest{Kind: KindRuleCreate, ObjectID: id, OpID: r.c.resolveOpID(ctx, "rule"), Payload: mustJSON(rl)}
 	return r.route(ctx, fr, func(a *Adapter) (*replication.ApplyResult, error) { return a.CreateRule(ctx, id, rl) })
 }
 
 // SetRuleEnabled routes a rule enable/disable.
 func (r *Router) SetRuleEnabled(ctx context.Context, id string, expectedVersion int64, enabled bool) (*replication.ApplyResult, error) {
-	fr := ForwardRequest{Kind: KindRuleSetEnable, ObjectID: id, OpID: r.c.opID("rule"), Revision: expectedVersion, Payload: mustJSON(RulePayload{Enabled: enabled})}
+	fr := ForwardRequest{Kind: KindRuleSetEnable, ObjectID: id, OpID: r.c.resolveOpID(ctx, "rule"), Revision: expectedVersion, Payload: mustJSON(RulePayload{Enabled: enabled})}
 	return r.route(ctx, fr, func(a *Adapter) (*replication.ApplyResult, error) {
 		return a.SetRuleEnabled(ctx, id, expectedVersion, enabled)
 	})
