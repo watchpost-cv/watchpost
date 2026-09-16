@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -183,6 +184,9 @@ func Load(overrides Overrides) (Config, error) {
 		return Config{}, err
 	}
 	if err := applyOpsEnv(&cfg); err != nil {
+		return Config{}, err
+	}
+	if err := applyReplicationEnv(&cfg); err != nil {
 		return Config{}, err
 	}
 	if err := validate(cfg); err != nil {
@@ -409,6 +413,68 @@ func validate(cfg Config) error {
 	}
 	if !filepath.IsAbs(cfg.DataDir) {
 		return fmt.Errorf("data directory must be absolute")
+	}
+	return validateReplication(cfg.Replication)
+}
+
+// applyReplicationEnv loads the replication participant configuration from the
+// canonical WATCHPOST_* environment surface. A configured replicated node is
+// never inferred from cluster_members rows; it is explicitly enabled.
+func applyReplicationEnv(cfg *Config) error {
+	r := &cfg.Replication
+	if v := os.Getenv("WATCHPOST_REPLICATION_ENABLED"); v == "1" || v == "true" {
+		r.Enabled = true
+	}
+	if v := os.Getenv("WATCHPOST_REPLICATION_NODE_ID"); v != "" {
+		r.NodeID = v
+	}
+	if v := os.Getenv("WATCHPOST_REPLICATION_BOOTSTRAP"); v == "1" || v == "true" {
+		r.Bootstrap = true
+	}
+	if v := os.Getenv("WATCHPOST_REPLICATION_LISTEN"); v != "" {
+		r.Listen = v
+	}
+	if v := os.Getenv("WATCHPOST_REPLICATION_TLS_CERT"); v != "" {
+		r.TLSCert = v
+	}
+	if v := os.Getenv("WATCHPOST_REPLICATION_TLS_KEY"); v != "" {
+		r.TLSKey = v
+	}
+	if v := os.Getenv("WATCHPOST_REPLICATION_TLS_CA"); v != "" {
+		r.TLSCA = v
+	}
+	if v := os.Getenv("WATCHPOST_REPLICATION_INSECURE_PLAINTEXT"); v == "1" || v == "true" {
+		r.InsecurePlaintext = true
+	}
+	return nil
+}
+
+// validateReplication fails closed on incomplete or contradictory replication
+// configuration. Replication disabled requires nothing; enabled requires a
+// stable listen address and either a complete mutual-TLS triplet or an explicit
+// insecure-local opt-in (never both).
+func validateReplication(r ReplicationConfig) error {
+	if !r.Enabled {
+		return nil
+	}
+	if r.Listen == "" {
+		return errors.New("replication enabled requires a stable listen/advertise address (WATCHPOST_REPLICATION_LISTEN)")
+	}
+	if _, _, err := net.SplitHostPort(r.Listen); err != nil {
+		return fmt.Errorf("invalid replication listen address %q: %w", r.Listen, err)
+	}
+	tlsProvided := r.TLSCert != "" || r.TLSKey != "" || r.TLSCA != ""
+	if r.InsecurePlaintext {
+		if tlsProvided {
+			return errors.New("replication TLS and insecure plaintext are contradictory; configure one")
+		}
+		return nil
+	}
+	if !tlsProvided {
+		return errors.New("replication enabled requires the TLS cert/key/CA triplet (WATCHPOST_REPLICATION_TLS_CERT/_TLS_KEY/_TLS_CA) or an explicit insecure plaintext opt-in (WATCHPOST_REPLICATION_INSECURE_PLAINTEXT)")
+	}
+	if r.TLSCert == "" || r.TLSKey == "" || r.TLSCA == "" {
+		return errors.New("replication TLS requires the complete cert/key/CA triplet (mutual TLS contract)")
 	}
 	return nil
 }

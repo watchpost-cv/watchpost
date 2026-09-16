@@ -5,6 +5,7 @@ package runtime
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +18,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/watchpost-cv/watchpost/internal/config"
+
 	"github.com/gantry-tools/gantry-core/replication"
 	"github.com/hashicorp/raft"
 
@@ -28,6 +31,47 @@ import (
 // DefaultProposePath is the authenticated leader proposal RPC endpoint on the
 // cluster peer API (must match server.ReplicatedProposePath).
 const DefaultProposePath = "/api/cluster/v1/replication/propose"
+
+// LoadReplicationTLS builds the production replication transport TLS config
+// from the configured cert/key/CA triplet (mutual TLS contract: all three are
+// required). Peer identity is bound by the mutual Gantry handshake over the
+// encrypted channel - certificate verification provides channel trust, never
+// identity - and the server additionally requires and verifies peer
+// certificates against the configured cluster CA. An empty TLS configuration
+// returns nil; the runtime then fails closed unless plaintext is explicitly
+// opted in.
+//
+// InsecureSkipVerify is present on the shared client+server config because the
+// NetTransport dials arbitrary peers with one config (no per-dial ServerName).
+// The remote endpoint is authenticated by the mutual Gantry handshake
+// (pairwise credential digest + signed handshake + nonce replay), so skipping
+// TLS hostname verification does not weaken endpoint identity; it only leaves
+// channel confidentiality/integrity to the TLS session.
+func LoadReplicationTLS(cfg config.Config) (*tls.Config, error) {
+	r := cfg.Replication
+	if r.TLSCert == "" && r.TLSKey == "" && r.TLSCA == "" {
+		return nil, nil
+	}
+	if r.TLSCert == "" || r.TLSKey == "" || r.TLSCA == "" {
+		return nil, errors.New("replication TLS requires the full cert/key/CA triplet")
+	}
+	cert, err := tls.LoadX509KeyPair(r.TLSCert, r.TLSKey)
+	if err != nil {
+		return nil, err
+	}
+	pemBytes, err := os.ReadFile(r.TLSCA)
+	if err != nil {
+		return nil, err
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pemBytes) {
+		return nil, errors.New("no certificates found in replication tls_ca")
+	}
+	return &tls.Config{
+		Certificates: []tls.Certificate{cert}, ClientCAs: pool, RootCAs: pool,
+		ClientAuth: tls.RequireAndVerifyClientCert, InsecureSkipVerify: true, MinVersion: tls.VersionTLS12,
+	}, nil
+}
 
 // Options configures the production replicated composition of a node.
 type Options struct {
