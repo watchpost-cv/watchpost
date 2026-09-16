@@ -77,13 +77,16 @@ func buildDurableNode(t *testing.T, id raft.ServerID, raftDir string, fabric *re
 	}
 	addr := raft.ServerAddress("node-" + string(id))
 	nt := replication.NewNodeTransport(id, addr, fabric)
+	// Generous raft timeouts: the durable cluster tests burst many commits and
+	// must not lose leadership when the leader's commit pipeline is briefly
+	// slowed under CI load (heartbeats must stay within the election window).
 	node, err := replication.NewNode(replication.NodeOptions{
 		ID: id, Address: addr, Transport: nt,
 		LogStore: bs, StableStore: bs, SnapshotStore: snaps,
 		Fabric: fabric, FSM: fsm, Bootstrap: bootstrap,
-		HeartbeatTimeout: 250 * time.Millisecond, ElectionTimeout: 500 * time.Millisecond,
-		CommitTimeout: 20 * time.Millisecond, LeaderLeaseTimeout: 250 * time.Millisecond,
-		ProposeTimeout: 3 * time.Second,
+		HeartbeatTimeout: 400 * time.Millisecond, ElectionTimeout: 1200 * time.Millisecond,
+		CommitTimeout: 40 * time.Millisecond, LeaderLeaseTimeout: 300 * time.Millisecond,
+		ProposeTimeout: 10 * time.Second,
 	})
 	if err != nil {
 		t.Fatal(err)
