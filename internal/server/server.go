@@ -120,18 +120,27 @@ func (l *checkRateLimiter) allow() bool {
 	return true
 }
 
+// ReplicatedProposePath is the authenticated leader proposal endpoint on the
+// cluster peer API that a ready follower's production ForwardClient targets.
+const ReplicatedProposePath = "/api/cluster/v1/replication/propose"
+
 // InstallReplicated installs the authoritative replicated mutation authority
 // on the posts/rules domain services (nil/not installed = standalone local
 // transactions). The Controller owns configured mode + runtime readiness; the
 // Router routes every posts/rules mutation through it (standalone sentinel,
 // leader proposal, follower forwarding, or rejection - never a local SQL
-// fallback for a configured replicated node).
+// fallback for a configured replicated node). When installed, the server also
+// serves the authenticated leader proposal RPC.
 func (s *Server) InstallReplicated(ctrl *replicated.Controller) {
 	s.replicated = ctrl
 	router := replicated.NewRouter(ctrl)
 	s.posts.SetMutationAuthority(router)
 	s.rules.SetMutationAuthority(router)
 }
+
+// ClusterTransport returns the server's authenticated Gantry peer RPC
+// transport (used by the production follower ForwardClient).
+func (s *Server) ClusterTransport() *cluster.Transport { return s.clusterTransport }
 
 func New(cfg config.Config, version string, logger *slog.Logger, database *store.Store) *Server {
 	sender := notify.NetworkSender{Client: &http.Client{Timeout: 10 * time.Second}}

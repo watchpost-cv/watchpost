@@ -25,6 +25,19 @@ type Config struct {
 	Backup        Backup
 	CheckWorkers  int
 	IngestRate    int
+	Replication   ReplicationConfig
+}
+
+// ReplicationConfig configures the node as a configured replicated participant.
+// A configured replicated node is never inferred from the presence of
+// cluster_members rows (Gantry membership is distinct from raft participation):
+// it is explicitly enabled here. When enabled the production composition builds
+// the real WatchpostAuthenticator + NetTransport + raft Node + Adapter +
+// Controller and installs the Router on the posts/rules mutation services.
+type ReplicationConfig struct {
+	Enabled   bool   `json:"enabled"`
+	NodeID    string `json:"node_id,omitempty"`
+	Bootstrap bool   `json:"bootstrap,omitempty"`
 }
 
 // Backup holds the scheduled online-backup configuration. A zero schedule

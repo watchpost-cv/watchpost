@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/gantry-tools/gantry-core/replication"
 )
@@ -166,6 +167,31 @@ func (c *Controller) opID(prefix string) string {
 	return adapter.opID(prefix)
 }
 
+// awaitLocalApplied blocks until the local FSM has applied at least index (the
+// forwarded operation's commit index) or the context is done, so a follower
+// only returns a forwarded mutation once its own applied state reflects it.
+func (c *Controller) awaitLocalApplied(ctx context.Context, index uint64) error {
+	c.mu.Lock()
+	adapter := c.adapter
+	c.mu.Unlock()
+	if adapter == nil {
+		return nil
+	}
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		applied, _ := adapter.AppliedIndex()
+		if applied >= index {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-tick.C:
+		}
+	}
+}
+
 // MutationAuthority is the authoritative replicated mutation choke point that
 // the posts/rules domain services consult. It returns ErrStandalonePath when
 // the node is configured standalone (the caller then performs its existing
@@ -244,7 +270,16 @@ func (r *Router) route(ctx context.Context, fr ForwardRequest, fn func(*Adapter)
 		return fn(adapter)
 	case ReadinessReadyFollower:
 		if fwd != nil {
-			return fwd(ctx, fr)
+			res, err := fwd(ctx, fr)
+			if err != nil {
+				return nil, err
+			}
+			if res != nil {
+				if err := c.awaitLocalApplied(ctx, res.Index); err != nil {
+					return nil, err
+				}
+			}
+			return res, nil
 		}
 		if resolver == nil || resolver() == nil {
 			return nil, fmt.Errorf("replicated mutation unavailable: no leader to forward to")

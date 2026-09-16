@@ -126,6 +126,9 @@ func (a *Adapter) proposeOp(ctx context.Context, opID, kind, id string, revision
 	return a.node.Propose(ctx, op)
 }
 
+// AppliedIndex returns the locally applied (index, term) of the product FSM.
+func (a *Adapter) AppliedIndex() (uint64, uint64) { return a.node.AppliedIndex() }
+
 // opID returns a unique operation identity for a distinct semantic mutation,
 // so the durable operation-ID idempotency contract distinguishes operations
 // (a retried mutation reuses the caller's request identity in production).

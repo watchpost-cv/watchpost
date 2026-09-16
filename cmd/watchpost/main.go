@@ -19,6 +19,7 @@ import (
 	"github.com/watchpost-cv/watchpost/internal/devices"
 	"github.com/watchpost-cv/watchpost/internal/hostcollector"
 	"github.com/watchpost-cv/watchpost/internal/operations"
+	"github.com/watchpost-cv/watchpost/internal/runtime"
 	"github.com/watchpost-cv/watchpost/internal/server"
 	"github.com/watchpost-cv/watchpost/internal/service"
 	"github.com/watchpost-cv/watchpost/internal/store"
@@ -113,6 +114,22 @@ func run(args []string) error {
 	app := server.New(cfg, version, logger, database)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// Configured replicated participant: compose the production replicated
+	// stack (WatchpostAuthenticator -> NetTransport -> raft Node -> Adapter ->
+	// Controller -> Router on the posts/rules mutation services) and install it.
+	// Standalone preserves the ordinary construction (no raft cluster needed).
+	if cfg.Replication.Enabled {
+		repl, err := runtime.New(ctx, runtime.Options{
+			Logger: logger, Database: database, NodeID: cfg.Replication.NodeID,
+			Bootstrap: cfg.Replication.Bootstrap, Transport: app.ClusterTransport(),
+			SnapshotDir: cfg.DataDir,
+		})
+		if err != nil {
+			return fmt.Errorf("replication: %w", err)
+		}
+		defer repl.Close()
+		app.InstallReplicated(repl.Controller)
+	}
 	if err := app.Run(ctx); err != nil {
 		return fmt.Errorf("%v (listener: %s)", err, cfg.Listen)
 	}

@@ -10,6 +10,9 @@ import (
 
 func (s *Server) registerClusterAPI(mux *http.ServeMux) {
 	s.registerPropagationAPI(mux)
+	if s.replicated != nil {
+		mux.HandleFunc("POST "+ReplicatedProposePath, s.handleReplicationPropose)
+	}
 	mux.HandleFunc("GET /api/v1/cluster/identity", s.require("viewer", s.handleClusterIdentity))
 	mux.HandleFunc("PUT /api/v1/cluster/identity", s.require("admin", s.handleClusterIdentityUpdate))
 	mux.HandleFunc("POST /api/v1/cluster/invitations", s.require("admin", s.handleClusterInvite))
@@ -32,6 +35,24 @@ func (s *Server) registerClusterAPI(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/cluster/summary", s.require("viewer", s.handleClusterSummary))
 	mux.HandleFunc("GET /api/cluster/v1/rpc/status", s.handleClusterRPCStatus)
 	mux.HandleFunc("GET /api/cluster/v1/rpc/summary", s.handleClusterRPCSummary)
+}
+
+// handleReplicationPropose authenticates an inbound follower application RPC
+// over the cluster transport and routes the forwarded mutation intent through
+// the leader's authoritative Controller (its own graph revision + applied
+// state). The operation identity is preserved so the durable operation-ID
+// contract provides retry idempotency and same-ID/different-payload fail-closed
+// behaviour.
+func (s *Server) handleReplicationPropose(w http.ResponseWriter, r *http.Request) {
+	handler := s.replicated.LeaderProposeHandler(func(r *http.Request) (string, error) {
+		auth, err := s.clusterTransport.Authenticate(r, "replication")
+		if err != nil {
+			return "", err
+		}
+		w.Header().Set("X-Watchpost-Request-ID", auth.RequestID)
+		return auth.NodeID, nil
+	})
+	handler.ServeHTTP(w, r)
 }
 
 func (s *Server) handleClusterIdentity(w http.ResponseWriter, r *http.Request) {
