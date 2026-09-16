@@ -58,6 +58,15 @@ func newDurableNode(t *testing.T, id raft.ServerID, raftDir, dbPath string, fabr
 	if err != nil {
 		t.Fatal(err)
 	}
+	return buildDurableNode(t, id, raftDir, fabric, bootstrap, db, fsm)
+}
+
+// buildDurableNode assembles the durable raft node over the given product DB
+// and FSM. It exists as a test seam so a test can inject a committed-apply
+// failure on the FSM BEFORE the raft replay (during NewNode) reconstructs a
+// persisted committed operation.
+func buildDurableNode(t *testing.T, id raft.ServerID, raftDir string, fabric *replication.Fabric, bootstrap bool, db *sql.DB, fsm *FSM) *durableNode {
+	t.Helper()
 	bs, err := replication.NewBoltStore(filepath.Join(raftDir, "raft.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -80,7 +89,7 @@ func newDurableNode(t *testing.T, id raft.ServerID, raftDir, dbPath string, fabr
 		t.Fatal(err)
 	}
 	fabric.RegisterNode(node)
-	return &durableNode{node: node, fsm: fsm, db: db, store: bs, raftDir: raftDir, dbPath: dbPath}
+	return &durableNode{node: node, fsm: fsm, db: db, store: bs, raftDir: raftDir}
 }
 
 func (d *durableNode) close() {

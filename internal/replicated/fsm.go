@@ -276,6 +276,17 @@ func (f *FSM) InjectNextApplyFailure(err error) {
 }
 
 func (f *FSM) applyLocked(op replication.Operation, index, term uint64) interface{} {
+	// Fence: once a committed operation has failed to apply (replica-health
+	// failure), every subsequent committed FSM entry is refused - no product
+	// mutation, no applied-position/graph-revision advance, no successful
+	// op-ID state. The first failed committed index is the reconciliation
+	// boundary; the replica must not materialize later entries on top of a
+	// state missing it. Recovery requires reconstruction/repair so the
+	// committed log replays in order from the failed position (a fresh FSM
+	// over a repaired materialization applies it successfully).
+	if f.applyFailure != nil {
+		return f.applyFailure
+	}
 	if op.Version > f.supported {
 		return fmt.Errorf("node does not support replication operation version %d (supported: 1..%d)", op.Version, f.supported)
 	}
