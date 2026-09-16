@@ -4,6 +4,7 @@ package runtime
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,11 +34,17 @@ type Options struct {
 	Logger      *slog.Logger
 	Database    *store.Store // product DB (posts/rules + cluster_identity/cluster_members/cluster_nonces)
 	NodeID      string       // raft node ID; defaults to the cluster identity node_id
-	Address     string       // raft replication address (default 127.0.0.1:0)
+	DataDir     string       // Watchpost data dir: durable raft state lives under <DataDir>/replication/
+	Address     string       // stable replication listen/advertise address (default 127.0.0.1:0)
 	Bootstrap   bool         // single-node bootstrap (explicit raft membership operation)
 	Transport   *cluster.Transport
 	ProposePath string
-	SnapshotDir string
+	// TLSConfig is the production replication TLS (mutual). Required unless
+	// InsecurePlaintext is explicitly opted in for local development.
+	TLSConfig *tls.Config
+	// InsecurePlaintext is an explicit local-development opt-in that disables
+	// channel encryption. It is never the normal production path.
+	InsecurePlaintext bool
 	// ReadinessInterval is the readiness derivation cadence (default 150ms). It
 	// exists as a test seam; production uses the default.
 	ReadinessInterval time.Duration
@@ -52,13 +59,15 @@ func (o Options) proposePath() string {
 
 // Replicated is the production replicated composition of a configured node.
 // Readiness is driven by the actual raft lifecycle; Close() performs the
-// shutdown/drain ordering (reject new -> node shutdown -> transport close).
+// shutdown/drain ordering (reject new -> node shutdown -> raft store close ->
+// transport close).
 type Replicated struct {
 	Controller *replicated.Controller
 	Node       *replication.Node
 	Net        *replication.NetTransport
 	FSM        *replicated.FSM
 	Adapter    *replicated.Adapter
+	raftStore  *replication.BoltStore
 	done       chan struct{}
 	stop       context.CancelFunc
 	closeOnce  sync.Once
@@ -87,12 +96,17 @@ func New(ctx context.Context, o Options) (*Replicated, error) {
 	if o.Address == "" {
 		o.Address = "127.0.0.1:0"
 	}
-	if o.SnapshotDir == "" {
-		dir, err := os.MkdirTemp("", "watchpost-raft-snapshots")
-		if err != nil {
-			return nil, err
-		}
-		o.SnapshotDir = dir
+	if o.DataDir == "" {
+		return nil, errors.New("runtime: data directory required for durable raft state")
+	}
+	// Production invariant: the replication channel is encrypted unless the
+	// operator explicitly opted into plaintext for local development.
+	if o.TLSConfig == nil && !o.InsecurePlaintext {
+		return nil, errors.New("runtime: replication TLS required (set Replication.TLSCert/TLSKey or explicitly opt into plaintext for local development)")
+	}
+	replicationDir := filepath.Join(o.DataDir, "replication")
+	if err := osMkdirAll(replicationDir); err != nil {
+		return nil, fmt.Errorf("runtime: replication dir: %w", err)
 	}
 	if o.ReadinessInterval <= 0 {
 		o.ReadinessInterval = 150 * time.Millisecond
@@ -110,25 +124,37 @@ func New(ctx context.Context, o Options) (*Replicated, error) {
 	}
 	nt, err := replication.NewNetTransport(replication.NetTransportOptions{
 		ID: raft.ServerID(o.NodeID), Address: raft.ServerAddress(o.Address), Authenticator: auth, Membership: auth, PeerCredentials: auth,
-		Protocol: replication.Version, Capabilities: caps, RevalidateEvery: time.Hour, InsecureAllowPlaintext: true,
+		TLSConfig: o.TLSConfig, Protocol: replication.Version, Capabilities: caps, RevalidateEvery: time.Hour,
+		InsecureAllowPlaintext: o.InsecurePlaintext,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("runtime: replication transport: %w", err)
 	}
-	snaps, err := raft.NewFileSnapshotStore(filepath.Join(o.SnapshotDir, "snapshots"), 3, nil)
+	// Durable raft state under <DataDir>/replication/: the bbolt log/stable
+	// store and file snapshots. This is what makes the CP7D-3 recovery model
+	// (persistent SQLite + persistent _replicated_meta + persistent raft log +
+	// persistent snapshots) real across process restart.
+	raftStore, err := replication.NewBoltStore(filepath.Join(replicationDir, "raft.db"))
 	if err != nil {
+		_ = nt.Close()
+		return nil, fmt.Errorf("runtime: raft store: %w", err)
+	}
+	snaps, err := raft.NewFileSnapshotStore(filepath.Join(replicationDir, "snapshots"), 3, nil)
+	if err != nil {
+		_ = raftStore.Close()
 		_ = nt.Close()
 		return nil, fmt.Errorf("runtime: snapshot store: %w", err)
 	}
 	node, err := replication.NewNode(replication.NodeOptions{
-		ID: raft.ServerID(o.NodeID), Address: raft.ServerAddress(nt.LocalAddr()), Transport: nt,
-		LogStore: raft.NewInmemStore(), StableStore: raft.NewInmemStore(), SnapshotStore: snaps,
+		ID: raft.ServerID(o.NodeID), Address: raft.ServerAddress(o.Address), Transport: nt,
+		LogStore: raftStore, StableStore: raftStore, SnapshotStore: snaps,
 		FSM: fsm, Bootstrap: o.Bootstrap, CapabilitySource: auth,
 		HeartbeatTimeout: 250 * time.Millisecond, ElectionTimeout: 500 * time.Millisecond,
 		CommitTimeout: 20 * time.Millisecond, LeaderLeaseTimeout: 250 * time.Millisecond,
 		ProposeTimeout: 3 * time.Second,
 	})
 	if err != nil {
+		_ = raftStore.Close()
 		_ = nt.Close()
 		return nil, fmt.Errorf("runtime: raft node: %w", err)
 	}
@@ -139,7 +165,7 @@ func New(ctx context.Context, o Options) (*Replicated, error) {
 	ctrl.SetForwardClient(productionForwardClient(o.Transport, node, o.proposePath()))
 
 	ctx, stop := context.WithCancel(ctx)
-	r := &Replicated{Controller: ctrl, Node: node, Net: nt, FSM: fsm, Adapter: adapter, done: make(chan struct{}), stop: stop}
+	r := &Replicated{Controller: ctrl, Node: node, Net: nt, FSM: fsm, Adapter: adapter, raftStore: raftStore, done: make(chan struct{}), stop: stop}
 	go r.driveReadiness(ctx, o.ReadinessInterval)
 	return r, nil
 }
@@ -211,6 +237,8 @@ func parseIndex(v string) uint64 {
 	return n
 }
 
+func osMkdirAll(dir string) error { return os.MkdirAll(dir, 0o750) }
+
 // Close performs the shutdown ordering: readiness shutting-down (reject new
 // mutations), drain of the driver, raft node shutdown, then transport close.
 // The store close remains the caller's responsibility and happens last.
@@ -220,6 +248,7 @@ func (r *Replicated) Close() {
 		r.stop()
 		<-r.done
 		_ = r.Node.Shutdown()
+		_ = r.raftStore.Close()
 		_ = r.Net.Close()
 	})
 }

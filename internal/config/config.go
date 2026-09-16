@@ -34,10 +34,27 @@ type Config struct {
 // it is explicitly enabled here. When enabled the production composition builds
 // the real WatchpostAuthenticator + NetTransport + raft Node + Adapter +
 // Controller and installs the Router on the posts/rules mutation services.
+//
+// Production requires replication TLS (TLSCert/TLSKey/TLSCA) unless
+// InsecurePlaintext is explicitly opted in for local development. Raft state is
+// durable under <DataDir>/replication/.
 type ReplicationConfig struct {
-	Enabled   bool   `json:"enabled"`
-	NodeID    string `json:"node_id,omitempty"`
-	Bootstrap bool   `json:"bootstrap,omitempty"`
+	Enabled bool   `json:"enabled"`
+	NodeID  string `json:"node_id,omitempty"`
+	// Bootstrap explicitly performs the single-node raft bootstrap (raft
+	// membership operations remain explicit; never inferred from members).
+	Bootstrap bool `json:"bootstrap,omitempty"`
+	// Listen is the stable replication listen/advertise address. A replicated
+	// participant must keep a stable endpoint another participant can use after
+	// restart; 127.0.0.1:0 is only the local/test default.
+	Listen string `json:"listen,omitempty"`
+	// TLS cert/key/CA for the replication channel (mutual TLS, production).
+	// InsecurePlaintext is an explicit local-development opt-in that disables
+	// channel encryption; it is never the normal production path.
+	TLSCert           string `json:"tls_cert,omitempty"`
+	TLSKey            string `json:"tls_key,omitempty"`
+	TLSCA             string `json:"tls_ca,omitempty"`
+	InsecurePlaintext bool   `json:"insecure_plaintext,omitempty"`
 }
 
 // Backup holds the scheduled online-backup configuration. A zero schedule

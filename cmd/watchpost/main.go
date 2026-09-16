@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -119,10 +122,15 @@ func run(args []string) error {
 	// Controller -> Router on the posts/rules mutation services) and install it.
 	// Standalone preserves the ordinary construction (no raft cluster needed).
 	if cfg.Replication.Enabled {
+		tlsConfig, err := loadReplicationTLS(cfg)
+		if err != nil {
+			return fmt.Errorf("replication TLS: %w", err)
+		}
 		repl, err := runtime.New(ctx, runtime.Options{
 			Logger: logger, Database: database, NodeID: cfg.Replication.NodeID,
+			DataDir: cfg.DataDir, Address: cfg.Replication.Listen,
 			Bootstrap: cfg.Replication.Bootstrap, Transport: app.ClusterTransport(),
-			SnapshotDir: cfg.DataDir,
+			TLSConfig: tlsConfig, InsecurePlaintext: cfg.Replication.InsecurePlaintext,
 		})
 		if err != nil {
 			return fmt.Errorf("replication: %w", err)
@@ -141,6 +149,35 @@ func run(args []string) error {
 // durable config listener in memory so the advertised override genuinely
 // controls the runtime listener. Bare invocations and legacy --listen keep the
 // durable config listener.
+// loadReplicationTLS builds the production replication transport TLS config
+// from the configured cert/key/CA. Peer identity is bound by the mutual Gantry
+// handshake over the encrypted channel; the server additionally requires and
+// verifies peer certificates against the cluster CA. An empty config returns
+// nil (the runtime then fails closed unless plaintext is explicitly opted in).
+func loadReplicationTLS(cfg config.Config) (*tls.Config, error) {
+	if cfg.Replication.TLSCert == "" && cfg.Replication.TLSKey == "" && cfg.Replication.TLSCA == "" {
+		return nil, nil
+	}
+	if cfg.Replication.TLSCert == "" || cfg.Replication.TLSKey == "" {
+		return nil, errors.New("both tls_cert and tls_key are required for replication TLS")
+	}
+	cert, err := tls.LoadX509KeyPair(cfg.Replication.TLSCert, cfg.Replication.TLSKey)
+	if err != nil {
+		return nil, err
+	}
+	pool := x509.NewCertPool()
+	if cfg.Replication.TLSCA != "" {
+		pem, err := os.ReadFile(cfg.Replication.TLSCA)
+		if err != nil {
+			return nil, err
+		}
+		if !pool.AppendCertsFromPEM(pem) {
+			return nil, errors.New("no certificates found in replication tls_ca")
+		}
+	}
+	return &tls.Config{Certificates: []tls.Certificate{cert}, ClientCAs: pool, ClientAuth: tls.RequireAndVerifyClientCert, InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}, nil
+}
+
 func buildRuntimeConfig(listen, host, port, dataDir string, secureCookies bool, fs *flag.FlagSet) (config.Config, error) {
 	addr, err := resolveListener(host, port, listen, flagProvided(fs, "host"), flagProvided(fs, "port"), flagProvided(fs, "listen"))
 	if err != nil {
