@@ -5,7 +5,6 @@ package runtime
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,7 +13,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"sync"
 	"time"
 
@@ -47,30 +45,11 @@ const DefaultProposePath = "/api/cluster/v1/replication/propose"
 // (pairwise credential digest + signed handshake + nonce replay), so skipping
 // TLS hostname verification does not weaken endpoint identity; it only leaves
 // channel confidentiality/integrity to the TLS session.
+// LoadReplicationTLS builds the production replication transport TLS config
+// from the configured cert/key/CA triplet (the generic Core mutual-TLS helper).
 func LoadReplicationTLS(cfg config.Config) (*tls.Config, error) {
 	r := cfg.Replication
-	if r.TLSCert == "" && r.TLSKey == "" && r.TLSCA == "" {
-		return nil, nil
-	}
-	if r.TLSCert == "" || r.TLSKey == "" || r.TLSCA == "" {
-		return nil, errors.New("replication TLS requires the full cert/key/CA triplet")
-	}
-	cert, err := tls.LoadX509KeyPair(r.TLSCert, r.TLSKey)
-	if err != nil {
-		return nil, err
-	}
-	pemBytes, err := os.ReadFile(r.TLSCA)
-	if err != nil {
-		return nil, err
-	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(pemBytes) {
-		return nil, errors.New("no certificates found in replication tls_ca")
-	}
-	return &tls.Config{
-		Certificates: []tls.Certificate{cert}, ClientCAs: pool, RootCAs: pool,
-		ClientAuth: tls.RequireAndVerifyClientCert, InsecureSkipVerify: true, MinVersion: tls.VersionTLS12,
-	}, nil
+	return replication.LoadTLSConfig(r.TLSCert, r.TLSKey, r.TLSCA)
 }
 
 // Options configures the production replicated composition of a node.
@@ -214,79 +193,15 @@ func New(ctx context.Context, o Options) (*Replicated, error) {
 	return r, nil
 }
 
-// driveReadiness derives runtime readiness from the actual raft lifecycle:
-// starting -> learner/caught-up -> ready-follower -> ready-leader -> no-leader
-// and shutting-down. It never promotes merely because the raft process exists.
+// driveReadiness runs the generic Core readiness driver over the real raft
+// lifecycle with the product health hook (the FSM's committed-apply failure).
+// It never promotes merely because the raft process exists.
 func (r *Replicated) driveReadiness(ctx context.Context, interval time.Duration) {
-	defer close(r.done)
-	tick := time.NewTicker(interval)
-	defer tick.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			r.Controller.SetReadiness(replicated.ReadinessShuttingDown)
-			return
-		case <-tick.C:
-		}
-		// A committed-apply (replica-health) failure is sticky: the replica must
-		// not silently return to ready merely because the next poll succeeds. It
-		// remains unhealthy until the materialization is deliberately repaired/
-		// rebuilt and the node reconstructs (re-applies the failed operation).
-		if err := r.FSM.ApplyFailure(); err != nil {
-			r.Controller.SetReadiness(replicated.ReadinessUnhealthy)
-			continue
-		}
-		switch r.Node.State() {
-		case raft.Leader:
-			r.Controller.SetReadiness(replicated.ReadinessReadyLeader)
-		case raft.Follower:
-			addr, _ := r.Node.Leader()
-			switch {
-			case addr != "" && r.caughtUp():
-				r.Controller.SetReadiness(replicated.ReadinessReadyFollower)
-			case addr != "":
-				r.Controller.SetReadiness(replicated.ReadinessLearner)
-			default:
-				r.Controller.SetReadiness(replicated.ReadinessNoLeader)
-			}
-		case raft.Candidate:
-			r.Controller.SetReadiness(replicated.ReadinessNoLeader)
-		case raft.Shutdown:
-			r.Controller.SetReadiness(replicated.ReadinessShuttingDown)
-		}
-	}
-}
-
-// caughtUp reports whether the follower has processed its entire raft log
-// (raft's own applied index reached its last log index; config changes and
-// no-ops count here, unlike the product FSM's applied index) and has recent
-// leader contact.
-func (r *Replicated) caughtUp() bool {
-	stats := r.Node.Stats()
-	applied := parseIndex(stats["applied_index"])
-	last := parseIndex(stats["last_log_index"])
-	if applied < last {
-		return false
-	}
-	// raft Stats reports "last_contact" as "0" for a leader, "never" when no
-	// contact, or the duration string since the last leader contact.
-	switch contact := stats["last_contact"]; contact {
-	case "0":
-		return true
-	case "", "never":
-		return false
-	default:
-		d, err := time.ParseDuration(contact)
-		if err != nil {
-			return false
-		}
-		return d < 2*time.Second
-	}
-}
-
-func parseIndex(v string) uint64 {
-	n, _ := strconv.ParseUint(v, 10, 64)
-	return n
+	driver := replication.NewReadinessDriver(r.Node, func(rd replication.Readiness) {
+		r.Controller.SetReadiness(rd)
+	}, func() error { return r.FSM.ApplyFailure() }, interval)
+	driver.Run(ctx)
+	close(r.done)
 }
 
 func osMkdirAll(dir string) error { return os.MkdirAll(dir, 0o750) }
