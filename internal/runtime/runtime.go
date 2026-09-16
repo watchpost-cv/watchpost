@@ -228,6 +228,14 @@ func (r *Replicated) driveReadiness(ctx context.Context, interval time.Duration)
 			return
 		case <-tick.C:
 		}
+		// A committed-apply (replica-health) failure is sticky: the replica must
+		// not silently return to ready merely because the next poll succeeds. It
+		// remains unhealthy until the materialization is deliberately repaired/
+		// rebuilt and the node reconstructs (re-applies the failed operation).
+		if err := r.FSM.ApplyFailure(); err != nil {
+			r.Controller.SetReadiness(replicated.ReadinessUnhealthy)
+			continue
+		}
 		switch r.Node.State() {
 		case raft.Leader:
 			r.Controller.SetReadiness(replicated.ReadinessReadyLeader)

@@ -73,6 +73,22 @@ type FSM struct {
 	// (no mutation, no graph-revision advance), so a durable restart neither
 	// double-applies nor destructively clears node-local state.
 	persistedIndex uint64
+	// applyFailure records the first committed-apply failure (a replica-health
+	// violation, e.g. an invariant or storage error while realizing a committed
+	// operation). It is STICKY: the replica must not claim healthy convergence
+	// until the materialization is deliberately repaired/rebuilt and the node
+	// reconstructs (the failed operation re-applies and reconciles). The
+	// failure is set on the same in-memory FSM only; a fresh construction over
+	// a repaired database re-applies and clears it naturally.
+	applyFailure error
+	// injectFail is a test-only hook that forces a committed-apply failure for a
+	// single operation ID, simulating a local storage/replica defect.
+	injectFail *injectApplyFailure
+}
+
+type injectApplyFailure struct {
+	MatchOpID string // "" = fail the next semantic apply regardless of op ID
+	Err       error
 }
 
 type appliedOp struct {
@@ -200,11 +216,63 @@ func (f *FSM) AppliedIndex() (uint64, uint64) {
 func (f *FSM) Apply(l *raft.Log) interface{} {
 	op, err := replication.DecodeOperation(l.Data)
 	if err != nil {
+		f.setApplyFailure(fmt.Errorf("corrupt committed entry at index %d: %w", l.Index, err))
 		return err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.applyLocked(op, l.Index, l.Term)
+}
+
+// setApplyFailure records the first committed-apply failure. Callers must hold
+// no conflicting lock: Apply's decode path calls it before taking f.mu;
+// applyLocked (which holds f.mu) sets f.applyFailure directly. It is sticky
+// (keeps the first failure).
+func (f *FSM) setApplyFailure(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.applyFailure == nil {
+		f.applyFailure = err
+	}
+}
+
+// ApplyFailure returns the first committed-apply (replica-health) failure, or
+// nil when the replica has applied every committed operation. A non-nil result
+// means the replica is unhealthy and must not claim healthy convergence or
+// accept authoritative writes.
+func (f *FSM) ApplyFailure() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.applyFailure
+}
+
+// ClearApplyFailure is an explicit test/recovery seam that removes the sticky
+// failure marker. It does NOT by itself reconcile committed state: a genuine
+// recovery reconstructs the materialization and re-applies the failed
+// operation (a fresh FSM over a repaired database does this naturally).
+func (f *FSM) ClearApplyFailure() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.applyFailure = nil
+}
+
+// InjectApplyFailure forces a committed-apply failure for the given operation
+// ID (test seam): the FSM returns err and marks itself unhealthy when it would
+// otherwise realize that committed operation, simulating a local storage or
+// replica defect. It is cleared once triggered.
+func (f *FSM) InjectApplyFailure(opID string, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.injectFail = &injectApplyFailure{MatchOpID: opID, Err: err}
+}
+
+// InjectNextApplyFailure forces the next committed-apply failure regardless of
+// operation ID (test seam; used when the op ID is not known ahead of time,
+// e.g. through the production HTTP path). Cleared once triggered.
+func (f *FSM) InjectNextApplyFailure(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.injectFail = &injectApplyFailure{Err: err}
 }
 
 func (f *FSM) applyLocked(op replication.Operation, index, term uint64) interface{} {
@@ -237,6 +305,18 @@ func (f *FSM) applyLocked(op replication.Operation, index, term uint64) interfac
 		return res
 	}
 
+	// Test seam: force a committed-apply (replica-health) failure for a specific
+	// operation (or the next regardless of ID), simulating a local storage or
+	// replica defect for a committed op. Cleared once triggered.
+	if f.injectFail != nil && (f.injectFail.MatchOpID == "" || f.injectFail.MatchOpID == op.ID) {
+		inj := f.injectFail
+		f.injectFail = nil
+		if f.applyFailure == nil {
+			f.applyFailure = inj.Err
+		}
+		return inj.Err
+	}
+
 	var res *replication.ApplyResult
 	switch op.Kind {
 	case KindPostCreate:
@@ -255,6 +335,15 @@ func (f *FSM) applyLocked(op replication.Operation, index, term uint64) interfac
 		return fmt.Errorf("unsupported operation kind %q", op.Kind)
 	}
 	if err != nil {
+		// A committed operation that cannot be deterministically realized is a
+		// replica-health violation (an invariant or a storage/integrity error),
+		// never an ordinary user conflict: mark the replica unhealthy. The
+		// durable materialization position (applied_index/term, graph revision,
+		// op-ID state) does NOT advance here - it stays at the last successful
+		// apply, preserving the CP7D-3 atomic transaction contract.
+		if f.applyFailure == nil {
+			f.applyFailure = err
+		}
 		return err
 	}
 	f.applied[op.ID] = appliedOp{Digest: digest, Result: res}

@@ -1,0 +1,138 @@
+package replicated
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"testing"
+	"time"
+)
+
+func waitForCount(t *testing.T, db *sql.DB, query string, want int) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if count(t, db, query) == want {
+			return
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %q to reach %d (got %d)", query, want, count(t, db, query))
+}
+
+// TestCommittedApplyFailureMarksReplicaUnhealthy proves the CP7D-4c contract:
+// a committed operation that cannot be deterministically applied on one replica
+// leaves the healthy quorum authoritative while that replica enters an explicit
+// unhealthy state, rejects authoritative writes, and does not claim healthy
+// convergence. The committed operation and the durable materialization
+// position of the healthy replicas are preserved.
+func TestCommittedApplyFailureMarksReplicaUnhealthy(t *testing.T) {
+	h := newHarness(t, 3)
+	leaderIdx := h.leaderIndex()
+	leader := h.adapters[leaderIdx]
+
+	// Pick one follower (B) to be the unhealthy replica.
+	followerIdx := 0
+	for followerIdx = 0; followerIdx < 3; followerIdx++ {
+		if followerIdx != leaderIdx {
+			break
+		}
+	}
+	// Pick the other healthy follower (C).
+	otherIdx := 0
+	for otherIdx = 0; otherIdx < 3; otherIdx++ {
+		if otherIdx != leaderIdx && otherIdx != followerIdx {
+			break
+		}
+	}
+
+	// Inject a committed-apply (replica-health) failure for the next operation
+	// on B only. The operation will still be committed by the quorum.
+	h.fsms[followerIdx].InjectNextApplyFailure(errors.New("sqlite: simulated replica storage failure"))
+	beforeIdx, _ := h.fsms[followerIdx].AppliedIndex()
+
+	if _, err := leader.CreatePost(context.Background(), "p1", mkPost("host-a", "host")); err != nil {
+		t.Fatalf("leader create (committed by quorum): %v", err)
+	}
+
+	// The healthy quorum (A leader + C) applied the committed operation.
+	waitForCount(t, h.dbs[leaderIdx], `SELECT COUNT(*) FROM posts WHERE id='p1'`, 1)
+	waitForCount(t, h.dbs[otherIdx], `SELECT COUNT(*) FROM posts WHERE id='p1'`, 1)
+
+	// B could not realize it: no mutation (even after the healthy replicas
+	// converged), unhealthy marker set, position unchanged.
+	if got := count(t, h.dbs[followerIdx], `SELECT COUNT(*) FROM posts WHERE id='p1'`); got != 0 {
+		t.Fatalf("unhealthy replica must not apply the committed op: posts=%d", got)
+	}
+	if h.fsms[followerIdx].ApplyFailure() == nil {
+		t.Fatal("replica B must be unhealthy after a committed-apply failure")
+	}
+	afterIdx, _ := h.fsms[followerIdx].AppliedIndex()
+	if afterIdx != beforeIdx {
+		t.Fatalf("failed apply advanced the durable position: %d -> %d", beforeIdx, afterIdx)
+	}
+
+	// The unhealthy replica must reject authoritative writes (no local fallback).
+	if _, err := h.adapters[followerIdx].CreatePost(context.Background(), "p2", mkPost("host-b", "host")); err == nil {
+		t.Fatal("unhealthy replica must reject new authoritative mutations")
+	}
+	if got := count(t, h.dbs[followerIdx], `SELECT COUNT(*) FROM posts WHERE id='p2'`); got != 0 {
+		t.Fatal("unhealthy replica wrote locally (fail-open)")
+	}
+
+	// The healthy leader continues to accept authoritative mutations.
+	if _, err := leader.CreatePost(context.Background(), "p2", mkPost("host-b", "host")); err != nil {
+		t.Fatalf("healthy leader create after replica failure: %v", err)
+	}
+}
+
+// TestLeaderLocalCommittedApplyFailure proves the leader-local failure case:
+// once consensus has committed an operation but the leader cannot apply it, the
+// caller sees a failure (never "nothing happened"), the leader becomes
+// unhealthy and stops serving authoritative mutations, the committed operation
+// is retained on healthy replicas, and the leader's durable position / op-ID
+// state do not advance for the failed operation.
+func TestLeaderLocalCommittedApplyFailure(t *testing.T) {
+	h := newHarness(t, 3)
+	leaderIdx := h.leaderIndex()
+
+	// Inject a committed-apply failure on the leader for a known operation.
+	op, err := buildOperation("post-bad", "watchpost", KindPostCreate, "p1", 0, 0, mkPost("host-a", "host"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.fsms[leaderIdx].InjectApplyFailure("post-bad", errors.New("sqlite: simulated leader storage failure"))
+	beforeIdx, _ := h.fsms[leaderIdx].AppliedIndex()
+
+	if _, err := h.nodes[leaderIdx].Propose(context.Background(), op); err == nil {
+		t.Fatal("leader-local apply failure must surface to the caller")
+	}
+
+	// The leader is unhealthy; its durable position and op-ID state did not
+	// advance for the failed operation.
+	if h.fsms[leaderIdx].ApplyFailure() == nil {
+		t.Fatal("leader must be unhealthy after a committed-apply failure")
+	}
+	afterIdx, _ := h.fsms[leaderIdx].AppliedIndex()
+	if afterIdx != beforeIdx {
+		t.Fatalf("failed apply advanced the durable position: %d -> %d", beforeIdx, afterIdx)
+	}
+	if _, ok := h.fsms[leaderIdx].OpKnown("post-bad"); ok {
+		t.Fatal("failed operation must not enter durable op-ID state")
+	}
+
+	// The leader's adapter rejects new authoritative mutations.
+	if _, err := h.adapters[leaderIdx].CreatePost(context.Background(), "p2", mkPost("host-b", "host")); err == nil {
+		t.Fatal("unhealthy leader must reject new authoritative mutations")
+	}
+
+	// The committed operation is retained on a healthy follower (the client
+	// must not assume "nothing happened").
+	followerIdx := 0
+	for followerIdx = 0; followerIdx < 3; followerIdx++ {
+		if followerIdx != leaderIdx {
+			break
+		}
+	}
+	waitForCount(t, h.dbs[followerIdx], `SELECT COUNT(*) FROM posts WHERE id='p1'`, 1)
+}

@@ -119,6 +119,9 @@ func (a *Adapter) SetRuleEnabledWithOp(ctx context.Context, id, opID string, exp
 // proposeOp builds and proposes a non-graph operation with an explicit
 // operation identity (local generation or forwarded request identity).
 func (a *Adapter) proposeOp(ctx context.Context, opID, kind, id string, revision, domainRevision int64, payload any) (*replication.ApplyResult, error) {
+	if err := a.fsm.ApplyFailure(); err != nil {
+		return nil, fmt.Errorf("replica unhealthy: %w", err)
+	}
 	op, err := buildOperation(opID, a.product, kind, id, revision, domainRevision, payload)
 	if err != nil {
 		return nil, err
@@ -148,6 +151,9 @@ func (a *Adapter) opID(prefix string) string {
 // an operation can never be labelled with a revision it was not validated
 // against.
 func (a *Adapter) graphPropose(ctx context.Context, kind, opID, objectID string, revision int64, payload any, validate func() error) (*replication.ApplyResult, error) {
+	if err := a.fsm.ApplyFailure(); err != nil {
+		return nil, fmt.Errorf("replica unhealthy: %w", err)
+	}
 	a.graphMu.Lock()
 	defer a.graphMu.Unlock()
 	if a.BeforeGraphValidate != nil {
