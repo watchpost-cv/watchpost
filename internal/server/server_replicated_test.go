@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -185,3 +186,30 @@ func TestLiveHTTPStandalone(t *testing.T) {
 
 var _ = context.Background
 var _ = httptest.NewRequest
+
+// TestReplicationOperatorSurface proves the operator endpoints report runtime
+// state and expose explicit raft membership.
+func TestReplicationOperatorSurface(t *testing.T) {
+	srv, _, _ := newReplicatedServer(t, replicated.ReadinessReadyLeader, true)
+	handler := srv.Handler()
+	_ = apiRequest(t, handler, "POST", "/api/v1/setup", map[string]string{"username": "admin", "email": "admin@example.com", "password": "1234567"}, nil, "")
+	login := apiRequest(t, handler, "POST", "/api/v1/login", map[string]string{"email": "admin@example.com", "password": "1234567"}, nil, "")
+	cookie := login.Result().Cookies()[0]
+	var session struct {
+		CSRF string `json:"csrf_token"`
+	}
+	_ = json.Unmarshal(login.Body.Bytes(), &session)
+	status := apiRequest(t, handler, "GET", "/api/v1/replication/status", nil, cookie, session.CSRF)
+	if status.Code != http.StatusOK || !bytes.Contains(status.Body.Bytes(), []byte("readiness")) {
+		t.Fatalf("replication status: %d %s", status.Code, status.Body.String())
+	}
+	// A malformed join (missing address) is rejected by the handler.
+	join := apiRequest(t, handler, "POST", "/api/v1/replication/join", map[string]string{"node_id": "B"}, cookie, session.CSRF)
+	if join.Code != http.StatusBadRequest {
+		t.Fatalf("malformed join: %d", join.Code)
+	}
+	unauth := apiRequest(t, handler, "GET", "/api/v1/replication/status", nil, nil, "")
+	if unauth.Code != http.StatusUnauthorized {
+		t.Fatalf("status must require auth: %d", unauth.Code)
+	}
+}

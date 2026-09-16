@@ -279,6 +279,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/backup-status", s.require("viewer", s.handleBackupStatus))
 	s.registerAPI(mux)
 	s.registerClusterAPI(mux)
+	s.registerReplicationAPI(mux)
 	assets, err := fs.Sub(web.Files, "dist")
 	if err != nil {
 		panic(err)

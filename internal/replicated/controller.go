@@ -103,6 +103,10 @@ func (c *Controller) State() (Mode, Readiness) { return c.auth.State() }
 // Adapter returns the authoritative mutation authority.
 func (c *Controller) Adapter() *Adapter { return c.adapter }
 
+// Node returns the underlying raft node (used by the operator surface to
+// inspect state and drive explicit raft membership operations).
+func (c *Controller) Node() *replication.Node { return c.node }
+
 // opID returns a fresh operation identity for a distinct semantic mutation
 // intent. The live caller supplies its own request identity (idempotency key);
 // absent that plumbing this is the per-intent identity the durable layer keys
