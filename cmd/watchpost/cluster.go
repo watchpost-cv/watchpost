@@ -2,13 +2,17 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/watchpost-cv/watchpost/internal/audit"
 	"github.com/watchpost-cv/watchpost/internal/cluster"
@@ -54,6 +58,7 @@ func runCluster(args []string) error {
 	tokenFile := fs.String("token-file", "", "file containing invitation token; use - for stdin")
 	secretFile := fs.String("secret-file", "", "write newly generated secret to this file")
 	target := fs.String("target", "all", "all, members, or a node ID")
+	ca := fs.String("ca", "", "CA certificate (PEM) to trust for the remote HTTPS endpoint")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -112,7 +117,11 @@ func runCluster(args []string) error {
 		if err != nil {
 			return err
 		}
-		v, err := rt.pairing.BeginOutbound(ctx, *remoteURL, token, nil)
+		client, err := clusterClient(*ca)
+		if err != nil {
+			return err
+		}
+		v, err := rt.pairing.BeginOutbound(ctx, *remoteURL, token, client)
 		if err != nil {
 			return err
 		}
@@ -127,7 +136,11 @@ func runCluster(args []string) error {
 		if len(pos) != 1 {
 			return errors.New("collect requires outbound join ID")
 		}
-		v, err := rt.pairing.CollectOutbound(ctx, pos[0], nil)
+		client, err := clusterClient(*ca)
+		if err != nil {
+			return err
+		}
+		v, err := rt.pairing.CollectOutbound(ctx, pos[0], client)
 		if err != nil {
 			return err
 		}
@@ -208,4 +221,21 @@ func writeSecret(path, value string) error {
 		return errors.New("refusing to print secret to stdout; use a file path")
 	}
 	return os.WriteFile(path, []byte(value+"\n"), 0600)
+}
+
+// clusterClient returns an HTTP client that trusts the given CA (PEM) for
+// remote HTTPS endpoints, or the default client when ca is empty.
+func clusterClient(caFile string) (*http.Client, error) {
+	if caFile == "" {
+		return &http.Client{Timeout: 15 * time.Second}, nil
+	}
+	pem, err := os.ReadFile(caFile)
+	if err != nil {
+		return nil, err
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pem) {
+		return nil, errors.New("no certificates found in CA file")
+	}
+	return &http.Client{Timeout: 15 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}}}, nil
 }

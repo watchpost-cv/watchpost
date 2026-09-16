@@ -17,7 +17,12 @@ import (
 
 const ProtocolVersion = corecluster.ProtocolVersion
 
-var DefaultCapabilities = []string{"cluster.health", "cluster.summary", "cluster.propagation"}
+// DefaultCapabilities are the capabilities every node's identity advertises.
+// "replication" is included so paired members are authorized to participate in
+// the replicated raft transport (the WatchpostAuthenticator rejects the
+// replication handshake for members without it); the actual replicated operating
+// mode remains explicitly configured, never inferred from the capability.
+var DefaultCapabilities = []string{"cluster.health", "cluster.summary", "cluster.propagation", "replication"}
 
 type Identity = corecluster.Identity
 

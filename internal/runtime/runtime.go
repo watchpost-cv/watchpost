@@ -178,13 +178,17 @@ func New(ctx context.Context, o Options) (*Replicated, error) {
 		_ = nt.Close()
 		return nil, fmt.Errorf("runtime: snapshot store: %w", err)
 	}
+	// Production raft timing: real inter-host links need generous heartbeats and
+	// election windows so a leader's heartbeats stay inside followers' election
+	// timeouts (the local-test values of 250ms/500ms cause constant re-elections
+	// over real networks).
 	node, err := replication.NewNode(replication.NodeOptions{
 		ID: raft.ServerID(o.NodeID), Address: raft.ServerAddress(o.Address), Transport: nt,
 		LogStore: raftStore, StableStore: raftStore, SnapshotStore: snaps,
 		FSM: fsm, Bootstrap: o.Bootstrap, CapabilitySource: auth,
-		HeartbeatTimeout: 250 * time.Millisecond, ElectionTimeout: 500 * time.Millisecond,
-		CommitTimeout: 20 * time.Millisecond, LeaderLeaseTimeout: 250 * time.Millisecond,
-		ProposeTimeout: 3 * time.Second,
+		HeartbeatTimeout: 1 * time.Second, ElectionTimeout: 3 * time.Second,
+		CommitTimeout: 100 * time.Millisecond, LeaderLeaseTimeout: 750 * time.Millisecond,
+		ProposeTimeout: 10 * time.Second,
 	})
 	if err != nil {
 		_ = raftStore.Close()
