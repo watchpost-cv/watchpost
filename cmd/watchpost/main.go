@@ -131,6 +131,7 @@ func run(args []string) error {
 			DataDir: cfg.DataDir, Address: cfg.Replication.Listen,
 			Bootstrap: cfg.Replication.Bootstrap, Transport: app.ClusterTransport(),
 			TLSConfig: tlsConfig, InsecurePlaintext: cfg.Replication.InsecurePlaintext,
+			Timing: cfg.Replication.Timing(),
 		})
 		if err != nil {
 			return fmt.Errorf("replication: %w", err)

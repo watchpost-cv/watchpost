@@ -71,6 +71,9 @@ type Options struct {
 	// ReadinessInterval is the readiness derivation cadence (default 150ms). It
 	// exists as a test seam; production uses the default.
 	ReadinessInterval time.Duration
+	// Timing is the raft timing profile (defaults to the generic Core
+	// production profile; operator overrides applied by the caller).
+	Timing replication.Timing
 }
 
 func (o Options) proposePath() string {
@@ -134,6 +137,9 @@ func New(ctx context.Context, o Options) (*Replicated, error) {
 	if o.ReadinessInterval <= 0 {
 		o.ReadinessInterval = 150 * time.Millisecond
 	}
+	if o.Timing.HeartbeatTimeout == 0 {
+		o.Timing = replication.ProductionTiming()
+	}
 
 	fsm, err := replicated.NewFSM(o.Database.DB)
 	if err != nil {
@@ -178,17 +184,17 @@ func New(ctx context.Context, o Options) (*Replicated, error) {
 		_ = nt.Close()
 		return nil, fmt.Errorf("runtime: snapshot store: %w", err)
 	}
-	// Production raft timing: real inter-host links need generous heartbeats and
+	// The raft timing profile (generic Core ProductionTiming by default, with
+	// operator overrides): real inter-host links need generous heartbeats and
 	// election windows so a leader's heartbeats stay inside followers' election
-	// timeouts (the local-test values of 250ms/500ms cause constant re-elections
-	// over real networks).
+	// timeouts.
 	node, err := replication.NewNode(replication.NodeOptions{
 		ID: raft.ServerID(o.NodeID), Address: raft.ServerAddress(o.Address), Transport: nt,
 		LogStore: raftStore, StableStore: raftStore, SnapshotStore: snaps,
 		FSM: fsm, Bootstrap: o.Bootstrap, CapabilitySource: auth,
-		HeartbeatTimeout: 1 * time.Second, ElectionTimeout: 3 * time.Second,
-		CommitTimeout: 100 * time.Millisecond, LeaderLeaseTimeout: 750 * time.Millisecond,
-		ProposeTimeout: 10 * time.Second,
+		HeartbeatTimeout: o.Timing.HeartbeatTimeout, ElectionTimeout: o.Timing.ElectionTimeout,
+		CommitTimeout: o.Timing.CommitTimeout, LeaderLeaseTimeout: o.Timing.LeaderLeaseTimeout,
+		ProposeTimeout: o.Timing.ProposeTimeout,
 	})
 	if err != nil {
 		_ = raftStore.Close()

@@ -46,6 +46,13 @@ func runReplicate(args []string) error {
 	}
 
 	switch command {
+	case "snapshot":
+		body, err := replicateCall(client, *url, http.MethodPost, "/api/v1/replication/snapshot", nil, session)
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(body))
+		return nil
 	case "status":
 		body, err := replicateCall(client, *url, http.MethodGet, "/api/v1/replication/status", nil, session)
 		if err != nil {

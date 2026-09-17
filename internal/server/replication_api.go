@@ -14,6 +14,7 @@ import (
 func (s *Server) registerReplicationAPI(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/replication/status", s.require("admin", s.handleReplicationStatus))
 	mux.HandleFunc("POST /api/v1/replication/join", s.require("admin", s.handleReplicationJoin))
+	mux.HandleFunc("POST /api/v1/replication/snapshot", s.require("admin", s.handleReplicationSnapshot))
 }
 
 func (s *Server) handleReplicationStatus(w http.ResponseWriter, r *http.Request) {
@@ -49,6 +50,19 @@ func (s *Server) handleReplicationStatus(w http.ResponseWriter, r *http.Request)
 		"last_index":      node.LastIndex(),
 		"configuration":   cfgServers,
 	})
+}
+
+func (s *Server) handleReplicationSnapshot(w http.ResponseWriter, r *http.Request) {
+	ctrl := s.replicated
+	if ctrl == nil {
+		writeJSON(w, 400, map[string]string{"error": "replication is not configured on this node"})
+		return
+	}
+	if err := ctrl.Node().Snapshot(); err != nil {
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"snapshot": "forced"})
 }
 
 func (s *Server) handleReplicationJoin(w http.ResponseWriter, r *http.Request) {

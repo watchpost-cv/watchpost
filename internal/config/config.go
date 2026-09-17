@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/gantry-tools/gantry-core/replication"
 )
 
 const DefaultListen = "127.0.0.1:7334"
@@ -56,6 +58,14 @@ type ReplicationConfig struct {
 	TLSKey            string `json:"tls_key,omitempty"`
 	TLSCA             string `json:"tls_ca,omitempty"`
 	InsecurePlaintext bool   `json:"insecure_plaintext,omitempty"`
+	// Optional raft timing overrides (production defaults: replication
+	// ProductionTiming). Only set the ones that genuinely need operator tuning
+	// for a given deployment; the Core profile covers the common case.
+	HeartbeatTimeout   time.Duration `json:"heartbeat_timeout,omitempty"`
+	ElectionTimeout    time.Duration `json:"election_timeout,omitempty"`
+	LeaderLeaseTimeout time.Duration `json:"leader_lease_timeout,omitempty"`
+	CommitTimeout      time.Duration `json:"commit_timeout,omitempty"`
+	ProposeTimeout     time.Duration `json:"propose_timeout,omitempty"`
 }
 
 // Backup holds the scheduled online-backup configuration. A zero schedule
@@ -446,6 +456,21 @@ func applyReplicationEnv(cfg *Config) error {
 	if v := os.Getenv("WATCHPOST_REPLICATION_INSECURE_PLAINTEXT"); v == "1" || v == "true" {
 		r.InsecurePlaintext = true
 	}
+	for name, target := range map[string]*time.Duration{
+		"WATCHPOST_REPLICATION_HEARTBEAT_TIMEOUT":    &r.HeartbeatTimeout,
+		"WATCHPOST_REPLICATION_ELECTION_TIMEOUT":     &r.ElectionTimeout,
+		"WATCHPOST_REPLICATION_LEADER_LEASE_TIMEOUT": &r.LeaderLeaseTimeout,
+		"WATCHPOST_REPLICATION_COMMIT_TIMEOUT":       &r.CommitTimeout,
+		"WATCHPOST_REPLICATION_PROPOSE_TIMEOUT":      &r.ProposeTimeout,
+	} {
+		if v := os.Getenv(name); v != "" {
+			d, err := time.ParseDuration(v)
+			if err != nil || d <= 0 {
+				return fmt.Errorf("%s: invalid duration", name)
+			}
+			*target = d
+		}
+	}
 	return nil
 }
 
@@ -477,4 +502,27 @@ func validateReplication(r ReplicationConfig) error {
 		return errors.New("replication TLS requires the complete cert/key/CA triplet (mutual TLS contract)")
 	}
 	return nil
+}
+
+// Timing returns the effective raft timing for the replication participant:
+// the generic Core production profile overridden by any operator-configured
+// values.
+func (r ReplicationConfig) Timing() replication.Timing {
+	t := replication.ProductionTiming()
+	if r.HeartbeatTimeout > 0 {
+		t.HeartbeatTimeout = r.HeartbeatTimeout
+	}
+	if r.ElectionTimeout > 0 {
+		t.ElectionTimeout = r.ElectionTimeout
+	}
+	if r.LeaderLeaseTimeout > 0 {
+		t.LeaderLeaseTimeout = r.LeaderLeaseTimeout
+	}
+	if r.CommitTimeout > 0 {
+		t.CommitTimeout = r.CommitTimeout
+	}
+	if r.ProposeTimeout > 0 {
+		t.ProposeTimeout = r.ProposeTimeout
+	}
+	return t
 }
