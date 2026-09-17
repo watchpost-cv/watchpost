@@ -163,7 +163,7 @@ func New(ctx context.Context, o Options) (*Replicated, error) {
 	}
 	nt, err := replication.NewNetTransport(replication.NetTransportOptions{
 		ID: raft.ServerID(o.NodeID), Address: raft.ServerAddress(o.Address), Authenticator: auth, Membership: auth, PeerCredentials: auth,
-		TLSConfig: o.TLSConfig, Protocol: replication.Version, Capabilities: caps, RevalidateEvery: time.Hour,
+		TLSConfig: o.TLSConfig, Protocol: replication.Version, Capabilities: caps, RevalidateEvery: o.Timing.RevalidateEvery,
 		InsecureAllowPlaintext: o.InsecurePlaintext,
 	})
 	if err != nil {
