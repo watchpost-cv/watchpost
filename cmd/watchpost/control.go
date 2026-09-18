@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/watchpost-cv/watchpost/internal/auth"
@@ -145,10 +144,6 @@ func runReset(args []string) error {
 		if statErr != nil {
 			return statErr
 		}
-		stat, ok := info.Sys().(*syscall.Stat_t)
-		if !ok {
-			return fmt.Errorf("cannot read data directory ownership")
-		}
 		if err = os.Rename(cfg.DataDir, cfg.DataDir+".reset-"+stamp); err != nil {
 			return fmt.Errorf("back up data directory: %w", err)
 		}
@@ -158,7 +153,7 @@ func runReset(args []string) error {
 		// The service runs as the dedicated service user; preserve the original
 		// owner on the recreated directory, otherwise the service cannot open
 		// its database after reset --all.
-		if err = os.Chown(cfg.DataDir, int(stat.Uid), int(stat.Gid)); err != nil {
+		if err = preserveResetDirOwner(cfg.DataDir, info); err != nil {
 			return fmt.Errorf("preserve data directory ownership: %w", err)
 		}
 	} else {
