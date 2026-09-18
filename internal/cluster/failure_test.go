@@ -415,4 +415,3 @@ func TestStaleOutboundJoinCannotOverwriteCredentials(t *testing.T) {
 		t.Fatalf("after restart current join wrongly superseded: %v", err)
 	}
 }
-
