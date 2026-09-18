@@ -157,6 +157,9 @@ func New(cfg config.Config, version string, logger *slog.Logger, database *store
 	server.clusterPairing = cluster.NewPairingService(database, server.clusterIdentity)
 	server.clusterMembers = cluster.NewMemberService(database)
 	server.clusterTransport = cluster.NewTransport(database, server.clusterIdentity)
+	server.clusterIdentity.SetInsecurePlaintext(cfg.Replication.InsecurePlaintext)
+	server.clusterPairing.SetInsecurePlaintext(cfg.Replication.InsecurePlaintext)
+	server.clusterTransport.SetInsecurePlaintext(cfg.Replication.InsecurePlaintext)
 	server.clusterDistributed = cluster.NewDistributedService(database, server.clusterIdentity, server.clusterMembers, server.clusterTransport)
 	server.propagation = &coreprop.Manager{Adapter: productprop.New(database), Store: productprop.NewStateStore(database)}
 	_, _ = server.clusterIdentity.Ensure(context.Background(), version)

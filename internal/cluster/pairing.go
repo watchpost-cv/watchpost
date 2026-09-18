@@ -29,14 +29,20 @@ type JoinReceipt = corecluster.JoinReceipt
 type PairingResult = corecluster.PairingResult
 
 type PairingService struct {
-	s        *store.Store
-	identity *IdentityService
-	now      func() time.Time
+	s                 *store.Store
+	identity          *IdentityService
+	now               func() time.Time
+	insecurePlaintext bool
 }
 
 func NewPairingService(s *store.Store, identity *IdentityService) *PairingService {
 	return &PairingService{s: s, identity: identity, now: time.Now}
 }
+
+// SetInsecurePlaintext permits HTTP endpoints when the operator has explicitly
+// enabled plaintext transport for a trusted private network. HTTPS remains the
+// default; plaintext disables TLS confidentiality only.
+func (s *PairingService) SetInsecurePlaintext(v bool) { s.insecurePlaintext = v }
 
 func (s *PairingService) Invite(ctx context.Context, entry audit.Entry) (Invitation, error) {
 	now := s.now().UTC()
@@ -69,10 +75,10 @@ func (s *PairingService) Invite(ctx context.Context, entry audit.Entry) (Invitat
 }
 
 func (s *PairingService) SubmitJoin(ctx context.Context, in JoinSubmission) (JoinReceipt, error) {
-	if err := corecluster.ValidateJoinSubmission(in, s.now().UTC()); err != nil {
+	if err := corecluster.ValidateJoinSubmissionWithPolicy(in, s.now().UTC(), s.insecurePlaintext); err != nil {
 		return JoinReceipt{}, err
 	}
-	if in.InvitationToken == "" || in.Identity.NodeID == "" || in.Identity.InstallationID == "" || in.Identity.PublicKey == "" || in.Identity.PublicEndpoint == "" || !strings.HasPrefix(in.Identity.PublicEndpoint, "https://") || len(in.CredentialForHost) < 32 {
+	if in.InvitationToken == "" || in.Identity.NodeID == "" || in.Identity.InstallationID == "" || in.Identity.PublicKey == "" || len(in.CredentialForHost) < 32 {
 		return JoinReceipt{}, errors.New("invalid cluster join request")
 	}
 	local, err := s.identity.Ensure(ctx, "")
@@ -332,9 +338,11 @@ type OutboundJoin struct {
 
 func (s *PairingService) BeginOutbound(ctx context.Context, remoteURL, invitationToken string, client *http.Client) (OutboundJoin, error) {
 	remoteURL = strings.TrimRight(strings.TrimSpace(remoteURL), "/")
-	parsed, err := url.Parse(remoteURL)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
-		return OutboundJoin{}, errors.New("remote Watchpost URL must use https")
+	if err := corecluster.ValidatePublicEndpoint(remoteURL, s.insecurePlaintext); err != nil {
+		return OutboundJoin{}, err
+	}
+	if strings.TrimSpace(remoteURL) == "" {
+		return OutboundJoin{}, errors.New("remote Watchpost URL required")
 	}
 	local, err := s.identity.Ensure(ctx, "")
 	if err != nil {

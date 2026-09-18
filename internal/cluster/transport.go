@@ -8,7 +8,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -32,10 +31,11 @@ const (
 )
 
 type Transport struct {
-	s        *store.Store
-	identity *IdentityService
-	client   *http.Client
-	now      func() time.Time
+	s                 *store.Store
+	identity          *IdentityService
+	client            *http.Client
+	now               func() time.Time
+	insecurePlaintext bool
 }
 
 type AuthenticatedRequest struct {
@@ -49,6 +49,10 @@ type AuthenticatedRequest struct {
 func NewTransport(s *store.Store, identity *IdentityService) *Transport {
 	return &Transport{s: s, identity: identity, client: &http.Client{Timeout: 10 * time.Second}, now: time.Now}
 }
+
+// SetInsecurePlaintext permits HTTP peer endpoints when the operator has
+// explicitly enabled plaintext transport for a trusted private network.
+func (t *Transport) SetInsecurePlaintext(v bool) { t.insecurePlaintext = v }
 func (t *Transport) SetHTTPClient(client *http.Client) {
 	if client != nil {
 		t.client = client
@@ -130,9 +134,8 @@ func (t *Transport) Do(ctx context.Context, nodeID, method, path, capability str
 	if protocol != ProtocolVersion {
 		return nil, errors.New("incompatible cluster protocol")
 	}
-	parsed, err := url.Parse(endpoint)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
-		return nil, errors.New("cluster endpoint must use https")
+	if err := corecluster.ValidatePublicEndpoint(endpoint, t.insecurePlaintext); err != nil {
+		return nil, err
 	}
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path

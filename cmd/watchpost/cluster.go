@@ -41,7 +41,11 @@ func openClusterRuntime(dataDir string) (*clusterRuntime, error) {
 	identity := cluster.NewIdentityService(db)
 	members := cluster.NewMemberService(db)
 	transport := cluster.NewTransport(db, identity)
-	return &clusterRuntime{db: db, identity: identity, pairing: cluster.NewPairingService(db, identity), members: members, transport: transport, distributed: cluster.NewDistributedService(db, identity, members, transport)}, nil
+	pairing := cluster.NewPairingService(db, identity)
+	identity.SetInsecurePlaintext(cfg.Replication.InsecurePlaintext)
+	pairing.SetInsecurePlaintext(cfg.Replication.InsecurePlaintext)
+	transport.SetInsecurePlaintext(cfg.Replication.InsecurePlaintext)
+	return &clusterRuntime{db: db, identity: identity, pairing: pairing, members: members, transport: transport, distributed: cluster.NewDistributedService(db, identity, members, transport)}, nil
 }
 
 func runCluster(args []string) error {

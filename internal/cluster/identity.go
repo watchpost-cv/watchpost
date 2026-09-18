@@ -27,13 +27,19 @@ var DefaultCapabilities = []string{"cluster.health", "cluster.summary", "cluster
 type Identity = corecluster.Identity
 
 type IdentityService struct {
-	s   *store.Store
-	now func() time.Time
+	s                 *store.Store
+	now               func() time.Time
+	insecurePlaintext bool
 }
 
 func NewIdentityService(s *store.Store) *IdentityService {
 	return &IdentityService{s: s, now: time.Now}
 }
+
+// SetInsecurePlaintext permits an HTTP public endpoint when the operator has
+// explicitly enabled plaintext transport for a trusted private network.
+// HTTPS remains the default; plaintext disables TLS confidentiality only.
+func (s *IdentityService) SetInsecurePlaintext(v bool) { s.insecurePlaintext = v }
 
 func (s *IdentityService) Ensure(ctx context.Context, productVersion string) (Identity, error) {
 	identity, _, err := s.ensureWithPrivate(ctx, productVersion)
@@ -46,8 +52,8 @@ func (s *IdentityService) PrivateKey(ctx context.Context, productVersion string)
 }
 
 func (s *IdentityService) Update(ctx context.Context, displayName, endpoint string, capabilities []string, productVersion string) (Identity, error) {
-	if endpoint != "" && !strings.HasPrefix(endpoint, "https://") {
-		return Identity{}, errors.New("cluster public endpoint must use https")
+	if err := corecluster.ValidatePublicEndpoint(endpoint, s.insecurePlaintext); err != nil {
+		return Identity{}, err
 	}
 	if len(capabilities) == 0 {
 		capabilities = append([]string(nil), DefaultCapabilities...)
