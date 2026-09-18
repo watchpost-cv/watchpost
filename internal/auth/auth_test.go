@@ -134,3 +134,27 @@ func TestUserManagementValidation(t *testing.T) {
 		t.Fatalf("users=%d err=%v", len(items), err)
 	}
 }
+
+func TestUsernameLoginWorksAndDuplicatesRejected(t *testing.T) {
+	s, err := store.Open(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	m := New(s)
+	if _, err = m.Setup(context.Background(), "admin", "admin@example.com", "correct-horse-battery", ""); err != nil {
+		t.Fatal(err)
+	}
+	// Login by username, not only email.
+	if _, err = m.Login(context.Background(), "admin", "correct-horse-battery", audit.Entry{Action: "test"}); err != nil {
+		t.Fatalf("login by username failed: %v", err)
+	}
+	// Duplicate email (case-insensitive) must be rejected.
+	if _, err = m.CreateUser(context.Background(), "other", "ADMIN@example.com", "1234567", "viewer", audit.Entry{Action: "test"}); err == nil {
+		t.Fatal("duplicate email accepted")
+	}
+	// Duplicate username (case-insensitive) must be rejected.
+	if _, err = m.CreateUser(context.Background(), "ADMIN", "other@example.com", "1234567", "viewer", audit.Entry{Action: "test"}); err == nil {
+		t.Fatal("duplicate username accepted")
+	}
+}

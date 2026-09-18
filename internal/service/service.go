@@ -467,14 +467,6 @@ func UnitOptions(o Options) string {
 	return buildUnit(o)
 }
 
-// unitEnv reads an Environment=WEBFLEET_* value from a unit body (none for
-// watchpost; metadata lives in the managed header). Provided for parity.
-func unitEnv(body, key string) string {
-	_ = body
-	_ = key
-	return ""
-}
-
 // writeFileAtomic writes data to path via a temp file + rename.
 func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 	dir := filepath.Dir(path)
@@ -1025,6 +1017,28 @@ func Uninstall() error {
 		return e
 	}
 	return systemctlSuccess("daemon-reload")
+}
+
+// InstalledDataDir returns the data directory recorded by the managed service unit.
+// The boolean is false when the service is not installed. A present but invalid
+// unit is an error so destructive CLI operations never fall back to another path.
+func InstalledDataDir() (string, bool, error) {
+	body, err := os.ReadFile(UnitPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("cannot use installed service configuration: %w", err)
+	}
+	meta, err := readManagedUnit(string(body))
+	if err != nil {
+		return "", false, fmt.Errorf("cannot use installed service configuration: %w", err)
+	}
+	dataDir := meta.data
+	if dataDir == "" {
+		dataDir = DefaultDataDir
+	}
+	return dataDir, true, nil
 }
 
 // Status reports the resolved service state, pid, data/listen configuration and

@@ -15,7 +15,10 @@ async function request(path, options = {}) {
     try { body = await response.json(); } catch { body = {}; }
   }
   if (!response.ok) {
-    if (response.status === 401) throw new Error("Your session has ended. Sign in again.");
+    if (response.status === 401) {
+      if (path === "/api/v1/login") throw new Error("Username/email or password is incorrect.");
+      throw new Error("Your session has ended. Sign in again.");
+    }
     if (response.status === 403) throw new Error(body.error === "forbidden" ? "You do not have permission to perform this operation." : body.error || "Permission denied.");
     throw new Error(body.error || `Request failed (${response.status}).`);
   }
@@ -319,7 +322,7 @@ async function searchEvidence(postID, query = "", focusID = "") {
   catch (error) { target.innerHTML = stateBox("Evidence unavailable", error.message, error.message.includes("permission") ? "permission" : "error"); }
 }
 
-$("#setup").addEventListener("submit", async event => { event.preventDefault(); const form = event.currentTarget; setBusy(form, true); try { await enterApp(await request("/api/v1/setup", { method: "POST", body: JSON.stringify(formJSON(form)) })); showMessage("Setup complete."); } catch (error) { $("#auth-message").textContent = error.message; } finally { setBusy(form, false); } });
+$("#setup").addEventListener("submit", async event => { event.preventDefault(); const form = event.currentTarget; if (form.elements.password.value !== $("#setup-confirm").value) { $("#auth-message").textContent = "Passwords do not match."; return; } setBusy(form, true); try { await enterApp(await request("/api/v1/setup", { method: "POST", body: JSON.stringify(formJSON(form)) })); showMessage("Setup complete."); } catch (error) { $("#auth-message").textContent = error.message; } finally { setBusy(form, false); } });
 $("#login").addEventListener("submit", async event => { event.preventDefault(); const form = event.currentTarget; setBusy(form, true); try { await enterApp(await request("/api/v1/login", { method: "POST", body: JSON.stringify(formJSON(form)) })); } catch (error) { $("#auth-message").textContent = error.message; } finally { setBusy(form, false); } });
 $("#logout").addEventListener("click", async () => { try { await request("/api/v1/logout", { method: "POST", headers: { "X-Watchpost-CSRF": state.csrf } }); } finally { state.csrf = ""; state.user = null; showAuth("login"); } });
 $("#nav-toggle").addEventListener("click", event => { const open = $("#primary-nav").classList.toggle("open"); event.currentTarget.setAttribute("aria-expanded", String(open)); });
@@ -372,7 +375,7 @@ async function clusterMemberToggle(id,stateValue){const action=stateValue==="dis
 async function clusterRevoke(id){if(!confirm(`Revoke cluster node ${id}?`))return;try{await request(`/api/v1/cluster/members/${encodeURIComponent(id)}/revoke`,{method:"POST",headers:{"X-Watchpost-CSRF":state.csrf}});await renderCluster();showMessage("Cluster credential revoked.")}catch(error){showMessage(error.message,"error")}}
 $("#fleet").addEventListener("submit", async event => { event.preventDefault(); const form=event.currentTarget,output=$("#fleet-result");output.hidden=false;output.innerHTML=stateBox("Creating invitation","Generating a one-use cluster invitation.","loading");setBusy(form,true);try{const result=await request("/api/v1/cluster/invitations",{method:"POST",headers:{"X-Watchpost-CSRF":state.csrf}});output.innerHTML=`<h2>Invitation ready</h2><p>Expires ${escapeHTML(new Date(result.expires_at).toLocaleString())}. Copy this token now; it will not be shown again.</p><code class="secret">${escapeHTML(result.token)}</code><button id="copy-secret" class="quiet-button" type="button">Copy token</button>`;$("#copy-secret").onclick=async()=>{await navigator.clipboard.writeText(result.token);showMessage("Invitation token copied.")}}catch(error){output.innerHTML=stateBox("Invitation failed",error.message,"error")}finally{setBusy(form,false)}});
 
-$("#create-user").addEventListener("submit", async event => { event.preventDefault(); const form = event.currentTarget; setBusy(form, true); try { await request("/api/v1/users", { method: "POST", headers: { "X-Watchpost-CSRF": state.csrf }, body: JSON.stringify(formJSON(form)) }); form.reset(); await loadCore(); renderUsers(); showMessage("User created."); } catch (error) { showMessage(error.message, "error"); } finally { setBusy(form, false); } });
+$("#create-user").addEventListener("submit", async event => { event.preventDefault(); const form = event.currentTarget; if (form.elements.password.value !== $("#create-user-confirm").value) { showMessage("Passwords do not match.", "error"); return; } setBusy(form, true); try { await request("/api/v1/users", { method: "POST", headers: { "X-Watchpost-CSRF": state.csrf }, body: JSON.stringify(formJSON(form)) }); form.reset(); await loadCore(); renderUsers(); showMessage("User created."); } catch (error) { showMessage(error.message, "error"); } finally { setBusy(form, false); } });
 $("#change-password").addEventListener("submit", async event => { event.preventDefault(); const form = event.currentTarget, output = $("#password-result"); setBusy(form, true); output.hidden = false; output.innerHTML = stateBox("Rotating password", "Revoking other sessions for this account.", "loading"); try { await request("/api/v1/me/password", { method: "POST", headers: { "X-Watchpost-CSRF": state.csrf }, body: JSON.stringify(formJSON(form)) }); output.innerHTML = `<h2>Password changed</h2><p>Other sessions were revoked; this session remains active.</p>`; form.reset(); } catch (error) { output.innerHTML = stateBox("Password not changed", error.message, error.message.includes("permission") ? "permission" : "error"); } finally { setBusy(form, false); } });
 
 installResizeHandles(); bootstrap();

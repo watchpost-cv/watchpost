@@ -14,11 +14,31 @@ import (
 	"github.com/watchpost-cv/watchpost/internal/auth"
 	"github.com/watchpost-cv/watchpost/internal/backup"
 	"github.com/watchpost-cv/watchpost/internal/config"
+	"github.com/watchpost-cv/watchpost/internal/service"
 	"github.com/watchpost-cv/watchpost/internal/store"
 )
 
 func controlConfig(data string) (config.Config, error) {
 	return config.Load(config.Overrides{DataDir: data})
+}
+
+// resolveDataDir applies the canonical instance-resolution precedence shared by
+// setup/config/reset: an explicit --data-dir wins, then WATCHPOST_DATA_DIR,
+// then the data directory recorded by the installed managed service, then the
+// normal default. It fails closed rather than silently targeting a different
+// instance when the installed unit exists but cannot be used safely.
+func resolveInstanceDataDir(fs *flag.FlagSet, explicit string) (string, error) {
+	dir := strings.TrimSpace(explicit)
+	if dir == "" && strings.TrimSpace(os.Getenv("WATCHPOST_DATA_DIR")) == "" {
+		installedData, installed, installedErr := service.InstalledDataDir()
+		if installedErr != nil {
+			return "", installedErr
+		}
+		if installed {
+			dir = installedData
+		}
+	}
+	return dir, nil
 }
 
 func runSetup(args []string) error {
@@ -46,7 +66,11 @@ func runSetup(args []string) error {
 	if err != nil {
 		return err
 	}
-	cfg, err := controlConfig(*data)
+	resolved, err := resolveInstanceDataDir(fs, *data)
+	if err != nil {
+		return err
+	}
+	cfg, err := controlConfig(resolved)
 	if err != nil {
 		return err
 	}
@@ -70,7 +94,11 @@ func runConfig(args []string) error {
 	if err := fs.Parse(args); err != nil || fs.NArg() != 1 || fs.Arg(0) != "show" {
 		return fmt.Errorf("usage: watchpost config show [--data-dir DIR] [--json]")
 	}
-	cfg, err := controlConfig(*data)
+	resolved, err := resolveInstanceDataDir(fs, *data)
+	if err != nil {
+		return err
+	}
+	cfg, err := controlConfig(resolved)
 	if err != nil {
 		return err
 	}
@@ -84,14 +112,18 @@ func runConfig(args []string) error {
 func runReset(args []string) error {
 	fs := flag.NewFlagSet("watchpost reset", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	auth := fs.Bool("auth", false, "reset accounts and sessions only")
+	auth := fs.Bool("auth", false, "reset accounts, sessions and user-attributed records (conversations, action requests)")
 	all := fs.Bool("all", false, "reset all Watchpost state")
 	data := fs.String("data-dir", "", "data directory")
 	confirm := fs.String("confirm", "", "non-interactive confirmation")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || (*auth == *all) {
-		return fmt.Errorf("usage: watchpost reset (--auth|--all) [--data-dir DIR] [--confirm 'WATCHPOST AUTH|WATCHPOST ALL']")
+		return fmt.Errorf("usage: watchpost reset (--auth|--all) [--data-dir DIR] [--confirm 'WATCHPOST AUTH|WATCHPOST ALL']\n\nNOTE: --auth clears accounts and sessions AND the user-attributed operational\nrecords tied to them (conversations, action requests). It does not touch posts,\nrules, observations or evidence.")
 	}
-	cfg, err := controlConfig(*data)
+	resolvedData, err := resolveInstanceDataDir(fs, *data)
+	if err != nil {
+		return err
+	}
+	cfg, err := controlConfig(resolvedData)
 	if err != nil {
 		return err
 	}
@@ -146,7 +178,11 @@ func confirmWatchpost(want, supplied string) bool {
 	if supplied != "" {
 		return supplied == want
 	}
-	fmt.Fprintf(os.Stderr, "Type %q to continue: ", want)
+	description := "all Watchpost state"
+	if want == "WATCHPOST AUTH" {
+		description = "accounts, sessions and user-attributed records (conversations, action requests); posts, rules, observations and evidence are preserved"
+	}
+	fmt.Fprintf(os.Stderr, "This will reset %s.\nType %q to continue: ", description, want)
 	got, _ := bufio.NewReader(os.Stdin).ReadString('\n')
 	return strings.TrimSpace(got) == want
 }
