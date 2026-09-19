@@ -90,6 +90,14 @@ func TestDashboardUXContracts(t *testing.T) {
 			t.Errorf("dense survey stylesheet missing %s", required)
 		}
 	}
+	// The header Log out control must stay on one line and yield gracefully for
+	// long emails: no fixed pixel width (which wrapped "Log out" onto two
+	// lines), white-space:nowrap on the button, and ellipsis on the account name.
+	for _, required := range []string{".topbar .account button{width:auto", "white-space:nowrap", "text-overflow:ellipsis"} {
+		if !strings.Contains(extra, required) {
+			t.Errorf("logout layout contract missing %s", required)
+		}
+	}
 	js := read("/script.js")
 	for _, required := range []string{"policyHealth", "No policy configured", "/api/v1/rules", "data-rule-toggle"} {
 		if !strings.Contains(js, required) {

@@ -64,7 +64,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 #page:focus-visible{outline:none}
 .resize-handle::after{display:none}
 select{appearance:none;-webkit-appearance:none;padding-right:44px;background-color:var(--input);background-image:url("/select-chevron.svg");background-position:right 16px center;background-size:12px 8px;background-repeat:no-repeat}
-.topbar .account button{width:86px;padding:10px 14px}
+.topbar .account{min-width:0}.topbar .account #account-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.topbar .account button{width:auto;padding:10px 14px;white-space:nowrap;flex:0 0 auto}
 #check-schedules{margin-top:18px}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
 @media (forced-colors:active){.health-meter i,.health-state i{forced-color-adjust:none;border:1px solid CanvasText}.health-meter.safe i{background:Highlight}.health-meter.warning i{background:Mark}.health-meter.critical i{background:LinkText}}
