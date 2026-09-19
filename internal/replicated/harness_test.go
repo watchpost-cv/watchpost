@@ -65,11 +65,6 @@ type harness struct {
 func newHarness(t *testing.T, n int) *harness {
 	t.Helper()
 	h := &harness{t: t, fabric: replication.NewFabric()}
-	t.Cleanup(func() {
-		for _, node := range h.nodes {
-			_ = node.Shutdown()
-		}
-	})
 	for i := 0; i < n; i++ {
 		id := raft.ServerID(fmt.Sprintf("n%d", i+1))
 		addr := raft.ServerAddress("node-" + string(id))
@@ -99,6 +94,13 @@ func newHarness(t *testing.T, n int) *harness {
 		h.fsms = append(h.fsms, fsm)
 		h.adapters = append(h.adapters, NewAdapter(node, fsm, db, "watchpost"))
 		h.dbs = append(h.dbs, db)
+		// Shut each node down before its SQLite DB is closed and its TempDir
+		// is removed. t.Cleanup runs in LIFO order, so this per-node shutdown
+		// (registered after openTestDB's db.Close and the snapshot TempDir)
+		// runs first: a live raft node may still journal into the DB during
+		// removal, which surfaced as 'TempDir RemoveAll: directory not empty'
+		// on the node's data directory.
+		t.Cleanup(func() { _ = node.Shutdown() })
 	}
 	for i := 1; i < n; i++ {
 		h.joinVoter(h.nodes[i].ID(), h.nodes[i].Address())
@@ -596,5 +598,59 @@ func TestDependencyAddRacesPostDelete(t *testing.T) {
 	}
 	if h.fsms[0].GraphRevision() != 2 {
 		t.Fatalf("graph revision=%d want 2 (add + delete)", h.fsms[0].GraphRevision())
+	}
+}
+
+// TestHarnessTeardownShutsDownNodesBeforeRemovingData proves the harness
+// lifecycle ordering: each raft node must be shut down before its SQLite DB is
+// closed and its TempDir removed. A live node can still journal into its
+// database directory while Go's t.TempDir cleanup walks it, which surfaced as
+// 'TempDir RemoveAll cleanup: directory not empty' on a node's data directory
+// under CI load. The regression runs full harnesses to a warm quiesced state
+// and then asserts, after teardown, that every node reached the shutdown state
+// so no asynchronous filesystem work could outlive its TempDir.
+func TestHarnessTeardownShutsDownNodesBeforeRemovingData(t *testing.T) {
+	var cycleStates sync.Map
+	for cycle := 0; cycle < 10; cycle++ {
+		cycle := cycle
+		t.Run(fmt.Sprintf("cycle-%d", cycle), func(t *testing.T) {
+			var h *harness
+			// Register the state capture FIRST so, under t.Cleanup's LIFO
+			// order, it runs AFTER the harness's node-shutdown cleanup. It
+			// reads each node's state only then, proving every node reached
+			// raft.Shutdown before its db.Close and TempDir removal became
+			// eligible.
+			t.Cleanup(func() {
+				var states []raft.RaftState
+				for _, n := range h.nodes {
+					states = append(states, n.State())
+				}
+				cycleStates.Store(cycle, states)
+			})
+			h = newHarness(t, 3)
+			a := h.leader()
+			for _, id := range []string{"A", "B", "C"} {
+				if _, err := a.CreatePost(context.Background(), id, mkPost(id, "host")); err != nil {
+					t.Fatalf("create %s: %v", id, err)
+				}
+			}
+			if _, err := a.AddDependency(context.Background(), "A", "B"); err != nil {
+				t.Fatal(err)
+			}
+			h.waitConverge()
+		})
+	}
+	// Every node must have reached the shutdown state by the time its subtest
+	// returned, i.e. before its TempDir cleanup is eligible to run.
+	for cycle := 0; cycle < 10; cycle++ {
+		s, ok := cycleStates.Load(cycle)
+		if !ok {
+			t.Fatalf("cycle %d did not run", cycle)
+		}
+		for i, st := range s.([]raft.RaftState) {
+			if st != raft.Shutdown {
+				t.Fatalf("cycle %d node %d state=%v; want raft.Shutdown before TempDir removal", cycle, i, st)
+			}
+		}
 	}
 }
