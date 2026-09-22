@@ -15,10 +15,11 @@ os=$(uname -s | tr '[:upper:]' '[:lower:]'); arch=$(uname -m); case "$arch" in x
 version=${WATCHPOST_VERSION:-latest}; base=${WATCHPOST_RELEASE_BASE:-https://github.com/watchpost-cv/watchpost/releases/download}
 if [ "$version" = latest ]; then version=$(curl -fsSL https://api.github.com/repos/watchpost-cv/watchpost/releases/latest | sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' | head -1); fi
 [ -n "$version" ] || { echo 'could not resolve the latest Watchpost release' >&2; exit 1; }
-ext=""; [ "$os" = windows ] && ext=.exe; name="watchpost-${version}-${os}-${arch}${ext}"; tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT HUP INT TERM
+ext=".tar.gz"; [ "$os" = windows ] && ext=".zip"; name="watchpost-${version}-${os}-${arch}${ext}"; tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 curl -fsSLo "$tmp/$name" "$base/$version/$name"; curl -fsSLo "$tmp/SHA256SUMS" "$base/$version/SHA256SUMS"
 (cd "$tmp" && grep " $name\$" SHA256SUMS | sha256sum -c -)
-mkdir -p "$destination"; install -m 0755 "$tmp/$name" "$destination/watchpost"; echo "Installed $destination/watchpost"
+case "$ext" in .zip) (cd "$tmp" && unzip -oq "$name") ;; *) tar -xzf "$tmp/$name" -C "$tmp" ;; esac
+mkdir -p "$destination"; install -m 0755 "$tmp/watchpost" "$destination/watchpost"; echo "Installed $destination/watchpost"
 if [ "$system" -eq 1 ] && [ "${WATCHPOST_SKIP_SERVICE_INSTALL:-0}" != 1 ]; then
   if command -v systemctl >/dev/null 2>&1; then
     echo "Configuring the watchpost machine service..."
