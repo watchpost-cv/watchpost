@@ -17,5 +17,11 @@
     "content/index.html",
     "templates/template.html"
   ],
-  "reqs": []
+  "reqs": [
+    "dist/app-extra.css",
+    "dist/app.css",
+    "dist/auth-parity.css",
+    "dist/favicon.svg",
+    "dist/script.js"
+  ]
 }
